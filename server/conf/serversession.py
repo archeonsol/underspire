@@ -34,4 +34,11 @@ class ServerSession(BaseServerSession):
     through their session(s).
     """
 
-    pass
+    def get_cmdsets(self, caller, current, **kwargs):
+        """Never return None for current so the cmdset merger does not crash."""
+        cur = self.cmdset.current
+        stack = list(self.cmdset.cmdset_stack)
+        if cur is None:
+            from evennia.commands.cmdset import CmdSet
+            cur = CmdSet()
+        return cur, stack

@@ -4,11 +4,11 @@ with Account cmdset and avoid "More than one match for 'l'" when puppeting the S
 """
 from evennia import default_cmds
 from evennia.commands.default.general import CmdLook, CmdSay
-from commands.command import CmdPose
+from commands.command import CmdPose, CmdGoShard, CmdGoLight
 
 
 class SpiritCmdSet(default_cmds.CmdSet):
-    """Minimal set for Spirit in Death Lobby: look, say, pose only."""
+    """Spirit in Death Lobby: look, say, pose, go shard (if clone), go light."""
     key = "SpiritCmdSet"
     priority = 2  # Higher than Character so only one look when merged
 
@@ -16,3 +16,5 @@ class SpiritCmdSet(default_cmds.CmdSet):
         self.add(CmdLook())
         self.add(CmdSay())
         self.add(CmdPose())
+        self.add(CmdGoShard())
+        self.add(CmdGoLight())

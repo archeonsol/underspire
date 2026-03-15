@@ -1,27 +1,57 @@
 # D:\moo\mootest\world\chargen.py
-# Arcanepunk / grimdark chargen: immersive CYOA, same stat/skill mechanics.
+# Gutterpunk/arcanepunk chargen: occult Rite, blood-signs, marks. Dark/red UI. No XP spend; skills by marks.
 import random
 
-from world.levels import MAX_LEVEL, MAX_STAT_LEVEL, level_to_letter
+from world.levels import MAX_LEVEL, MAX_STAT_LEVEL, level_to_letter, xp_cost_for_next_level
 
 STAT_KEYS = ["strength", "perception", "endurance", "charisma", "intelligence", "agility", "luck"]
 STAT_ABBREVS = {"str": "strength", "per": "perception", "end": "endurance", "cha": "charisma", "int": "intelligence", "agi": "agility", "lck": "luck"}
-# Display names for stat allocation screen (reused in node_stats)
 STAT_DISPLAY_NAMES = {
     "strength": "Strength", "perception": "Perception", "endurance": "Endurance",
     "charisma": "Charisma", "intelligence": "Intelligence", "agility": "Agility", "luck": "Luck",
 }
 from world.skills import SKILL_KEYS, SKILL_DISPLAY_NAMES
 
+# UI column widths
+CHARGEN_NAME_W = 24
+CHARGEN_LETTER_W = 5
+CHARGEN_ADJ_W = 20
+CHARGEN_FLAVOR_W = 42
 
-def _compute_stat_caps(priority_order):
-    """Generate 7 random stat caps (160-280 on 0-300 scale), sort descending by priority. Allows 3-4 stats to reach D-E over time."""
+# Marks: each mark raises one skill to this level (E tier). No XP pool in chargen.
+CHARGEN_MARKS = 3
+CHARGEN_MARK_SKILL_LEVEL = (14 * MAX_LEVEL) // 17   # ~123 = high E / low D
+
+# Stat random ranges per priority slot (1=highest priority, 7=lowest). (min, max) stored value 0-300; kept well below caps.
+# Higher priority = higher cap later, and a bit higher starting range so you're "naturally" better there but still beginner.
+STAT_RANDOM_RANGES_BY_PRIORITY = [
+    (50, 120),   # 1st: best cap, decent starting spread
+    (40, 100),
+    (30, 85),
+    (25, 70),
+    (20, 55),
+    (15, 45),
+    (10, 35),    # 7th: lowest cap, lowest start
+]
+
+
+def _compute_stat_caps(order):
+    """Generate 7 random stat caps (160-280 on 0-300 scale) sorted by priority order. Not shown to player."""
     caps = sorted([random.randint(160, 280) for _ in range(7)], reverse=True)
-    return {stat: caps[i] for i, stat in enumerate(priority_order)}
+    return {stat: caps[i] for i, stat in enumerate(order)}
+
+
+def _randomize_stats_from_priority(order):
+    """Set starting stats from priority order: each stat gets a random value in its slot's range (beginner spread)."""
+    stats = {}
+    for i, stat in enumerate(order):
+        lo, hi = STAT_RANDOM_RANGES_BY_PRIORITY[i]
+        stats[stat] = random.randint(lo, hi)
+    return stats
 
 
 def _compute_skill_caps():
-    """Random level cap per skill (80-150) so most can reach D-C with play."""
+    """Random level cap per skill (80-150). Not shown to player."""
     return {sk: random.randint(80, 150) for sk in SKILL_KEYS}
 
 
@@ -89,36 +119,68 @@ BACKGROUNDS = [
 
 
 # ==========================================
-# INTRO
+# INTRO — the Rite (occult / gutterpunk)
 # ==========================================
 
 def node_start(caller):
     text = (
-        "|c[ NEURAL-LINK INITIALIZATION ]|n\n\n"
-        "Cold. The first thing you feel is |ccold|n.\n\n"
-        "You are suspended in fluid. Above you, a curved ceiling of metal and cabling. The light is sterile, unforgiving. "
-        "Somewhere a pump thrums. You are in a |wreclamation vat|n — one of the facilities where the Authority "
-        "processes those who are brought in from the sectors, the tunnels, or the wrong side of an Inquisitor's gaze.\n\n"
-        "A robotic arm descends. A lens focuses on your face. A voice, synthetic and flat:\n\n"
-        "|y'SUBJECT DETECTED. NEURAL-LINK SEQUENCE PENDING. CALIBRATION WILL EXTRACT GENETIC AND COGNITIVE MARKERS.'|n\n\n"
-        "You have no choice but to comply. The link will read your past and shape what you can become.\n\n"
-        "|wAccept the link.|n"
+        "|x|n\n"
+        "|r╔══════════════════════════════════════════════════════════════╗|n\n"
+        "|r║|n  |RTHE RITE|n\n"
+        "|r╚══════════════════════════════════════════════════════════════╝|n\n\n"
+        "|xDarkness. Then the smell of |rblood|n and rust and something older.|n\n\n"
+        "You are on your back. Stone beneath you — cold, carved with grooves that catch the light like |rveins|n. "
+        "Above, a low ceiling. Candles or coils; the air shimmers. This is not a clinic. This is |ra binding|n.\n\n"
+        "A figure leans over you. You cannot see the face. A hand touches your brow. The voice is not a machine:\n\n"
+        "|r\"You are empty. The Pact will fill you. Your past will become the sigil. Your name will become the key.\"|n\n\n"
+        "You have no choice. The Rite has already begun.\n\n"
+        "|rAccept.|n"
     )
-    options = [{"desc": "I accept. Begin calibration.", "goto": "node_intro_lore"}]
+    options = [{"desc": "|rI accept. Begin the Rite.|n", "goto": "node_name"}]
     return text, options
+
+
+def node_name(caller, raw_string, **kwargs):
+    text = (
+        "|r── BLOOD-SIGN ──|n\n\n"
+        "The figure waits. No file. No tag. Only the name you will wear when you rise.\n\n"
+        "|R\"Speak the name. The one the Below will know.\"|n\n\n"
+        "|xEnter the name you will bear|n (2–30 characters; letters, numbers, spaces, hyphens, apostrophes):"
+    )
+    options = [{"key": "_default", "goto": "node_apply_name"}]
+    return text, options
+
+
+def node_apply_name(caller, raw_string, **kwargs):
+    from evennia.utils.evmenu import EvMenuGotoAbortMessage
+    name = (raw_string or "").strip()
+    if len(name) < 2:
+        raise EvMenuGotoAbortMessage("|rName must be at least 2 characters.|n")
+    if len(name) > 30:
+        raise EvMenuGotoAbortMessage("|rName must be 30 characters or fewer.|n")
+    for c in name:
+        if not (c.isalnum() or c in " -'"):
+            raise EvMenuGotoAbortMessage("|rOnly letters, numbers, spaces, hyphens, apostrophes.|n")
+    caller.key = name
+    if hasattr(caller, "aliases") and caller.aliases:
+        try:
+            caller.aliases.add(name)
+        except Exception:
+            pass
+    return node_intro_lore(caller, raw_string, **kwargs)
 
 
 def node_intro_lore(caller, raw_string, **kwargs):
     text = (
-        "|c[ CONTEXT LOAD ]|n\n\n"
-        "The colony is |wunderground|n. Above the sealed roof: a world of mutated wildlife, toxic winds, and things that have forgotten the shape of humanity. "
-        "The city survives behind walls and filters. It survives because it |wsends people out|n — scavengers, runners, cannon fodder — to bring back what the machinery needs.\n\n"
-        "Inside, the |wAuthority|n holds the only real power. Its Guards carry mag-weapons; its |rInquisitors|n root out heresy and rebellion with an iron fist. "
-        "Most people keep their heads down. You didn't, or you couldn't, or you were born in the wrong place.\n\n"
-        "The vat is your reset. When you step out, you will be someone the system can |wuse|n — or someone who learns to use the system.\n\n"
-        "The link is ready. It will now read your |worigin|n."
+        "|r── THE PACT ──|n\n\n"
+        "The colony is |xunderground|n. Above: a world of poison, mutation, and things that have forgotten the shape of man. "
+        "The city survives because it |rsends people out|n — scavengers, runners, blood for the machine.\n\n"
+        "Below, the |RAuthority|n holds the only law. Its Guards carry mag-steel. Its |rInquisitors|n burn what they call heresy. "
+        "Most keep their heads down. You didn't. Or you couldn't. Or you were born in the wrong trench.\n\n"
+        "The Rite will etch you into something the system can |ruse|n — or something that uses the system.\n\n"
+        "|R\"Your origin. Where did you come from?\"|n"
     )
-    options = [{"desc": "Continue", "goto": "node_background"}]
+    options = [{"desc": "|rContinue|n", "goto": "node_background"}]
     return text, options
 
 
@@ -128,14 +190,14 @@ def node_intro_lore(caller, raw_string, **kwargs):
 
 def node_background(caller):
     text = (
-        "|y'ORIGIN POINT: SELECT SUBJECT BACKGROUND.'|n\n\n"
-        "Where did you come from? The link will use this to anchor your genetic and behavioural profile.\n\n"
-        "Choose |wonce|n. There is no going back."
+        "|r── ORIGIN ──|n\n\n"
+        "|R\"Where did you come from? The sigil needs an anchor. A story written in bone.\"|n\n\n"
+        "Choose |ronce|n. There is no going back."
     )
     options = []
     for disp_name, _bg_key, _points, _flavor in BACKGROUNDS:
         options.append({
-            "desc": disp_name,
+            "desc": "|x%s|n" % disp_name,
             "goto": ("node_apply_background", {"bg_index": BACKGROUNDS.index((disp_name, _bg_key, _points, _flavor))}),
         })
     return text, options
@@ -147,30 +209,28 @@ def node_apply_background(caller, raw_string, **kwargs):
         idx = 0
     disp_name, bg_key, points, flavor = BACKGROUNDS[idx]
     caller.db.background = bg_key
-    caller.db.stat_points = points
     text = (
-        "|g'ORIGIN LOCKED.'|n\n\n"
-        "{}\n\n"
-        "|y'GENETIC MARKERS CONFIRMED. PROCEEDING TO TRAIT EXTRACTION.'|n"
-    ).format(flavor)
-    options = [{"desc": "Continue", "goto": "node_priority_intro"}]
+        "|r'ORIGIN LOCKED.'|n\n\n"
+        "%s\n\n"
+        "|R\"The sigil reads you. Now — the traits that kept you alive. In order.\"|n"
+    ) % flavor
+    options = [{"desc": "|rContinue|n", "goto": "node_priority_intro"}]
     return text, options
 
 
 # ==========================================
-# STAT PRIORITY (CYOA: 7 choices)
+# STAT PRIORITY (7 choices → cap order + random spread)
 # ==========================================
 
 def node_priority_intro(caller, raw_string, **kwargs):
     caller.db.stat_priority_order = []
     text = (
-        "|c[ TRAIT EXTRACTION ]|n\n\n"
-        "The link is probing your memories. Not words — |winstincts|n. The things that kept you alive when the undercity tried to break you.\n\n"
-        "You will choose, in order, the traits that defined you. The |worder|n matters: the link will weight your potential accordingly. "
-        "There are no right answers. Only what was true.\n\n"
-        "|y'EXTRACT FIRST SURVIVAL TRAIT.'|n"
+        "|r── TRAIT EXTRACTION ──|n\n\n"
+        "The Rite is not reading words. It is reading |rinstinct|n. The things that kept you alive when the Below tried to break you.\n\n"
+        "You will choose, in order, the traits that defined you. The |Rorder|n matters. The sigil will weight your potential.\n\n"
+        "|R\"First survival trait. What was it?\"|n"
     )
-    options = [{"desc": "I'm ready.", "goto": "node_priority_choose"}]
+    options = [{"desc": "|rI'm ready.|n", "goto": "node_priority_choose"}]
     return text, options
 
 
@@ -178,29 +238,30 @@ def node_priority_choose(caller, raw_string, **kwargs):
     order = getattr(caller.db, "stat_priority_order", None) or []
     remaining = [s for s in STAT_KEYS if s not in order]
     if not remaining:
-        # All seven chosen; compute caps and go to stat allocation
         caller.db.stat_caps = _compute_stat_caps(order)
-        caller.db.skill_caps = _compute_skill_caps()
+        caller.db.stats = _randomize_stats_from_priority(order)
+        if getattr(caller.db, "skill_caps", None) is None:
+            caller.db.skill_caps = _compute_skill_caps()
         del caller.db.stat_priority_order
-        text = "|g'TRAIT SEQUENCE COMPLETE. CAPS CALCULATED.'|n\n\nProceeding to genetic calibration."
-        options = [{"desc": "Continue", "goto": "node_stats"}]
+        text = "|r'SIGIL SEQUENCE COMPLETE.'|n\n\nProceeding to readout — then |Rmarks|n."
+        options = [{"desc": "|rContinue|n", "goto": "node_stats"}]
         return text, options
     slot = len(order) + 1
     if slot == 1:
-        prompt = "What was the |wfirst|n thing the undercity taught you? What kept you alive before anything else?"
+        prompt = "What was the |rfirst|n thing the undercity taught you?"
     elif slot == 7:
-        prompt = "One trait remains. What was the |wlast|n thread that held you together?"
+        prompt = "One trait remains. The |rlast|n thread that held you together."
     else:
-        prompt = "What came |wnext|n? Which trait defined you after that?"
+        prompt = "What came |rnext|n?"
     text = (
-        "|cTRAIT EXTRACTION — SLOT {}|n\n\n"
-        "{}\n\n"
-        "|y'SELECT.'|n"
-    ).format(slot, prompt)
+        "|r── TRAIT — SLOT %s ──|n\n\n"
+        "%s\n\n"
+        "|R\"SELECT.\"|n"
+    ) % (slot, prompt)
     options = []
     for stat in remaining:
         options.append({
-            "desc": STAT_PRIORITY_FLAVOR.get(stat, stat.replace("_", " ").title()),
+            "desc": "|x%s|n" % STAT_PRIORITY_FLAVOR.get(stat, stat.replace("_", " ").title()),
             "goto": ("node_priority_pick", {"stat": stat}),
         })
     return text, options
@@ -219,127 +280,118 @@ def node_priority_pick(caller, raw_string, **kwargs):
 
 
 # ==========================================
-# STAT ALLOCATION (unchanged logic, flavor text)
+# STAT READOUT
 # ==========================================
 
 def node_stats(caller, raw_string, **kwargs):
     stats = caller.db.stats or {}
-    points = getattr(caller.db, "stat_points", 0)
-    caps = getattr(caller.db, "stat_caps", None) or {}
-    stat_lines = []
+    lines = []
     for key, name in STAT_DISPLAY_NAMES.items():
         cur = stats.get(key, 0)
         if not isinstance(cur, int):
             cur = 0
-        cap = caps.get(key, MAX_STAT_LEVEL)
-        if not isinstance(cap, int):
-            cap = MAX_STAT_LEVEL
         letter = level_to_letter(cur, MAX_STAT_LEVEL)
-        cap_letter = level_to_letter(cap, MAX_STAT_LEVEL)
         adj = caller.get_stat_grade_adjective(letter, key)
         flav = STAT_ALLOC_FLAVOR.get(key, "")
-        stat_lines.append(f"  |c{name}|n: |w[{letter}]|n / [{cap_letter}] — {adj} — {flav}")
+        name_pad = "|x" + name.ljust(CHARGEN_NAME_W) + "|n"
+        letter_part = "|r" + ("[%s] " % letter).ljust(CHARGEN_LETTER_W) + "|n"
+        adj_pad = adj.ljust(CHARGEN_ADJ_W)
+        flav_str = flav[:CHARGEN_FLAVOR_W] if len(flav) > CHARGEN_FLAVOR_W else flav
+        lines.append("  %s %s %s  %s" % (name_pad, letter_part, adj_pad, flav_str))
     text = (
-        "|c[ GENETIC CALIBRATION ]|n\n\n"
-        "The link has mapped your potential. You have |w{}|n calibration point(s) to allocate. "
-        "Each shift reinforces one aspect of your genetic profile.\n\n"
-        "Current profile:\n"
-        "{}\n\n"
-        "Choose a marker to improve, or confirm to proceed."
-    ).format(points, "\n".join(stat_lines))
-    options = []
-    if points > 0:
-        for stat_key, name in STAT_DISPLAY_NAMES.items():
-            options.append({
-                "desc": f"Improve {name}",
-                "goto": ("node_increase_stat", {"stat": stat_key}),
-            })
-    options.append({"desc": "|gConfirm profile|n", "goto": "node_skills_intro"})
+        "|r── SIGIL READOUT ──|n\n\n"
+        "The Rite has mapped you. Current profile:\n\n"
+        "%s\n\n"
+        "Confirm. Then you will receive |Rmarks|n — skills etched into the sigil."
+    ) % "\n".join(lines)
+    options = [{"desc": "|rConfirm|n", "goto": "node_skills_intro"}]
     return text, options
 
 
-def node_increase_stat(caller, raw_string, **kwargs):
-    stat_to_increase = kwargs.get("stat")
-    caps = getattr(caller.db, "stat_caps", None) or {}
-    cap = caps.get(stat_to_increase, MAX_STAT_LEVEL)
-    if not isinstance(cap, int):
-        cap = MAX_STAT_LEVEL
-    current = caller.db.stats.get(stat_to_increase, 0)
-    if not isinstance(current, int):
-        current = 0
-    # 1 calibration point = +1 displayed point = +2 stored (same scale as skills)
-    add = min(2, cap - current) if current < cap else 0
-    if getattr(caller.db, "stat_points", 0) > 0 and add > 0:
-        caller.db.stats[stat_to_increase] = current + add
-        caller.db.stat_points -= 1
-    return node_stats(caller, raw_string, **kwargs)
-
-
 # ==========================================
-# SKILL ALLOCATION (unchanged logic, flavor)
+# SKILL ALLOCATION — marks (no XP; each mark raises one skill to E/D tier)
 # ==========================================
 
 def node_skills_intro(caller, raw_string, **kwargs):
+    caller.db.chargen_marks_used = 0
+    caller.db.skills = getattr(caller.db, "skills", None) or {}
     text = (
-        "|c[ NEURAL-LINK: SKILL PROTOCOLS ]|n\n\n"
-        "Genetic calibration is complete. The link will now inject |wskill protocols|n — combat, survival, and technical templates "
-        "that your neural profile can support. You have a limited number of injections; choose where you want to be competent.\n\n"
-        "|y'INITIATE SKILL INJECTION.'|n"
-    )
-    options = [{"desc": "Continue", "goto": "node_skills"}]
+        "|r── MARKS ──|n\n\n"
+        "|R\"The sigil can etch |rskills|n into you. Not study — |rblood-memory|n. Instinct.\"|n\n\n"
+        "You have |R%s|n mark(s). Each mark raises one skill to a set tier — enough to survive the first cut. "
+        "Choose which skills receive a mark. No take-backs.\n\n"
+        "|R\"Choose the first mark.\"|n"
+    ) % CHARGEN_MARKS
+    options = [{"desc": "|rContinue|n", "goto": "node_skills"}]
     return text, options
 
 
 def node_skills(caller, raw_string, **kwargs):
-    if getattr(caller.db, "skill_points", None) is None:
-        caller.db.skill_points = 10
+    marks_used = int(getattr(caller.db, "chargen_marks_used", 0) or 0)
+    marks_left = CHARGEN_MARKS - marks_used
     skills = caller.db.skills or {}
     caps = getattr(caller.db, "skill_caps", None) or {}
-    points = caller.db.skill_points
+    mark_level = min(CHARGEN_MARK_SKILL_LEVEL, MAX_LEVEL)
     skill_lines = []
     for sk in SKILL_KEYS:
         name = SKILL_DISPLAY_NAMES.get(sk, sk.replace("_", " ").title())
         cur = skills.get(sk, 0)
         if not isinstance(cur, int):
             cur = 0
-        cap = caps.get(sk, MAX_LEVEL)
-        if not isinstance(cap, int):
-            cap = MAX_LEVEL
         letter = level_to_letter(cur, MAX_LEVEL)
-        cap_letter = level_to_letter(cap, MAX_LEVEL)
-        adj = caller.get_skill_grade_adjective(letter)
-        skill_lines.append(f"  |c{name}|n: |w[{letter}]|n / [{cap_letter}] — {adj}")
+        name_pad = "|x" + name.ljust(CHARGEN_NAME_W) + "|n"
+        letter_part = "|r[%s]|n" % letter
+        skill_lines.append("  %s  %s" % (name_pad, letter_part))
     text = (
-        "|cSKILL PROTOCOL INJECTION|n\n\n"
-        "You have |w{}|n injection(s) remaining. Each reinforces one protocol.\n\n"
-        "Current protocols:\n"
-        "{}\n\n"
-        "Select a protocol to reinforce, or continue to identity lock."
-    ).format(points, "\n".join(skill_lines))
+        "|r── MARKS (%s remaining) ──|n\n\n"
+        "Current etchings:\n"
+        "%s\n\n"
+        "%s"
+    ) % (
+        marks_left,
+        "\n".join(skill_lines),
+        "Choose a skill to mark." if marks_left > 0 else "All marks placed."
+    )
     options = []
-    if points > 0:
+    if marks_left > 0:
         for skill_key in SKILL_KEYS:
-            name = SKILL_DISPLAY_NAMES.get(skill_key, skill_key.replace("_", " ").title())
-            options.append({
-                "desc": f"Reinforce {name}",
-                "goto": ("node_increase_skill", {"skill": skill_key}),
-            })
-    options.append({"desc": "|gContinue|n", "goto": "node_gender"})
+            cur = skills.get(skill_key, 0)
+            if not isinstance(cur, int):
+                cur = 0
+            cap = caps.get(skill_key, MAX_LEVEL)
+            if not isinstance(cap, int):
+                cap = MAX_LEVEL
+            target = min(mark_level, cap)
+            if cur < target:
+                name = SKILL_DISPLAY_NAMES.get(skill_key, skill_key.replace("_", " ").title())
+                options.append({
+                    "desc": "|rMark: %s|n" % name,
+                    "goto": ("node_apply_mark", {"skill": skill_key}),
+                })
+    options.append({"desc": "|rContinue to identity|n" if marks_left == 0 else "|xSkip remaining marks|n", "goto": "node_gender"})
     return text, options
 
 
-def node_increase_skill(caller, raw_string, **kwargs):
-    skill_to_increase = kwargs.get("skill")
+def node_apply_mark(caller, raw_string, **kwargs):
+    """Apply one mark to the chosen skill; then back to node_skills or node_gender."""
+    skill_key = kwargs.get("skill")
+    if skill_key not in SKILL_KEYS:
+        return node_skills(caller, raw_string, **kwargs)
     caps = getattr(caller.db, "skill_caps", None) or {}
-    cap = caps.get(skill_to_increase, MAX_LEVEL)
+    skills = caller.db.skills or {}
+    cur = skills.get(skill_key, 0)
+    if not isinstance(cur, int):
+        cur = 0
+    cap = caps.get(skill_key, MAX_LEVEL)
     if not isinstance(cap, int):
         cap = MAX_LEVEL
-    current = (caller.db.skills or {}).get(skill_to_increase, 0)
-    if not isinstance(current, int):
-        current = 0
-    if getattr(caller.db, "skill_points", 0) > 0 and current < cap and current < MAX_LEVEL:
-        caller.db.skills[skill_to_increase] = current + 1
-        caller.db.skill_points -= 1
+    target = min(CHARGEN_MARK_SKILL_LEVEL, cap)
+    if cur >= target:
+        return node_skills(caller, raw_string, **kwargs)
+    if not caller.db.skills:
+        caller.db.skills = {}
+    caller.db.skills[skill_key] = target
+    caller.db.chargen_marks_used = int(getattr(caller.db, "chargen_marks_used", 0) or 0) + 1
     return node_skills(caller, raw_string, **kwargs)
 
 
@@ -349,17 +401,16 @@ def node_increase_skill(caller, raw_string, **kwargs):
 
 def node_gender(caller, raw_string, **kwargs):
     text = (
-        "|c[ IDENTITY CALIBRATION ]|n\n\n"
-        "The link needs to lock your |widentity marker|n — how you will be referred to in logs and in the field. "
-        "This affects how others see you in poses and reports.\n\n"
-        "  |wMale|n → he, his, him\n"
-        "  |wFemale|n → she, her, her\n"
-        "  |wNonbinary|n → they, their, them"
+        "|r── IDENTITY ──|n\n\n"
+        "|R\"How will the world name you? The sigil needs a pronoun — how others will see you in the logs.\"|n\n\n"
+        "  |xMale|n → he, his, him\n"
+        "  |xFemale|n → she, her, her\n"
+        "  |xNonbinary|n → they, their, them"
     )
     options = [
-        {"desc": "Male (he/his/him)", "goto": ("node_apply_gender", {"gender": "male"})},
-        {"desc": "Female (she/her/her)", "goto": ("node_apply_gender", {"gender": "female"})},
-        {"desc": "Nonbinary (they/their/them)", "goto": ("node_apply_gender", {"gender": "nonbinary"})},
+        {"desc": "|rMale|n", "goto": ("node_apply_gender", {"gender": "male"})},
+        {"desc": "|rFemale|n", "goto": ("node_apply_gender", {"gender": "female"})},
+        {"desc": "|rNonbinary|n", "goto": ("node_apply_gender", {"gender": "nonbinary"})},
     ]
     return text, options
 
@@ -368,8 +419,8 @@ def node_apply_gender(caller, raw_string, **kwargs):
     gender = kwargs.get("gender", "nonbinary")
     caller.db.gender = gender
     caller.db.pronoun = gender
-    text = "|g'IDENTITY LOCKED.'|n\n\nProceeding to finalization."
-    options = [{"desc": "Finalize", "goto": "node_finish"}]
+    text = "|r'IDENTITY LOCKED.'|n\n\n|R\"The Rite is complete. Rise.\"|n"
+    options = [{"desc": "|rFinalize|n", "goto": "node_finish"}]
     return text, options
 
 
@@ -379,15 +430,20 @@ def node_apply_gender(caller, raw_string, **kwargs):
 
 def node_finish(caller, raw_string, **kwargs):
     caller.db.needs_chargen = False
-    for attr in ("stat_points", "skill_points", "stat_caps", "skill_caps"):
-        if hasattr(caller.db, attr) and caller.attributes.has(attr):
-            caller.attributes.remove(attr)
+    for attr in ("stat_points", "skill_points", "chargen_xp", "skill_chargen_xp", "chargen_marks_used",):
+        if hasattr(caller.db, attr) and getattr(caller, "attributes", None) and caller.attributes.has(attr):
+            try:
+                caller.attributes.remove(attr)
+            except Exception:
+                pass
     text = (
-        "|g'CALIBRATION COMPLETE. NEURAL LINK STABLE.'|n\n\n"
-        "The fluid drains. The vat opens. You step out onto the cold floor of the reclamation facility — "
-        "one more body the Authority has processed, tagged, and released into the undercity.\n\n"
-        "Outside, the walls hold. The Guards watch. The Inquisitors hunt. And somewhere in the dark, "
-        "the city waits to see what you do next.\n\n"
-        "|wYou are in the world.|n"
+        "|r╔══════════════════════════════════════════════════════════════╗|n\n"
+        "|r║|n  |RTHE RITE IS COMPLETE|n\n"
+        "|r╚══════════════════════════════════════════════════════════════╝|n\n\n"
+        "The candles gutter. The grooves in the stone no longer glow. You are no longer empty.\n\n"
+        "You stand. The figure is gone. Somewhere a door opens onto |xdarkness|n — the undercity, the ducts, "
+        "the first step of the rest of your life. The Authority will tag you. The Inquisitors will hunt. "
+        "And in the deep, something that was never human waits.\n\n"
+        "|RYou are in the world.|n"
     )
     return text, []

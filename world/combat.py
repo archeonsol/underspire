@@ -398,25 +398,20 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
         remove_both_combat_tickers(attacker, defender)
         return
 
-    # 1b. Bleeding drain (each combat tick) - cardiovascular reality
+    # 1b. Stamina: exhausted characters cannot attack or defend
     try:
-        from world.medical import get_bleeding_drain_per_tick
-        for who in (attacker, defender):
-            drain = get_bleeding_drain_per_tick(who)
-            if drain > 0 and (who.db.current_hp or 0) > 0:
-                who.db.current_hp = max(0, (who.db.current_hp or 0) - drain)
-                who.msg("|rYou're bleeding.|n")
-                if who == defender:
-                    attacker.msg(f"|r{defender.name} is bleeding.|n")
-                else:
-                    defender.msg(f"|r{attacker.name} is bleeding.|n")
-                if (who.db.current_hp or 0) <= 0:
-                    who.at_damage(defender if who == attacker else attacker, 0)
-                    remove_both_combat_tickers(attacker, defender)
-                    return
-    except Exception as e:
-        from evennia.utils import logger
-        logger.log_trace("combat.execute_combat_turn: get_bleeding_drain_per_tick failed: %s" % e)
+        from world.stamina import is_exhausted, spend_stamina, can_fight
+        from world.stamina import STAMINA_COST_ATTACK, STAMINA_COST_DEFEND
+    except ImportError:
+        is_exhausted = lambda _: False
+        spend_stamina = lambda _c, _a: True
+        can_fight = lambda _: True
+        STAMINA_COST_ATTACK = STAMINA_COST_DEFEND = 0
+    if not can_fight(attacker):
+        attacker.msg("You're too exhausted to strike.")
+        defender.msg(f"{attacker.name} is too exhausted to strike.")
+        return
+    spend_stamina(attacker, STAMINA_COST_ATTACK)
 
     # 2. THE WEAPON CHECK
     wielded_obj = attacker.db.wielded_obj
@@ -438,9 +433,15 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
     allowed = _allowed_attack_indices(skill_level)
     roll_1d6 = random.choice(allowed)
     attack_move = weapon[roll_1d6]
-    
-    # 4. RESOLVE THE HIT (weapon_key determines attack skill + stats)
-    result, attack_value = resolve_attack(attacker, defender, weapon_key)
+
+    # 4. RESOLVE THE HIT (or auto-hit if defender too exhausted to defend)
+    if not can_fight(defender):
+        attacker.msg(f"{defender.name} is too exhausted to defend. You land a solid blow.")
+        defender.msg("You're too exhausted to defend yourself. The blow lands.")
+        result, attack_value = "HIT", 10
+    else:
+        spend_stamina(defender, STAMINA_COST_DEFEND)
+        result, attack_value = resolve_attack(attacker, defender, weapon_key)
 
     # 5. MESSAGING & DAMAGE (brutal, location-accurate, weapon-specific)
     move_name = attack_move["name"]

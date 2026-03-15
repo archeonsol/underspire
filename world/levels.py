@@ -74,7 +74,11 @@ def level_to_effective_grade(level, max_level=None):
 def xp_cost_for_next_level(current_level, max_level=None):
     """
     XP required to raise from current_level to current_level + 1.
-    max_level=150 for skills (cost steps every 25), 300 for stats (every 50) so stats are harder.
+    Steeper curve; higher XP gain compensates so full build fits in ~1.5 years.
+    Skills: cost steps every 12 (1 at 0-11, 2 at 12-23, ... 12 at 132-149).
+    Stats: cost steps every 30 (1 at 0-29, 2 at 30-59, ... 10 at 270-299).
+    Design math: 1 skill to B (135) ~828 XP, to E (108) ~540 XP; 1 B + 5 E ~3528 XP.
+    Stats (step 30): 1 B + 1 C + 2 D + 2 E + 1 M ~6721 XP; full build ~10250, cap 10500.
     """
     max_level = MAX_LEVEL if max_level is None else max_level
     if current_level is None:
@@ -87,5 +91,5 @@ def xp_cost_for_next_level(current_level, max_level=None):
     if lv >= max_level:
         return None
     if max_level == MAX_STAT_LEVEL:
-        return 1 + (lv // 50)   # stats: 0-49 cost 1, 50-99 cost 2, ...
-    return 1 + (lv // 25)       # skills: 0-24 cost 1, 25-49 cost 2, ...
+        return 1 + (lv // 30)   # stats: 0-29 cost 1, 30-59 cost 2, ... 270-299 cost 10
+    return 1 + (lv // 12)       # skills: 0-11 cost 1, 12-23 cost 2, ...

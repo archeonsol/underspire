@@ -71,6 +71,15 @@ CORPSE_KEY_BY_PRONOUN = {"male": "male corpse", "female": "female corpse", "neut
 LOGGED_OFF_TAKE_AFTER_SECONDS = 30 * 60  # 30 minutes
 
 
+def _log_limbo_error(step, err):
+    """Log death-lobby errors for debugging."""
+    try:
+        from evennia import logger
+        logger.log_err("death._send_account_to_limbo %s: %s" % (step, err))
+    except Exception:
+        pass
+
+
 def is_character_logged_off(character):
     """True if character has no connected sessions (player is logged off / sleeping).
     NPCs are always treated as present (never logged off) for combat, get-from, etc."""
@@ -143,7 +152,8 @@ def make_flatlined(character, attacker):
         attacker.msg(FLATLINE_ATTACKER_MESSAGE.format(name=character.name))
     try:
         from world.combat import remove_both_combat_tickers
-        remove_both_combat_tickers(character, attacker)
+        other = attacker if attacker else getattr(character.db, "combat_target", None)
+        remove_both_combat_tickers(character, other)
     except Exception:
         pass
     sec = get_flatline_duration_seconds(character)
@@ -169,21 +179,33 @@ def _flatline_to_permanent_callback(character_id):
 
 def _get_or_create_limbo():
     """Return the Death Lobby room, creating it if it doesn't exist. Always set description so existing rooms get it."""
-    from evennia.utils.search import search_object
+    from evennia.utils.search import search_object_by_tag
     from evennia.utils.create import create_object
-    rooms = search_object(tag="death_limbo")
+    try:
+        rooms = search_object_by_tag(key="death_limbo")
+    except Exception:
+        rooms = []
     if rooms:
         limbo = rooms[0]
-        limbo.db.desc = DEATH_LOBBY_DESC
+        if hasattr(limbo, "db"):
+            limbo.db.desc = DEATH_LOBBY_DESC
         return limbo
-    limbo = create_object(
-        "typeclasses.limbo.DeathLimbo",
-        key="Death Lobby",
-        location=None,
-    )
+    try:
+        limbo = create_object(
+            "typeclasses.limbo.DeathLimbo",
+            key="Death Lobby",
+            location=None,
+            nohome=True,
+        )
+    except Exception as e:
+        _log_limbo_error("create_limbo", e)
+        return None
     if limbo:
-        limbo.tags.add("death_limbo")
-        limbo.db.desc = DEATH_LOBBY_DESC
+        try:
+            limbo.tags.add("death_limbo")
+            limbo.db.desc = DEATH_LOBBY_DESC
+        except Exception as e:
+            _log_limbo_error("limbo_setup", e)
     return limbo
 
 
@@ -193,6 +215,19 @@ def _get_or_create_spirit(account, limbo):
     spirit = getattr(account.db, "death_spirit", None)
     if spirit and hasattr(spirit, "location") and spirit.id:
         spirit.move_to(limbo)
+        try:
+            spirit.locks.add("puppet:all()")
+        except Exception:
+            pass
+        # Ensure Spirit has death-lobby cmds (go light always; go shard only when account has clone)
+        try:
+            spirit.cmdset.clear()
+            spirit.cmdset.add("commands.spirit_cmdset.SpiritCmdSet")
+            spirit.cmdset.update()
+            # Persist so command handler sees this cmdset when resolving Spirit as caller
+            spirit.cmdset_storage = ["commands.spirit_cmdset.SpiritCmdSet"]
+        except Exception:
+            pass
         return spirit
     spirit = create_object(
         "typeclasses.limbo.Spirit",
@@ -201,33 +236,69 @@ def _get_or_create_spirit(account, limbo):
     )
     if spirit:
         account.db.death_spirit = spirit
+        try:
+            spirit.locks.add("puppet:all()")
+        except Exception:
+            pass
     return spirit
 
 
 def _send_account_to_limbo(account, sessions, dead_character_name):
-    """Puppet the account's spirit in the Death Lobby and send a message."""
-    limbo = _get_or_create_limbo()
+    """Puppet the account's spirit in the Death Lobby (replaces current puppet, no OOC) and send death message."""
+
+    def _fail_unpuppet():
+        """If we can't send to limbo, unpuppet so the account isn't left on the body when it becomes a corpse."""
+        for session in sessions:
+            try:
+                if hasattr(account, "unpuppet_object"):
+                    account.unpuppet_object(session)
+            except Exception:
+                pass
+
+    try:
+        limbo = _get_or_create_limbo()
+    except Exception as e:
+        _log_limbo_error("limbo", e)
+        if hasattr(account, "msg"):
+            account.msg("|rYou have died. You are in the void. (Limbo room could not be created.)|n")
+        _fail_unpuppet()
+        return
     if not limbo:
         if hasattr(account, "msg"):
             account.msg("|rYou have died. You are in the void. (Limbo room could not be created.)|n")
+        _fail_unpuppet()
         return
-    spirit = _get_or_create_spirit(account, limbo)
+    try:
+        spirit = _get_or_create_spirit(account, limbo)
+    except Exception as e:
+        _log_limbo_error("spirit", e)
+        if hasattr(account, "msg"):
+            account.msg("|rYou have died. (Spirit could not be created.)|n")
+        _fail_unpuppet()
+        return
     if not spirit:
         if hasattr(account, "msg"):
             account.msg("|rYou have died. (Spirit could not be created.)|n")
+        _fail_unpuppet()
         return
     for session in sessions:
         try:
             if hasattr(account, "puppet_object"):
                 account.puppet_object(session, spirit)
-        except Exception:
-            pass
+        except Exception as e:
+            _log_limbo_error("puppet_object", e)
     if hasattr(account, "msg"):
+        corpse = getattr(account.db, "dead_character_corpse", None)
+        has_clone = bool(corpse and getattr(corpse, "db", None) and getattr(corpse.db, "clone_snapshot", None))
         account.msg(
             "|rYou have permanently died.|n\n"
             "|yYou wake in a dim, quiet space. No pain. No body. Just you and a sign that says "
             "PLEASE WAIT. Welcome to Hell. Make yourself at home. Type |wlook|n when you're ready.|n"
         )
+        if has_clone:
+            account.msg("|yYou feel a sliver of yourself elsewhere — a shard. Type |wgo shard|n to wake in the clone. Or type |wgo light|n to let go and create a new character.|n")
+        else:
+            account.msg("|yYou have no stored shard. Type |wgo light|n to let go and create a new character from the start.|n")
 
 
 def make_permanent_death(character, attacker=None, reason="executed"):
@@ -242,18 +313,19 @@ def make_permanent_death(character, attacker=None, reason="executed"):
     character.db.death_state = DEATH_STATE_PERMANENT
     loc = character.location
     name = character.name
-    # Unpuppet all sessions, then send each account to the Death Lobby (limbo)
+    # Shard stays on the character (and thus on the corpse after swap); we do not copy to account.
+    snapshot = getattr(character.db, "clone_snapshot", None)
+    # Send each account straight to Death Lobby by puppeting their Spirit (puppet_object
+    # unpuppets the current character and puppets the spirit in one go — no OOC stop).
     account_sessions = {}  # account -> list of sessions
     try:
         for session in character.sessions.get():
             try:
                 acc = getattr(session, "account", None)
-                if hasattr(session, "unpuppet"):
-                    session.unpuppet()
-                elif acc and hasattr(acc, "unpuppet_object"):
-                    acc.unpuppet_object(session)
                 if acc:
                     account_sessions.setdefault(acc, []).append(session)
+                    acc.db.dead_character_name = name
+                    acc.db.dead_character_corpse = character
             except Exception:
                 pass
         for acc, sessions in account_sessions.items():
@@ -300,6 +372,13 @@ def make_permanent_death(character, attacker=None, reason="executed"):
             character.cmdset.update()
         except Exception:
             pass
+        # So "ic" never offers the corpse: remove it from each account's characters.
+        for acc in account_sessions:
+            try:
+                if hasattr(acc, "characters"):
+                    acc.characters.remove(character)
+            except Exception:
+                pass
         if loc:
             if reason == "executed" and attacker and attacker != character:
                 try:

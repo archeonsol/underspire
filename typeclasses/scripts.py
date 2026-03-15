@@ -101,3 +101,39 @@ class Script(DefaultScript):
     """
 
     pass
+
+
+class StaminaRegenScript(Script):
+    """
+    Global stamina regen: every STAMINA_REGEN_INTERVAL seconds, tick all
+    in-world characters. Created and started from at_server_start.
+    """
+
+    def at_script_creation(self):
+        from world.stamina import STAMINA_REGEN_INTERVAL
+        self.key = "stamina_regen"
+        self.interval = STAMINA_REGEN_INTERVAL
+        self.repeats = 0
+        self.persistent = True
+
+    def at_repeat(self):
+        from world.stamina import stamina_regen_all
+        stamina_regen_all()
+
+
+class BleedingTickScript(Script):
+    """
+    Global bleeding tick: every BLEEDING_TICK_INTERVAL seconds, apply one bleed
+    drain to all in-world characters with bleeding_level > 0 (in or out of combat).
+    """
+
+    def at_script_creation(self):
+        from world.medical import BLEEDING_TICK_INTERVAL
+        self.key = "bleeding_tick"
+        self.interval = BLEEDING_TICK_INTERVAL
+        self.repeats = 0
+        self.persistent = True
+
+    def at_repeat(self):
+        from world.medical import bleeding_tick_all
+        bleeding_tick_all()

@@ -72,10 +72,36 @@ class Character(DefaultCharacter):
         self.db.right_hand_obj = None
         # Pronouns for emotes: "male" (he/his/him), "female" (she/her/her), "neutral"/"they" (they/their/them)
         self.db.pronoun = "neutral"
-        # XP: gained every 6h while eligible (max 4 drops/24h), cap ~1 year of daily play
+        # XP: gained every 6h while eligible (max 4 drops/24h); cap enforced so you stop earning after XP_CAP
         self.db.xp = 0
+        from world.xp import XP_CAP
+        self.db.xp_cap = int(getattr(self.db, "xp_cap", XP_CAP) or XP_CAP)
         # PC vs NPC: NPCs do not show as "sleeping" when unpuppeted; set True for staff-created NPCs
         self.db.is_npc = False
+
+    def at_init(self):
+        """Ensure character uses the game's CharacterCmdSet (stats, heal, etc.). Fixes old chars with wrong path.
+        We only fix persisted cmdset_storage here; we do not call cmdset.update(init_mode=True) because a failed
+        load would leave cmdset.current None and break the cmdset merger (AttributeError: 'NoneType' no_objs).
+        Correct path will be used on next server reload when the handler re-inits from storage.
+        """
+        from django.conf import settings
+        want_path = getattr(settings, "CMDSET_CHARACTER", "commands.default_cmdsets.CharacterCmdSet")
+        storage = getattr(self, "cmdset_storage", None)
+        if storage is None:
+            return
+        current = storage[0] if isinstance(storage, (list, tuple)) and storage else None
+        if current != want_path:
+            self.cmdset_storage = [want_path] if isinstance(storage, (list, tuple)) else [want_path]
+
+    def get_cmdsets(self, caller, current, **kwargs):
+        """Return cmdsets for merger. Never return None for current so the merger never hits 'NoneType' no_objs."""
+        cur = self.cmdset.current
+        stack = list(self.cmdset.cmdset_stack)
+        if cur is None:
+            from evennia.commands.cmdset import CmdSet
+            cur = CmdSet()  # empty fallback so merger does not crash
+        return cur, stack
 
     def get_body_descriptions(self):
         """
@@ -168,27 +194,52 @@ class Character(DefaultCharacter):
         return _skill_cap_level(self, skill_key)
 
     def at_post_puppet(self, **kwargs):
-        super().at_post_puppet(**kwargs)
-        if self.db.needs_chargen:
-            from evennia.utils.evmenu import EvMenu
-            EvMenu(self, "world.chargen", startnode="node_start")
+        # Only the go shard (clone awakening) pipeline sets this; no other puppet flow should set it.
+        # When set, we skip *only* the default "You become X" message from the parent, then run
+        # our normal post-puppet logic (last_puppet, XP, wake-up). All other puppeting keeps "You become".
+        go_shard_awakening = getattr(self.db, "_suppress_become_message", False)
+        if go_shard_awakening:
+            try:
+                del self.db["_suppress_become_message"]
+            except Exception:
+                pass
+            # Do what DefaultObject.at_post_puppet does except the msg("You become ...")
+            if hasattr(self, "account") and self.account:
+                self.account.db._last_puppet = self
+            # Fall through to our normal logic below (no return here)
         else:
-            from world.xp import grant_pending_xp
-            xp_granted, drops = grant_pending_xp(self)
-            if xp_granted > 0 and drops > 0:
-                self.msg("|gYou gain {} XP from {} neural-link sync(s) (max 4 per 24h).|n".format(xp_granted, drops))
-            # Personal login message (only to the player)
-            self.msg("|cYou open your eyes and return to the world, awake.|n")
-            # Wake-up message to room when logging in (not during first-time chargen)
-            if self.location:
-                try:
-                    from world.crafting import substitute_clothing_desc
-                    msg = getattr(self.db, "wake_up_message", None) or "$N wakes up."
-                    msg = substitute_clothing_desc(msg, self)
-                    if msg:
-                        self.location.msg_contents(msg, exclude=[self])
-                except Exception:
-                    pass
+            super().at_post_puppet(**kwargs)
+        # Never run chargen for NPCs (e.g. when staff puppet an NPC then puppet back to PC).
+        if getattr(self.db, "is_npc", False):
+            return
+        # If needs_chargen is True but character clearly already completed chargen (stale/corrupted flag),
+        # e.g. after puppet-switching, avoid forcing them back into the pipeline.
+        if getattr(self.db, "needs_chargen", False):
+            bg = getattr(self.db, "background", None)
+            stats = getattr(self.db, "stats", None)
+            if (bg and str(bg) != "Unknown") or (stats and any(stats.values())):
+                self.db.needs_chargen = False
+            else:
+                from evennia.utils.evmenu import EvMenu
+                EvMenu(self, "world.chargen", startnode="node_start")
+                return
+        # Normal post-puppet: grant pending XP and wake-up message
+        from world.xp import grant_pending_xp
+        xp_granted, drops = grant_pending_xp(self)
+        if xp_granted > 0 and drops > 0:
+            self.msg("|gYou gain {} XP from {} neural-link sync(s) (max 4 per 24h).|n".format(xp_granted, drops))
+        # Personal login message (only to the player)
+        self.msg("|cYou open your eyes and return to the world, awake.|n")
+        # Wake-up message to room when logging in (not during first-time chargen)
+        if self.location:
+            try:
+                from world.crafting import substitute_clothing_desc
+                msg = getattr(self.db, "wake_up_message", None) or "$N wakes up."
+                msg = substitute_clothing_desc(msg, self)
+                if msg:
+                    self.location.msg_contents(msg, exclude=[self])
+            except Exception:
+                pass
 
     def at_post_unpuppet(self, account=None, session=None, **kwargs):
         """
@@ -232,10 +283,10 @@ class Character(DefaultCharacter):
 
     @property
     def max_stamina(self):
+        """Stamina pool is directly tied to endurance only."""
         from world.levels import level_to_effective_grade, MAX_STAT_LEVEL
         end = level_to_effective_grade(self.get_stat_level("endurance"), MAX_STAT_LEVEL)
-        agi = level_to_effective_grade(self.get_stat_level("agility"), MAX_STAT_LEVEL)
-        return 20 + (end * 4) + (agi * 4)
+        return 20 + (end * 5)
 
     @property
     def stamina(self):

@@ -30,7 +30,20 @@ def at_server_start():
     This is called every time the server starts up, regardless of
     how it was shut down.
     """
-    pass
+    from evennia import create_script
+    from evennia.scripts.models import ScriptDB
+    if not ScriptDB.objects.filter(db_key="stamina_regen").first():
+        create_script(
+            "typeclasses.scripts.StaminaRegenScript",
+            key="stamina_regen",
+            persistent=True,
+        )
+    if not ScriptDB.objects.filter(db_key="bleeding_tick").first():
+        create_script(
+            "typeclasses.scripts.BleedingTickScript",
+            key="bleeding_tick",
+            persistent=True,
+        )
 
 
 def at_server_stop():

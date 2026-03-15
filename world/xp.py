@@ -1,19 +1,21 @@
 """
-XP system: time-based gains (3 XP per 6h window, max 4 drops per 24h), catch-up on login.
-Skills: 1 raise = 1 point (0-150). Stats: 1 raise = 0.5 points (stored 0-300, display 0-150). Tuned for ~1-1.5 year cap.
+XP system: time-based gains (5 XP per 6h window, max 4 drops per 24h), catch-up on login.
+Steeper curve with higher XP gain so full build fits in ~1.5 years.
+Skills: 1 raise = 1 point (0-150). Stats: 1 raise = 0.5 points (stored 0-300, display 0-150).
+Full spread: 1-2 stats at C/B, 2-3 at E/D, 3-4 at E, rest at M-N. ~20 XP/day, cap 10500 (~525 days).
 """
 import time
 
 from world.levels import MAX_LEVEL, MAX_STAT_LEVEL, xp_cost_for_next_level, letter_to_level_range
 
-# Gain: 3 XP every 6 hours, max 4 drops per rolling 24h (~12 XP/day)
-DROP_XP = 3
+# Gain: 5 XP every 6 hours, max 4 drops per rolling 24h (~20 XP/day) — compensates steeper curve
+DROP_XP = 5
 DROP_INTERVAL_SECS = 6 * 3600
 DROPS_PER_24H = 4
 WINDOW_24H_SECS = 24 * 3600
 
-# Cap: ~1-1.5 year; escalating cost + stat scale means 3-4 stats to D-E and 4-5 skills to D-C
-XP_CAP = 5500
+# Cap: 10500 XP; full build (1B+5E skills + 1B/1C/2D/2E/1M stats) ~10250; reach in ~1.5 years
+XP_CAP = 10500
 
 
 def _stat_level(character, stat_key):

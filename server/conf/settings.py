@@ -34,10 +34,14 @@ from evennia.settings_default import *
 # This is the name of your game. Make it catchy!
 SERVERNAME = "mootest"
 
-# One character per account: login with character name, auto-puppet into that character.
-# New accounts go straight into chargen; ic/ooc/puppet are admin-only.
+# Command set for Characters (must be the game's CharacterCmdSet so stats/heal etc. are available).
+CMDSET_CHARACTER = "commands.default_cmdsets.CharacterCmdSet"
+
+# One character per account. No auto-puppet: login shows main menu (select character or create).
+# Account stays separate; after "go light" they have no character and must create from the menu.
 AUTO_CREATE_CHARACTER_WITH_ACCOUNT = True
-AUTO_PUPPET_ON_LOGIN = True
+AUTO_PUPPET_ON_LOGIN = False
+MULTISESSION_MODE = 2
 MAX_NR_CHARACTERS = 1
 
 # Prefer Argon2 for password hashing (requires: pip install argon2-cffi).

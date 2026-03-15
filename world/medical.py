@@ -541,13 +541,71 @@ def get_brutal_hit_flavor(weapon_key, body_part, trauma_result, defender_name, a
     return " ".join(lines_atk), " ".join(lines_def)
 
 
+# Bleeding ticks independently every BLEEDING_TICK_INTERVAL seconds (in and out of combat).
+BLEEDING_TICK_INTERVAL = 18
+# HP lost per bleeding tick by level (1=minor, 2=moderate, 3=severe, 4=critical). Balanced so you don't die in seconds.
+BLEEDING_DRAIN_PER_TICK = (1, 2, 3, 5)
+
+
 def get_bleeding_drain_per_tick(character):
-    """HP lost per combat tick from bleeding (0 if none)."""
+    """HP lost per bleeding tick (0 if none). Used by the global bleeding tick, not per combat round."""
     level = character.db.bleeding_level or 0
     if level == 0:
         return 0
-    # 1 = 1, 2 = 2, 3 = 4, 4 = 8 (escalating)
-    return (1, 2, 4, 8)[min(level - 1, 3)]
+    return BLEEDING_DRAIN_PER_TICK[min(level - 1, 3)]
+
+
+def apply_bleeding_tick(character):
+    """
+    Apply one bleeding tick to a character: deduct HP, message if in world.
+    Does not call at_damage; caller may handle death (e.g. from world.death).
+    Returns True if character was drained (had bleeding and HP > 0).
+    """
+    _ensure_medical_db(character)
+    level = character.db.bleeding_level or 0
+    if level == 0:
+        return False
+    drain = get_bleeding_drain_per_tick(character)
+    if drain <= 0:
+        return False
+    current = character.db.current_hp
+    if current is None and hasattr(character, "max_hp"):
+        character.db.current_hp = character.max_hp
+        current = character.db.current_hp
+    if (current or 0) <= 0:
+        return False
+    character.db.current_hp = max(0, (current or 0) - drain)
+    if character.location:
+        character.msg("|rYou're bleeding.|n")
+        character.location.msg_contents(
+            "|r%s is bleeding.|n" % character.get_display_name(character),
+            exclude=character,
+        )
+    return True
+
+
+def bleeding_tick_all():
+    """Run one bleeding tick for every in-world character with bleeding_level > 0."""
+    try:
+        from evennia.objects.models import ObjectDB
+        from world.death import is_flatlined, is_permanently_dead
+        for obj in ObjectDB.objects.filter(db_location__isnull=False):
+            try:
+                if not getattr(obj, "db", None):
+                    continue
+                level = getattr(obj.db, "bleeding_level", 0) or 0
+                if level == 0:
+                    continue
+                if is_flatlined(obj) or is_permanently_dead(obj):
+                    continue
+                apply_bleeding_tick(obj)
+                if (obj.db.current_hp or 0) <= 0:
+                    if hasattr(obj, "at_damage"):
+                        obj.at_damage(None, 0)
+            except Exception:
+                pass
+    except Exception:
+        pass
 
 
 # Bones that impair attack (arm, hand, shoulder) vs defense (leg, foot, spine)
@@ -595,7 +653,7 @@ def get_medical_summary(character):
                 continue
             names = ORGAN_INFO.get(organ_key, (organ_key,)*4)
             desc = names[min(severity, 3)]
-            stab = " [stabilized]" if (character.db.stabilized_organs or {}).get(organ_key) else ""
+            stab = " [recent surgery]" if (character.db.stabilized_organs or {}).get(organ_key) else ""
             parts.append(f"{names[0]} ({desc}){stab}")
         if parts:
             lines.append("|rOrgan trauma:|n " + "; ".join(parts))

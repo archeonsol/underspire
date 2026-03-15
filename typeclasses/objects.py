@@ -22,6 +22,19 @@ class ObjectParent:
 
     """
 
+    def get_cmdsets(self, caller, current, **kwargs):
+        """Never return None for current so the cmdset merger does not crash."""
+        cur = self.cmdset.current
+        stack = list(self.cmdset.cmdset_stack)
+        if cur is None:
+            from evennia.commands.cmdset import CmdSet
+            cur = CmdSet()
+        return cur, stack
+
+    def get_extra_display_name_info(self, looker=None, **kwargs):
+        """Hide (#dbref) from all look output. No permission check."""
+        return ""
+
 
 class Object(ObjectParent, DefaultObject):
     """

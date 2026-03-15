@@ -14,16 +14,17 @@ from evennia.objects.objects import DefaultExit
 from .objects import ObjectParent
 
 try:
-    from world.staggered_movement import WALK_DELAY, _staggered_walk_callback
+    from world.staggered_movement import WALK_DELAY, CRAWL_DELAY, _staggered_walk_callback
 except ImportError:
     WALK_DELAY = 3.5
+    CRAWL_DELAY = 7.0
     _staggered_walk_callback = None
 
 
 class Exit(ObjectParent, DefaultExit):
     """
     Exits are connectors between rooms. Movement is staggered: you see "You begin walking X"
-    then after a short delay you arrive (for RP).
+    then after a short delay you arrive (for RP). Exhausted characters crawl (slower; stamina cost already 0).
     """
 
     def at_traverse(self, traversing_object, destination):
@@ -40,16 +41,31 @@ class Exit(ObjectParent, DefaultExit):
                     return
             except Exception:
                 pass
-        direction = (self.key or "away").strip()
-        traversing_object.msg(f"You begin walking {direction}.")
+        try:
+            from world.stamina import is_exhausted, spend_stamina, STAMINA_COST_WALK, STAMINA_COST_CRAWL
+        except ImportError:
+            is_exhausted = lambda _: False
+            spend_stamina = lambda _, __: True
+            STAMINA_COST_WALK = 1
+            STAMINA_COST_CRAWL = 0
+        exhausted = is_exhausted(traversing_object)
+        if exhausted:
+            spend_stamina(traversing_object, STAMINA_COST_CRAWL)
+            delay_secs = CRAWL_DELAY
+            direction = (self.key or "away").strip()
+            traversing_object.msg(f"You crawl slowly {direction}.")
+            room_msg = f"{traversing_object.get_display_name(traversing_object)} crawls slowly {direction}."
+        else:
+            spend_stamina(traversing_object, STAMINA_COST_WALK)
+            delay_secs = WALK_DELAY
+            direction = (self.key or "away").strip()
+            traversing_object.msg(f"You begin walking {direction}.")
+            room_msg = f"{traversing_object.get_display_name(traversing_object)} begins walking {direction}."
         loc = traversing_object.location
         if loc:
-            loc.msg_contents(
-                f"{traversing_object.get_display_name(traversing_object)} begins walking {direction}.",
-                exclude=traversing_object,
-            )
+            loc.msg_contents(room_msg, exclude=traversing_object)
         if _staggered_walk_callback:
-            delay(WALK_DELAY, _staggered_walk_callback, traversing_object.id, destination.id)
+            delay(delay_secs, _staggered_walk_callback, traversing_object.id, destination.id)
         else:
             traversing_object.move_to(destination)
             victim = getattr(getattr(traversing_object, "db", None), "grappling", None)

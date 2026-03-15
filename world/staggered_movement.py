@@ -6,6 +6,7 @@ from evennia.utils.search import search_object
 
 # Seconds before the move actually happens
 WALK_DELAY = 3.5
+CRAWL_DELAY = 7.0   # When exhausted (0 stamina), you crawl slowly
 DRIVE_DELAY = 2.0
 
 

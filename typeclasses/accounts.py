@@ -136,7 +136,46 @@ class Account(DefaultAccount):
 
     """
 
-    pass
+    @property
+    def has_spirit_puppet(self):
+        """True if any session is puppeting a Spirit (death lobby). Used so go light / go shard appear on Account cmdset."""
+        try:
+            for sess in (self.sessions.get() or []):
+                p = getattr(sess, "puppet", None)
+                if p and type(p).__name__ == "Spirit":
+                    return True
+        except Exception:
+            pass
+        return False
+
+    @property
+    def account_has_clone(self):
+        """True if the dead character (corpse) has a stored clone/shard. Used by CmdGoShard lock when on Account cmdset."""
+        corpse = getattr(self.db, "dead_character_corpse", None)
+        return bool(corpse and getattr(corpse, "db", None) and getattr(corpse.db, "clone_snapshot", None))
+
+    def at_post_login(self, session=None, **kwargs):
+        """
+        After login: show Soul Registry menu (main menu). No default account screen;
+        account stays separate — select a body or forge a new soul.
+        """
+        protocol_flags = self.attributes.get("_saved_protocol_flags", {})
+        if session and protocol_flags:
+            session.update_flags(**protocol_flags)
+        if session:
+            session.msg(logged_in={})
+        self._send_to_connect_channel("|G{key} connected|n".format(key=self.key))
+        from world.main_menu import start_main_menu
+        start_main_menu(self)
+
+    def get_cmdsets(self, caller, current, **kwargs):
+        """Return cmdsets for merger. Never return None for current so the merger never hits 'NoneType' no_objs."""
+        cur = self.cmdset.current
+        stack = list(self.cmdset.cmdset_stack)
+        if cur is None:
+            from evennia.commands.cmdset import CmdSet
+            cur = CmdSet()
+        return cur, stack
 
 
 class Guest(DefaultGuest):

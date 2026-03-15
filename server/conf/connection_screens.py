@@ -26,18 +26,20 @@ from evennia import utils
 
 CONNECTION_SCREEN = """
 |b==============================================================|n
- Welcome to |g{}|n, version {}!
+ |wMAIN MENU|n — |g{}|n (version {})
 
- Log in with your |wcharacter name|n and password:
-      |wconnect <character name> <password>|n
+ Access to the game requires login.
 
- New players: create your character (you will set the password):
-      |wcreate <character name> <password>|n
- After creating, you will go through character creation, then log in as that character.
- Each time you connect, use |wconnect <character name> <password>|n.
+ |wLog in|n (returning players):
+      |wconnect <account name> <password>|n
+
+ |wCreate account|n (new players; you will set the password):
+      |wcreate <account name> <password>|n
+ After creating an account, you will go through character creation, then spawn in.
+ Next time you connect, use |wconnect <account name> <password>|n.
 
  If your name has spaces, enclose it in quotes.
- Enter |whelp|n for more info. |wlook|n will re-show this screen.
+ |wlook|n — re-show this screen. |whelp|n — more info.
 |b==============================================================|n""".format(
     settings.SERVERNAME, utils.get_evennia_version("short")
 )

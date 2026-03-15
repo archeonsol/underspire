@@ -5,6 +5,7 @@ Rooms are simple containers that has no location of their own.
 Look output: room name (colored), desc, "You see a X, a Y and a Z.", character poses, exits.
 """
 
+import re
 from evennia.objects.objects import DefaultRoom, DefaultExit
 from evennia.utils.utils import compress_whitespace, iter_to_str
 
@@ -308,6 +309,7 @@ class Room(ObjectParent, DefaultRoom):
             exits = sorted(exits, key=lambda e: sort_index.get((e.key or "").strip().lower(), 999))
         else:
             exits = sorted(exits, key=lambda e: (e.key or "").lower())
+        seen = set()
         bits = []
         for exi in exits:
             name = (exi.key or "out").strip()
@@ -317,5 +319,18 @@ class Room(ObjectParent, DefaultRoom):
             else:
                 aliases = raw_aliases if isinstance(raw_aliases, (list, tuple)) else []
             short = (aliases[0].strip() if aliases else name[0].lower()) if aliases else name[0].lower()
-            bits.append(f"{ROOM_DESC_EXIT_NAME_COLOR}{name} ({short})|n")
-        return "There are exits to the " + iter_to_str(bits, sep=", ", endsep=" and ") + "."
+            key = (name.lower(), short.lower())
+            if key in seen:
+                continue
+            seen.add(key)
+            bit = f"{ROOM_DESC_EXIT_NAME_COLOR}{name} ({short})|n"
+            bits.append(bit.strip())
+        if not bits:
+            return ""
+        if len(bits) == 1:
+            line = "There are exits to the " + bits[0] + "."
+        elif len(bits) == 2:
+            line = "There are exits to the " + bits[0] + " and " + bits[1] + "."
+        else:
+            line = "There are exits to the " + ", ".join(bits[:-1]) + " and " + bits[-1] + "."
+        return re.sub(r"  +", " ", line)

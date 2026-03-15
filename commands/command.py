@@ -49,7 +49,7 @@ class Command(BaseCommand):
 
 class CmdStats(Command):
     """
-    Display your character sheet: vitals, SPECIAL stats, and skills.
+    Display your character sheet: vitals, SPECIAL stats, skills, and when the soul was last fragmented (shard date).
 
     Usage:
       stats
@@ -86,31 +86,57 @@ class CmdStats(Command):
             load_str = "{} kg".format(caller.carry_capacity)
         except Exception:
             hp_str = st_str = load_str = "---"
+        xp = int(getattr(caller.db, "xp", 0) or 0)
+        try:
+            from world.xp import XP_CAP
+            xp_cap = int(getattr(caller.db, "xp_cap", XP_CAP) or XP_CAP)
+        except Exception:
+            xp_cap = 5500
+        xp_str = "{} / {}".format(xp, xp_cap)
 
-        # Single sheet: fixed order (STAT_KEYS, SKILL_KEYS), safe lookups
+        # Soul last fragmented: from character's clone_snapshot (shard is per-character)
+        snapshot = getattr(caller.db, "clone_snapshot", None)
+        fragmented_str = ""
+        if snapshot and snapshot.get("fragmented_at"):
+            try:
+                from datetime import datetime
+                ts = snapshot["fragmented_at"]
+                if isinstance(ts, (int, float)):
+                    dt = datetime.utcfromtimestamp(ts)
+                else:
+                    dt = ts
+                fragmented_str = dt.strftime("%Y-%m-%d %H:%M") + " UTC"
+            except Exception:
+                pass
+
+        # Gutterpunk/arcanepunk sheet: rust, wire, grit, copper/amber
         w = 50
-        line = "|c+" + "=" * (w - 2) + "+|n"
-        thin = "|c|" + "-" * (w - 2) + "||n"
-        output = line + "\n"
-        output += "|c||n  |W NEURAL LINK  |w BIOMETRIC READOUT|n\n"
-        output += "|c|||n  |wSubject|n " + (caller.name or "Unknown").ljust(18) + " |wOrigin|n " + bg + "\n"
-        output += thin + "\n"
-        output += "|c|||n  |rVitality|n " + hp_str.ljust(12) + " |yStamina|n " + st_str.ljust(12) + " |gLoad|n " + load_str + "\n"
-        output += thin + "\n"
+        edge = "|x├" + "─" * (w - 2) + "┤|n"
+        output = "|x┌" + "─" * (w - 2) + "┐|n\n"
+        output += "|x│|n |R■|n |wSOUL READOUT|n  |x—|n  " + (caller.name or "Unknown").ljust(18) + " |x│|n\n"
+        output += "|x│|n   |wOrigin|n " + (bg or "Unknown").ljust(w - 18) + " |x│|n\n"
+        output += edge + "\n"
+        output += "|x│|n |rVitality|n " + hp_str.ljust(10) + "  |yStamina|n " + st_str.ljust(10) + "  |wLoad|n " + load_str.ljust(6) + " |x│|n\n"
+        output += "|x│|n |wXP|n " + xp_str.ljust(w - 10) + " |x│|n\n"
+        if fragmented_str:
+            output += "|x│|n |rSoul last fragmented|n " + fragmented_str.ljust(w - 26) + " |x│|n\n"
+        output += edge + "\n"
         from world.levels import level_to_letter, MAX_STAT_LEVEL, MAX_LEVEL
-        output += "|c|||n  |W S P E C I A L|n\n"
+        output += "|x│|n |R CORE|n" + " ".ljust(w - 9) + "|x│|n\n"
         for key in STAT_KEYS:
             letter = level_to_letter(caller.get_stat_level(key), MAX_STAT_LEVEL) if hasattr(caller, "get_stat_level") else "Q"
             adj = caller.get_stat_grade_adjective(letter, key) if hasattr(caller, "get_stat_grade_adjective") else letter
-            output += "|c|||n    |w{}|n  |w[{}]|n {}\n".format(key.capitalize().ljust(12), letter, adj)
-        output += thin + "\n"
-        output += "|c|||n  |W SKILL IMPLANTS|n\n"
+            output += "|x│|n   |w{}|n  |R[{}]|n {}\n".format(key.capitalize().ljust(12), letter, adj)
+        output += edge + "\n"
+        output += "|x│|n |R IMPLANTS|n" + " ".ljust(w - 14) + "|x│|n\n"
+        # Pad skill labels to fixed width so [letter] and grade align (longest is "Electrical Engineering")
+        skill_label_width = 24
         for key in SKILL_KEYS:
             letter = level_to_letter(caller.get_skill_level(key), MAX_LEVEL) if hasattr(caller, "get_skill_level") else "Q"
             adj = caller.get_skill_grade_adjective(letter) if hasattr(caller, "get_skill_grade_adjective") else letter
             label = SKILL_DISPLAY_NAMES.get(key, key.replace("_", " ").title())
-            output += "|c|||n    |w{}|n  |w[{}]|n {}\n".format(label.ljust(20), letter, adj)
-        output += line + "\n"
+            output += "|x│|n   |w{}|n  |R[{}]|n {}\n".format(label.ljust(skill_label_width), letter, adj)
+        output += "|x└" + "─" * (w - 2) + "┘|n\n"
         caller.msg(output)
 
 
@@ -141,6 +167,8 @@ class CmdXp(Command):
         cap = int(getattr(caller.db, "xp_cap", XP_CAP) or XP_CAP)
 
         if not self.args or self.args.strip().lower() in ("show", ""):
+            # Column widths for aligned display (match chargen)
+            NAME_W, LETTER_W, ADJ_W = 24, 5, 20
             output = "|cXP|n: |w{}|n / {}\n\n".format(xp, cap)
             output += "|cXP needed for next raise:|n\n\n"
             output += "|wStats|n:\n"
@@ -148,20 +176,26 @@ class CmdXp(Command):
                 cost, _ = get_xp_cost_stat(caller, sk)
                 letter = level_to_letter(_stat_level(caller, sk), MAX_STAT_LEVEL)
                 adj = caller.get_stat_grade_adjective(letter, sk)
+                name_pad = sk.capitalize().ljust(NAME_W)
+                letter_part = ("[" + letter + "] ").ljust(LETTER_W)
+                adj_pad = adj.ljust(ADJ_W)
                 if cost is None:
-                    output += "  {}: [{}] {} |x(at cap)|n\n".format(sk.capitalize(), letter, adj)
+                    output += "  {} {} {} |x(at cap)|n\n".format(name_pad, letter_part, adj_pad)
                 else:
-                    output += "  {}: [{}] {} — next raise: |w{} XP|n\n".format(sk.capitalize(), letter, adj, cost)
+                    output += "  {} {} {} next raise: |w{} XP|n\n".format(name_pad, letter_part, adj_pad, cost)
             output += "\n|wSkills|n:\n"
             for sk in SKILL_KEYS:
                 cost, _ = get_xp_cost_skill(caller, sk)
                 letter = level_to_letter(_skill_level(caller, sk), MAX_LEVEL)
                 adj = caller.get_skill_grade_adjective(letter)
                 label = SKILL_DISPLAY_NAMES.get(sk, sk.replace("_", " ").title())
+                name_pad = label.ljust(NAME_W)
+                letter_part = ("[" + letter + "] ").ljust(LETTER_W)
+                adj_pad = adj.ljust(ADJ_W)
                 if cost is None:
-                    output += "  {}: [{}] {} |x(at cap)|n\n".format(label, letter, adj)
+                    output += "  {} {} {} |x(at cap)|n\n".format(name_pad, letter_part, adj_pad)
                 else:
-                    output += "  {}: [{}] {} — next raise: |w{} XP|n\n".format(label, letter, adj, cost)
+                    output += "  {} {} {} next raise: |w{} XP|n\n".format(name_pad, letter_part, adj_pad, cost)
             output += "\nUse |wxp advance stat <name> [N]|n or |wxp advance skill <name> [N]|n to spend XP (N = number of raises)."
             caller.msg(output)
             return
@@ -219,10 +253,12 @@ class CmdXp(Command):
                 return
             if not getattr(caller.db, "stats", None):
                 caller.db.stats = {}
-            caller.db.stats[stat_key] = cur + levels_gained
+            new_val = min(cap, cur + levels_gained)
+            caller.db.stats[stat_key] = new_val
             caller.db.xp = xp - total_spent
+            remainder = xp - total_spent
             old_letter = level_to_letter(cur, MAX_STAT_LEVEL)
-            new_letter = level_to_letter(cur + levels_gained, MAX_STAT_LEVEL)
+            new_letter = level_to_letter(new_val, MAX_STAT_LEVEL)
             letter_changed = old_letter != new_letter
             if levels_gained == 1:
                 msg = "You spend {} XP.".format(total_spent)
@@ -235,6 +271,8 @@ class CmdXp(Command):
                 if letter_changed:
                     adj = caller.get_stat_grade_adjective(new_letter, stat_key)
                     msg += " {} is now [{}] {}.".format(stat_key.capitalize(), new_letter, adj)
+            if new_val >= cap and remainder > 0:
+                msg += " You reached your cap; {} XP remains.".format(remainder)
             caller.msg(msg)
             return
 
@@ -266,10 +304,12 @@ class CmdXp(Command):
                 return
             if not getattr(caller.db, "skills", None):
                 caller.db.skills = {}
-            caller.db.skills[skill_key] = cur + levels_gained
+            new_val = min(cap, cur + levels_gained)
+            caller.db.skills[skill_key] = new_val
             caller.db.xp = xp - total_spent
+            remainder = xp - total_spent
             old_letter = level_to_letter(cur, MAX_LEVEL)
-            new_letter = level_to_letter(cur + levels_gained, MAX_LEVEL)
+            new_letter = level_to_letter(new_val, MAX_LEVEL)
             letter_changed = old_letter != new_letter
             label = SKILL_DISPLAY_NAMES.get(skill_key, skill_key.replace("_", " ").title())
             if levels_gained == 1:
@@ -283,6 +323,8 @@ class CmdXp(Command):
                 if letter_changed:
                     adj = caller.get_skill_grade_adjective(new_letter)
                     msg += " {} is now [{}] {}.".format(label, new_letter, adj)
+            if new_val >= cap and remainder > 0:
+                msg += " You reached your cap; {} XP remains.".format(remainder)
             caller.msg(msg)
             return
 
@@ -329,6 +371,13 @@ class CmdAttack(Command):
             if getattr(target.db, "current_hp", None) is not None and target.db.current_hp <= 0:
                 caller.msg(f"|r{target.name} is already dead.|n")
                 return
+        try:
+            from world.stamina import is_exhausted
+            if is_exhausted(caller):
+                caller.msg("You're too tired to fight.")
+                return
+        except ImportError:
+            pass
         current = _get_combat_target(caller)
         if current == target:
             caller.msg("|yYou're already fighting them.|n")
@@ -1158,6 +1207,274 @@ class CmdSpawnBed(Command):
             caller.msg("|rCould not create bed: %s|n" % e)
 
 
+class CmdSpawnPod(Command):
+    """
+    Create a splinter pod in the room. Builder+. Players enter pod, then 'splinter me' to store a clone shard.
+    Usage: spawnpod [name]
+    """
+    key = "spawnpod"
+    aliases = ["spawn pod", "spawn splinter pod"]
+    locks = "cmd:perm(Builder)"
+    help_category = "Staff"
+
+    def func(self):
+        caller = self.caller
+        name = (self.args or "splinter pod").strip()
+        from evennia.utils.create import create_object
+        try:
+            from typeclasses.splinter_pod import SplinterPod
+            create_object("typeclasses.splinter_pod.SplinterPod", key=name, location=caller.location)
+            caller.msg("|gSplinter pod |w%s|n created here. Players: |wenter pod|n, then |wsplinter me|n to store a clone shard.|n" % name)
+        except Exception as e:
+            caller.msg("|rCould not create splinter pod: %s|n" % e)
+
+
+def _get_pod_from_caller(caller):
+    """If caller is inside a splinter pod interior, return the pod object; else None."""
+    loc = getattr(caller, "location", None)
+    if not loc:
+        return None
+    pod = getattr(loc.db, "pod", None)
+    if pod:
+        return pod
+    from evennia.utils.search import search_typeclass
+    for p in search_typeclass("typeclasses.splinter_pod.SplinterPod"):
+        if getattr(p.db, "interior", None) is loc:
+            return p
+    return None
+
+
+class CmdEnterPod(Command):
+    """
+    Enter a splinter pod. Same pattern as enter vehicle: move to interior.
+    Usage: enter pod [or enter <pod>]
+    """
+    key = "enter pod"
+    aliases = ["get in pod", "enter splinter pod"]
+    locks = "cmd:all()"
+    help_category = "General"
+
+    def func(self):
+        caller = self.caller
+        if _get_pod_from_caller(caller):
+            caller.msg("You are already inside a pod. Type |wdone|n to get out first.")
+            return
+        pod = None
+        for obj in (caller.location.contents if caller.location else []):
+            if getattr(obj, "db", None) and getattr(obj.db, "interior", None):
+                pod = obj
+                break
+        if not pod:
+            caller.msg("There is no splinter pod here.")
+            return
+        interior = pod.db.interior
+        if not interior:
+            caller.msg("The pod is inert. Nothing to enter.")
+            return
+        caller.move_to(interior)
+        caller.msg("The seal closes behind you. |xYou are inside.|n Type |wdone|n when you are ready to leave.")
+        if caller.location:
+            caller.location.msg_contents("%s enters the splinter pod." % caller.name, exclude=caller)
+
+
+class CmdSplinterMe(Command):
+    """
+    Undergo soul-splintering inside a pod. Stores a shard for clone resurrection.
+    Usage: splinter me
+    """
+    key = "splinter me"
+    aliases = ["splinter"]
+    locks = "cmd:all()"
+    help_category = "General"
+
+    def func(self):
+        caller = self.caller
+        if not _get_pod_from_caller(caller):
+            caller.msg("You must be inside a splinter pod to do that.")
+            return
+        try:
+            from world.death import is_flatlined, is_permanently_dead
+            if is_flatlined(caller) or is_permanently_dead(caller):
+                caller.msg("|rYou must be alive and conscious to be splintered.|n")
+                return
+        except ImportError:
+            pass
+        from world.cloning import run_splinter_sequence
+        caller.msg("|xYou speak the words. The mechanism answers.|n")
+        run_splinter_sequence(caller)
+
+
+class CmdLeavePod(Command):
+    """
+    Leave the splinter pod. Type 'done' when you are ready to step out.
+    Usage: done
+    """
+    key = "done"
+    aliases = []
+    locks = "cmd:all()"
+    help_category = "General"
+
+    def func(self):
+        caller = self.caller
+        pod = _get_pod_from_caller(caller)
+        if not pod:
+            caller.msg("You are not inside a splinter pod.")
+            return
+        dest = getattr(pod, "location", None)
+        if not dest:
+            caller.msg("The pod has no location. You cannot leave.")
+            return
+        caller.move_to(dest)
+        caller.msg("You step out of the pod.")
+        dest.msg_contents("%s steps out of the splinter pod." % caller.name, exclude=caller)
+
+
+def _spirit_account(caller):
+    """Get the Account puppeting this Spirit (caller in death limbo)."""
+    if not hasattr(caller, "sessions"):
+        return None
+    try:
+        for session in (caller.sessions.get() or []):
+            acc = getattr(session, "account", None)
+            if acc:
+                return acc
+    except Exception:
+        pass
+    return None
+
+
+class CmdGoShard(Command):
+    """
+    Wake in your clone body (soul shard). Only in death limbo and only if your dead character had a stored splinter.
+    Usage: go shard
+    """
+    key = "go shard"
+    aliases = ["go shard", "shard"]
+    locks = "cmd:attr(has_spirit_puppet) and attr(account_has_clone)"
+    help_category = "Death"
+
+    def func(self):
+        caller = self.caller
+        account = _spirit_account(caller)
+        if not account:
+            caller.msg("You are not in a state to do that.")
+            return
+        corpse = getattr(account.db, "dead_character_corpse", None)
+        snapshot = getattr(corpse, "db", None) and getattr(corpse.db, "clone_snapshot", None) if corpse else None
+        if not snapshot:
+            caller.msg("|yYou have no stored shard. Only |wgo light|n is left.|n")
+            return
+        try:
+            from world.cloning import (
+                get_clone_spawn_room,
+                apply_clone_snapshot,
+                run_awakening_sequence,
+            )
+            from evennia.utils.create import create_object
+            dead_name = getattr(account.db, "dead_character_name", "Unknown")
+            corpse = getattr(account.db, "dead_character_corpse", None)
+            spawn_room = get_clone_spawn_room()
+            if not spawn_room:
+                caller.msg("|rThe awakening bay could not be found.|n")
+                return
+            new_char = create_object(
+                "typeclasses.characters.Character",
+                key=dead_name,
+                location=spawn_room,
+            )
+            if not new_char:
+                caller.msg("|rThe clone could not be created.|n")
+                return
+            apply_clone_snapshot(new_char, snapshot)
+            account.characters.add(new_char)
+            # Unlink corpse from account only; corpse stays persistent in the game world (do not delete)
+            if corpse and hasattr(account, "characters"):
+                try:
+                    account.characters.remove(corpse)
+                except Exception:
+                    pass
+            if corpse and getattr(corpse, "db", None) and hasattr(corpse.db, "clone_snapshot"):
+                try:
+                    del corpse.db["clone_snapshot"]
+                except Exception:
+                    pass
+            caller.msg("|xThe shard stirs. You are pulled away from the lobby.|n")
+            run_awakening_sequence(account, new_char, spawn_room)
+        except Exception as e:
+            caller.msg("|rSomething went wrong: %s|n" % e)
+
+
+class CmdGoLight(Command):
+    """
+    Let go and return to the connection screen. You will create a new character from scratch.
+    Usage: go light
+    """
+    key = "go light"
+    aliases = ["go light", "light"]
+    locks = "cmd:attr(has_spirit_puppet)"
+    help_category = "Death"
+
+    def func(self):
+        caller = self.caller
+        account = _spirit_account(caller)
+        if not account:
+            caller.msg("You are not in a state to do that.")
+            return
+        # Unpuppet all sessions first so nothing is attached to the Spirit
+        if hasattr(account, "unpuppet_object") and hasattr(account, "sessions"):
+            for session in (account.sessions.get() or []):
+                try:
+                    account.unpuppet_object(session)
+                except Exception:
+                    pass
+        # Unlink corpse from account only; corpse stays persistent in the game world (do not delete)
+        corpse = getattr(account.db, "dead_character_corpse", None)
+        if corpse and hasattr(account, "characters"):
+            try:
+                account.characters.remove(corpse)
+            except Exception:
+                pass
+        for key in ("dead_character_name", "dead_character_corpse"):
+            if hasattr(account.db, key):
+                try:
+                    del account.db[key]
+                except Exception:
+                    pass
+        # Erase the Spirit entirely so reconnect shows create-character / connect screen
+        spirit = getattr(account.db, "death_spirit", None)
+        if spirit and hasattr(spirit, "id"):
+            if hasattr(account, "characters") and hasattr(account.characters, "remove"):
+                try:
+                    account.characters.remove(spirit)
+                except Exception:
+                    pass
+            try:
+                spirit.delete()
+            except Exception:
+                pass
+        if hasattr(account.db, "death_spirit"):
+            try:
+                del account.db["death_spirit"]
+            except Exception:
+                pass
+        # Clear any "last puppet" so reconnect doesn't try to restore Spirit
+        if hasattr(account.db, "_last_puppet"):
+            try:
+                del account.db["_last_puppet"]
+            except Exception:
+                pass
+        reason = "You have gone to the light. Create a new character when you return."
+        if hasattr(account, "sessions"):
+            for session in (account.sessions.get() or []):
+                try:
+                    if hasattr(session, "sessionhandler") and session.sessionhandler:
+                        session.sessionhandler.disconnect(session, reason=reason)
+                    elif hasattr(session, "disconnect"):
+                        session.disconnect(reason)
+                except Exception:
+                    pass
+
+
 class CmdSit(Command):
     """
     Sit on a seat (chair, couch, bench, etc.).
@@ -1367,7 +1684,7 @@ class CmdStaffSheet(Command):
     Usage: charsheet <character>
     """
     key = "charsheet"
-    aliases = ["staffsheet", "viewsheet", "sheet"]
+    aliases = ["staffsheet", "viewsheet",]
     locks = "cmd:perm(Builder)"
     help_category = "Staff"
 
@@ -1817,7 +2134,7 @@ class CmdRestore(Command):
     Usage: restore <character>
     """
     key = "restore"
-    aliases = ["fullheal", "healup"]
+    aliases = ["fullheal", "healup", "heal"]  # single admin restore command; heal removed to avoid alias clash
     locks = "cmd:perm(Builder)"
     help_category = "Staff"
 
@@ -1839,6 +2156,48 @@ class CmdRestore(Command):
                 target.msg("|gYou have been restored to full health and stamina.|n")
         except Exception as e:
             caller.msg("|rCould not restore: {}|n".format(e))
+
+
+class CmdDebugKill(Command):
+    """
+    Admin debug: immediately kill a character and put them into corpse state so you
+    can test the death limbo / go shard / go light flow. Target becomes a corpse;
+    their account is unpuppeted and sent to the Death Lobby.
+    Usage: debugkill [target]
+    If no target, kills yourself.
+    """
+    key = "debugkill"
+    aliases = ["debug death"]
+    locks = "cmd:perm(Builder)"
+    help_category = "Staff"
+
+    def func(self):
+        from world.death import DEATH_STATE_FLATLINED, make_permanent_death, is_permanently_dead
+        caller = self.caller
+        args = (self.args or "").strip()
+        if args:
+            target = caller.search(args, global_search=True)
+            if not target:
+                return
+        else:
+            target = caller
+        if not hasattr(target, "db"):
+            caller.msg("|rNot a valid character.|n")
+            return
+        if is_permanently_dead(target):
+            caller.msg("|r{} is already permanently dead (a corpse).|n".format(target.name))
+            return
+        # Set to 0 HP and flatlined so make_permanent_death can run
+        target.db.current_hp = 0
+        if hasattr(target, "max_stamina"):
+            target.db.current_stamina = 0
+        target.db.death_state = DEATH_STATE_FLATLINED
+        target.db.room_pose = "lying here, dead."
+        make_permanent_death(target, attacker=None, reason="time")
+        if target == caller:
+            caller.msg("|y[DEBUG]|n You have been killed. You should be in the Death Lobby now.|n")
+        else:
+            caller.msg("|y[DEBUG]|n {} has been killed and is now a corpse. Their account is in the Death Lobby.|n".format(target.name))
 
 
 class CmdExamine(Command):
@@ -2284,6 +2643,10 @@ class CmdEat(Command):
         name = obj.get_display_name(caller) if hasattr(obj, "get_display_name") else obj.name
         caller.msg("You eat |w%s|n." % name)
         caller.location.msg_contents("%s eats %s." % (caller.name, name), exclude=caller)
+        # Nutritious food boosts stamina regen for a while (all food counts unless obj has db.nutritious = False)
+        if getattr(obj.db, "nutritious", True):
+            import time
+            caller.db.last_nutritious_meal = time.time()
         # Consume: delete single-use or decrement uses
         if getattr(obj.db, "uses_remaining", None) is not None:
             u = (obj.db.uses_remaining or 0) - 1
@@ -2732,48 +3095,6 @@ class CmdCheckAmmo(Command):
     aliases = ["ammo", "mag", "check mag", "rounds"]
     locks = "cmd:all()"
     help_category = "Combat"
-
-    def func(self):
-        caller = self.caller
-        weapon = None
-        args = self.args.strip() if self.args else ""
-        if args:
-            weapon = caller.search(args, location=caller)
-            if not weapon:
-                return
-        else:
-            weapon = getattr(caller.db, "wielded_obj", None)
-            if weapon and weapon.location != caller:
-                weapon = None
-            if not weapon:
-                caller.msg("Wield a ranged weapon first, or specify one: |wcheck ammo <weapon>|n.")
-                return
-
-        from world.ammo import is_ranged_weapon
-        weapon_key = getattr(weapon.db, "weapon_key", None)
-        if not weapon_key or not is_ranged_weapon(weapon_key):
-            caller.msg(f"{weapon.name} doesn't use ammunition.")
-            return
-
-        capacity = int(getattr(weapon.db, "ammo_capacity", 0) or 0)
-        current = int(getattr(weapon.db, "ammo_current", 0) or 0)
-        caller.msg(f"You thumb the magazine on |w{weapon.name}|n: |w{current}|n round(s) left." + (f" (capacity {capacity})" if capacity else "") + ".")
-
-
-class CmdCheckAmmo(Command):
-    """
-    Check how many rounds are left in a ranged weapon's magazine (without unloading).
-
-    Usage:
-      check ammo              - check wielded weapon
-      check ammo <weapon>     - check specified weapon
-      ammo
-      mag
-    """
-    key = "check ammo"
-    aliases = ["ammo", "mag", "check mag", "rounds"]
-    locks = "cmd:all()"
-    help_category = "Combat"
     usage_typeclasses = ["typeclasses.weapons.CombatWeapon"]
     usage_hint = "|wcheck ammo|n (when wielded, ranged only)"
 
@@ -2972,7 +3293,7 @@ class CmdFrisk(Command):
       frisk <character>
     """
     key = "frisk"
-    aliases = ["check", "patdown"]
+    aliases = ["patdown"]  # "check" reserved for diagnose (medical check)
     locks = "cmd:all()"
     help_category = "General"
 
@@ -3012,31 +3333,74 @@ except ImportError:
 
 
 class CmdGet(DefaultCmdGet if DefaultCmdGet else BaseCommand):
-    """Get: same as default but taking from a logged-off character only allowed after 30 min."""
+    """Get: supports 'get <item> from <container>'; from logged-off/corpse only when allowed."""
 
     def func(self):
-        if DefaultCmdGet and " from " in self.args:
-            args = self.args.strip()
-            _, _, container_spec = args.partition(" from ")
-            if container_spec:
-                container = self.caller.search(container_spec.strip(), location=self.caller.location)
-                if container:
-                    try:
-                        from typeclasses.corpse import Corpse
-                        from evennia import DefaultCharacter
-                        from world.death import is_character_logged_off, character_logged_off_long_enough
-                        # Container is a character (not a corpse): only allow if logged off 30+ min
-                        if isinstance(container, DefaultCharacter) and not isinstance(container, Corpse):
-                            if is_character_logged_off(container) and not character_logged_off_long_enough(container):
-                                self.caller.msg("They haven't been gone long enough. You can only take from someone who's been logged off at least half an hour.")
-                                return
-                            if not is_character_logged_off(container):
-                                self.caller.msg("You can't take from someone who's wide awake!")
-                                return
-                    except ImportError:
-                        pass
-        if DefaultCmdGet:
-            super().func()
+        caller = self.caller
+        args = (self.args or "").strip()
+        if not args:
+            if DefaultCmdGet:
+                super().func()
+            else:
+                caller.msg("Get what?")
+            return
+        if " from " not in args:
+            if DefaultCmdGet:
+                super().func()
+            return
+        # Parse "get <item> from <container>" — default CmdGet does NOT support this, so we handle it fully
+        item_spec, _, container_spec = args.partition(" from ")
+        item_spec = item_spec.strip()
+        container_spec = container_spec.strip()
+        if not item_spec or not container_spec:
+            caller.msg("Usage: get <item> from <container>")
+            return
+        container = caller.search(container_spec, location=caller.location)
+        if not container:
+            return
+        try:
+            from typeclasses.corpse import Corpse
+            from evennia import DefaultCharacter
+            from world.death import is_character_logged_off, character_logged_off_long_enough
+            if isinstance(container, DefaultCharacter) and not isinstance(container, Corpse):
+                if not is_character_logged_off(container):
+                    caller.msg("You can't take from someone who's wide awake!")
+                    return
+                if not character_logged_off_long_enough(container):
+                    caller.msg("They haven't been gone long enough. You can only take from someone who's been logged off at least half an hour.")
+                    return
+        except ImportError:
+            pass
+        # Search for the item inside the container (contents, not location=caller.location)
+        obj = caller.search(item_spec, location=container)
+        if not obj:
+            return
+        from evennia.utils import utils
+        objs = utils.make_iter(obj)
+        if len(objs) == 1 and objs[0] == caller:
+            caller.msg("You can't get yourself.")
+            return
+        for o in objs:
+            if not o.access(caller, "get"):
+                err = getattr(getattr(o, "db", None), "get_err_msg", None)
+                caller.msg(err if err else "You can't get that.")
+                return
+            if not o.at_pre_get(caller):
+                return
+        moved = []
+        for o in objs:
+            if o.move_to(caller, quiet=True, move_type="get"):
+                moved.append(o)
+                o.at_get(caller)
+        if not moved:
+            caller.msg("That can't be picked up.")
+        else:
+            obj_name = moved[0].get_numbered_name(len(moved), caller, return_string=True)
+            caller.msg("You get %s from %s." % (obj_name, container.get_display_name(caller)))
+            caller.location.msg_contents(
+                "%s gets %s from %s." % (caller.get_display_name(caller), obj_name, container.get_display_name(caller)),
+                exclude=caller,
+            )
 
 
 def _loot_finish(caller_id, corpse_id):
@@ -3367,46 +3731,6 @@ class CmdDespawn(Command):
         
         caller.msg(f"|y[SYSTEM]|n Entity '|w{name}|n' has been purged from the sector.")
         caller.location.msg_contents(f"The individual known as {name} vanishes as the simulation recalibrates.", exclude=caller)
-class CmdHeal(Command):
-    """
-    Completely restores a target's HP and Stamina.
-
-    Usage:
-      heal <target>
-      heal (targets yourself)
-    """
-    key = "heal"
-    aliases = ["fullheal", "restore"]
-    locks = "cmd:perm(Builder)"  # Restrict to Admins/Builders
-    help_category = "Admin"
-
-    def func(self):
-        caller = self.caller
-        
-        # 1. Determine the target
-        if not self.args:
-            target = caller
-        else:
-            target = caller.search(self.args)
-            
-        if not target:
-            return
-
-        # 2. Reset the values and clear trauma
-        target.db.current_hp = target.max_hp
-        target.db.current_stamina = target.max_stamina
-        try:
-            from world.medical import reset_medical
-            reset_medical(target)
-        except Exception:
-            pass
-
-        # 3. Messaging
-        if target == caller:
-            caller.msg("|g[ADMIN]|n You have been fully restored.")
-        else:
-            caller.msg(f"|g[ADMIN]|n You have fully restored |w{target.name}|n.")
-            target.msg(f"|g[ADMIN]|n Your vitals have been reset by {caller.name}.")
 
 
 class CmdGiveXp(Command):

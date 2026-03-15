@@ -96,35 +96,35 @@ def _splinted_desc(part, poss):
     if part == "abdomen":
         return f"{poss.capitalize()} ribs are bound; breathing is shallow."
     if part == "head":
-        return f"{poss.capitalize()} head is stabilized (skull/neck)."
+        return f"{poss.capitalize()} head is braced (skull/neck)."
     if part == "face":
         return f"{poss.capitalize()} face or jaw is immobilized."
     if part == "neck":
         return f"{poss.capitalize()} neck is immobilized (c-spine)."
     if part == "groin":
-        return f"{poss.capitalize()} pelvis is stabilized."
+        return f"{poss.capitalize()} pelvis is braced."
     return f"{poss.capitalize()} {part} is splinted."
 
 
 def _stabilized_organ_desc(part, poss):
-    """One-line descriptor when internal organ(s) on this body part have been stabilized; pronoun-aware."""
+    """One-line descriptor when internal organ(s) on this body part have been treated (surgery/closure); pronoun-aware."""
     if part == "torso":
-        return f"{poss.capitalize()} chest shows signs of internal stabilization."
+        return f"{poss.capitalize()} chest shows signs of recent surgery."
     if part == "back":
-        return f"{poss.capitalize()} back and spinal area have been stabilized."
+        return f"{poss.capitalize()} back and spinal area show stitches and signs of recent surgery."
     if part == "abdomen":
-        return f"{poss.capitalize()} abdomen shows signs of internal stabilization."
+        return f"{poss.capitalize()} abdomen shows signs of recent surgery."
     if part == "head":
-        return f"{poss.capitalize()} head injury has been stabilized."
+        return f"{poss.capitalize()} head shows signs of recent surgery."
     if part == "face":
-        return f"{poss.capitalize()} face or eyes have been stabilized."
+        return f"{poss.capitalize()} face or eyes show stitches and signs of recent surgery."
     if part == "neck":
-        return f"{poss.capitalize()} neck and airway have been stabilized."
+        return f"{poss.capitalize()} neck shows stitches and signs of recent surgery."
     if part == "groin":
-        return f"{poss.capitalize()} pelvic region has been stabilized."
+        return f"{poss.capitalize()} pelvic region shows signs of recent surgery."
     if "shoulder" in part:
-        return f"{poss.capitalize()} {part} area has been stabilized."
-    return f"{poss.capitalize()} {part} shows signs of stabilization."
+        return f"{poss.capitalize()} {part} area shows signs of recent surgery."
+    return f"{poss.capitalize()} {part} shows signs of recent surgery."
 
 
 def get_effective_body_descriptions(character):

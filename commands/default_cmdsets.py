@@ -15,12 +15,26 @@ own cmdsets by inheriting from them or directly from `evennia.CmdSet`.
 """
 
 from evennia import default_cmds
+from evennia.commands.cmdset import CmdSet
 from evennia.commands.default.account import (
     CmdIC,
     CmdOOC,
     CmdCharCreate,
     CmdCharDelete,
 )
+
+
+class SplinterPodCmdSet(CmdSet):
+    """
+    Leave-pod (and pod-related) commands with priority above ExitCmdSet (101)
+    so "done" works inside the pod instead of matching room exits.
+    """
+    key = "SplinterPod"
+    priority = 110
+
+    def at_cmdset_creation(self):
+        from commands.command import CmdLeavePod
+        self.add(CmdLeavePod())
 
 
 class CharacterCmdSet(default_cmds.CharacterCmdSet):
@@ -41,14 +55,19 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
             CmdStats, CmdAttack, CmdStance, CmdStop, CmdExecute, CmdGrapple, CmdLetGo, CmdResist, CmdDiagnose, CmdUse, CmdApply, CmdStabilize, CmdEat, CmdDrink, CmdWield, CmdUnwield, CmdFreehands, CmdInventory, CmdReload, CmdUnload, CmdCheckAmmo,
             CmdWear, CmdRemove, CmdStrip, CmdLoot, CmdFrisk, CmdGet, CmdTailor, CmdTease, CmdXp,
             CmdDescribeBodypart, CmdBody, CmdLookPlace, CmdSleepPlace, CmdWakeMsg, CmdSetPlace, CmdPose, CmdPronoun, CmdEmote, CmdNoMatch,
-            CmdEmoteDebug, CmdSpawn, CmdDespawn, CmdHeal, CmdGiveXp, CmdCreateItem, CmdTypeclasses, CmdSpawnVehicle, CmdSpawnMedical, CmdSpawnOR, CmdDefib,
+            CmdEmoteDebug, CmdSpawn, CmdDespawn, CmdGiveXp, CmdCreateItem, CmdTypeclasses, CmdSpawnVehicle, CmdSpawnMedical, CmdSpawnOR, CmdDefib,
             CmdSit, CmdLieOnTable, CmdGetOffTable, CmdSurgery,
             CmdStaffSheet, CmdStaffSetStat, CmdStaffSetSkill, CmdMakeNpc, CmdNpcSet, CmdGoto, CmdSummon,
-            CmdSetVoid, CmdVoid, CmdRelease, CmdBoot, CmdFind, CmdAnnounce, CmdRestore,
-            CmdSpawnSeat, CmdSpawnBed,
-            CmdEnterVehicle, CmdExitVehicle, CmdStartEngine, CmdStopEngine, CmdShutoffEngine, CmdDrive,
-            CmdVehicleStatus, CmdRepairPart, CmdDamageVehicle,
+            CmdSetVoid, CmdVoid, CmdRelease, CmdBoot, CmdFind, CmdAnnounce, CmdRestore, CmdDebugKill,
+            CmdSpawnSeat, CmdSpawnBed, CmdSpawnPod,
+            CmdEnterPod, CmdSplinterMe,
+            CmdEnterVehicle, CmdExitVehicle, CmdStartEngine, CmdStopEngine, CmdShutoffEngine, CmdDrive, CmdStartEngine, CmdStopEngine, CmdShutoffEngine, CmdDrive,
+            CmdVehicleStatus, CmdRepairPart,             CmdDamageVehicle,
             CmdExamine,
+        )
+        from commands.builder_commands import (
+            CmdTag, CmdHere, CmdListCmds, CmdCloneSpawn, CmdDig, CmdDesc,
+            CmdSetAttr, CmdName, CmdOpen, CmdDestroy,
         )
         try:
             from evennia.commands.default.general import CmdGet as DefaultCmdGet
@@ -104,6 +123,19 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdEmote())
         self.add(CmdNoMatch())
         self.add(CmdExamine())
+        self.add(CmdTag())
+        self.add(CmdHere())
+        self.add(CmdListCmds())
+        self.add(CmdCloneSpawn())
+        self.add(CmdDig())
+        self.add(CmdDesc())
+        self.add(CmdSetAttr())
+        self.add(CmdName())
+        self.add(CmdOpen())
+        self.add(CmdDestroy())
+        self.add(CmdEnterPod())
+        self.add(CmdSplinterMe())
+        self.add(SplinterPodCmdSet())  # CmdLeavePod here so it beats exits (priority 110)
         self.add(CmdEnterVehicle())
         self.add(CmdExitVehicle())
         self.add(CmdStartEngine())
@@ -117,7 +149,6 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdEmoteDebug())
         self.add(CmdSpawn())
         self.add(CmdDespawn())
-        self.add(CmdHeal())
         self.add(CmdGiveXp())
         self.add(CmdCreateItem())
         self.add(CmdTypeclasses())
@@ -139,8 +170,10 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdFind())
         self.add(CmdAnnounce())
         self.add(CmdRestore())
+        self.add(CmdDebugKill())
         self.add(CmdSpawnSeat())
         self.add(CmdSpawnBed())
+        self.add(CmdSpawnPod())
 
 class AdminOnlyIC(CmdIC):
     """IC/puppet: staff only (one character per account for players)."""
@@ -189,8 +222,10 @@ class AccountCmdSet(default_cmds.AccountCmdSet):
         self.add(StaffCharCreate())
         self.remove(CmdCharDelete)
         self.add(StaffCharDelete())
-        from commands.command import CmdStats
+        from commands.command import CmdStats, CmdGoLight, CmdGoShard
         self.add(CmdStats())
+        self.add(CmdGoLight())
+        self.add(CmdGoShard())
 
 
 class UnloggedinCmdSet(default_cmds.UnloggedinCmdSet):

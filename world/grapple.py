@@ -95,6 +95,7 @@ def attempt_resist(victim):
     """
     Victim tries to break free. Contested Strength + Unarmed.
     Grappler gets modifier from hold_strength; each attempt (even failed) degrades hold.
+    Costs stamina; too exhausted to resist returns failure.
     Returns (freed: bool, message_for_victim: str, message_for_grappler: str).
     """
     grappler = getattr(victim.db, "grappled_by", None)
@@ -104,6 +105,15 @@ def attempt_resist(victim):
     last = getattr(victim.db, "grapple_resist_cooldown", 0)
     if now - last < RESIST_COOLDOWN:
         return False, "You need a moment before you can try again.", ""
+    try:
+        from world.stamina import is_exhausted, spend_stamina, STAMINA_COST_RESIST_GRAPPLE
+        if is_exhausted(victim):
+            return False, "You're too tired to resist.", ""
+        if (getattr(victim, "stamina", 0) or 0) < STAMINA_COST_RESIST_GRAPPLE:
+            return False, "You're too tired to resist.", ""
+        spend_stamina(victim, STAMINA_COST_RESIST_GRAPPLE)
+    except ImportError:
+        pass
     victim.db.grapple_resist_cooldown = now
 
     hold = int(getattr(victim.db, "grapple_hold_strength", 0))
