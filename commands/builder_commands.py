@@ -157,6 +157,8 @@ class CmdDig(Command):
     Exit format: name or name;alias1;alias2  (e.g. west;w  or south;s;down)
     Example: budig Testing = west;w, east;e
     Use /tel to teleport to the new room after creating.
+
+    Note: Cannot create meatspace rooms from Matrix rooms. Use mdig for Matrix rooms.
     """
     key = "budig"
     switch_options = ("tel", "teleport")
@@ -187,6 +189,11 @@ class CmdDig(Command):
         loc = caller.location
         if not loc:
             caller.msg("You are nowhere.")
+            return
+
+        # Verify current location is NOT a Matrix room
+        if isinstance(loc, MatrixNode):
+            caller.msg("You are in a Matrix room. Use mdig to create Matrix rooms.")
             return
         try:
             from typeclasses.rooms import Room
@@ -392,14 +399,22 @@ class CmdMatrixDig(Command):
             caller.msg("You are nowhere.")
             return
 
-        # Verify current location is a Matrix room
-        if not isinstance(loc, MatrixNode):
-            caller.msg("You must be in a Matrix room to use mdig. Use budig for meatspace rooms.")
-            return
+        # Allow creating Matrix rooms from anywhere (needed to bootstrap first room)
+        # But validate exits if creating them
+        loc_is_matrix = isinstance(loc, MatrixNode)
 
         new_room = create_object(MatrixNode, key=room_name, location=None)
         if not new_room:
             caller.msg("Could not create Matrix room.")
+            return
+
+        # Validate exit creation - cannot link Matrix and meatspace
+        if not loc_is_matrix:
+            caller.msg("|yWarning:|n Creating Matrix room from meatspace. No exit created (use buopen to link manually if needed).")
+            caller.msg("Created Matrix room |m%s|n (#%s) with no exits." % (room_name, new_room.id))
+            if teleport:
+                caller.move_to(new_room)
+                caller.msg("You teleport to the new Matrix room.")
             return
 
         out_exit = create_object(MatrixExit, key=exit_out, location=loc, destination=new_room)
