@@ -13,31 +13,43 @@ from world.combat import execute_combat_turn
 # Lock string for admin-only commands (Builder and Admin accounts)
 ADMIN_LOCK = "cmd:perm(Builder) or perm(Admin)"
 
+def _command_character(self):
+    """Resolve to the puppeted character when command runs with Account as caller (e.g. Session cmdset)."""
+    caller = self.caller
+    if getattr(self, "session", None) and getattr(self.session, "puppet", None):
+        puppet = self.session.puppet
+        if puppet and (getattr(caller, "db", None) is None or not hasattr(caller.db, "current_hp")):
+            return puppet
+    return caller
+
+
 class Command(BaseCommand):
     """
-    Base command. Blocks all commands when character is dead (hp <= 0) except for Admins/Builders.
+    Base command. Blocks all commands when character is flatlined (dying) or dead except for Admins/Builders.
     """
     def at_pre_cmd(self):
-        """Block commands if caller is flatlined (dying) or permanently dead."""
+        """Block commands if character is flatlined (dying) or permanently dead."""
         caller = self.caller
         if not caller:
             return super().at_pre_cmd()
+        # Resolve to puppeted character so we check the right object (caller may be Account when using Session cmdset)
+        char = _command_character(self)
         try:
-            if caller.account and (caller.account.permissions.check("Builder") or caller.account.permissions.check("Admin")):
+            if char.account and (char.account.permissions.check("Builder") or char.account.permissions.check("Admin")):
                 return super().at_pre_cmd()
         except Exception:
             pass
         try:
             from world.death import is_flatlined, is_permanently_dead
-            if is_flatlined(caller):
+            if is_flatlined(char):
                 caller.msg("|rYou are dying. There is nothing you can do.|n")
                 return True
-            if is_permanently_dead(caller):
+            if is_permanently_dead(char):
                 caller.msg("|rYou are dead. Only an administrator can help you now.|n")
                 return True
         except Exception:
             pass
-        hp = getattr(caller, "hp", None)
+        hp = getattr(char, "hp", None)
         if hp is not None and hp <= 0:
             caller.msg("|rYou are dying. There is nothing you can do.|n")
             return True
@@ -49,14 +61,14 @@ class Command(BaseCommand):
 
 class CmdStats(Command):
     """
-    Display your character sheet: vitals, SPECIAL stats, skills, and when the soul was last fragmented (shard date).
+    Display your character sheet: SPECIAL stats, skills, XP, and when the soul was last fragmented (shard date).
 
     Usage:
-      stats
-      sheet
+      @stats
+      @sheet
     """
-    key = "stats"
-    aliases = ["@stats", "sheet", "score"]
+    key = "@stats"
+    aliases = ["@sheet", "@score"]
     locks = "cmd:all()"
     help_category = "General"
 
@@ -78,21 +90,7 @@ class CmdStats(Command):
         stats = caller.db.stats or {}
         skills = caller.db.skills or {}
         bg = caller.db.background or "Unknown"
-
-        # Vitals (guard in case max_hp not ready)
-        try:
-            hp_str = "{} / {}".format(caller.hp, caller.max_hp)
-            st_str = "{} / {}".format(caller.stamina, caller.max_stamina)
-            load_str = "{} kg".format(caller.carry_capacity)
-        except Exception:
-            hp_str = st_str = load_str = "---"
         xp = int(getattr(caller.db, "xp", 0) or 0)
-        try:
-            from world.xp import XP_CAP
-            xp_cap = int(getattr(caller.db, "xp_cap", XP_CAP) or XP_CAP)
-        except Exception:
-            xp_cap = 5500
-        xp_str = "{} / {}".format(xp, xp_cap)
 
         # Soul last fragmented: from character's clone_snapshot (shard is per-character)
         snapshot = getattr(caller.db, "clone_snapshot", None)
@@ -109,30 +107,32 @@ class CmdStats(Command):
             except Exception:
                 pass
 
-        # Gutterpunk/arcanepunk sheet: rust, wire, grit, copper/amber
+        from world.levels import get_stat_grade, get_skill_grade
+        # Original tall structure; grades from exact thresholds (stats: stored level, skills: level)
         w = 50
         edge = "|x├" + "─" * (w - 2) + "┤|n"
         output = "|x┌" + "─" * (w - 2) + "┐|n\n"
         output += "|x│|n |R■|n |wSOUL READOUT|n  |x—|n  " + (caller.name or "Unknown").ljust(18) + " |x│|n\n"
         output += "|x│|n   |wOrigin|n " + (bg or "Unknown").ljust(w - 18) + " |x│|n\n"
         output += edge + "\n"
-        output += "|x│|n |rVitality|n " + hp_str.ljust(10) + "  |yStamina|n " + st_str.ljust(10) + "  |wLoad|n " + load_str.ljust(6) + " |x│|n\n"
-        output += "|x│|n |wXP|n " + xp_str.ljust(w - 10) + " |x│|n\n"
+        output += "|x│|n |wXP|n " + str(xp).ljust(w - 10) + " |x│|n\n"
         if fragmented_str:
-            output += "|x│|n |rSoul last fragmented|n " + fragmented_str.ljust(w - 26) + " |x│|n\n"
+            output += "|x│|n |wLast fragmented|n " + fragmented_str.ljust(w - 21) + " |x│|n\n"
         output += edge + "\n"
-        from world.levels import level_to_letter, MAX_STAT_LEVEL, MAX_LEVEL
         output += "|x│|n |R CORE|n" + " ".ljust(w - 9) + "|x│|n\n"
         for key in STAT_KEYS:
-            letter = level_to_letter(caller.get_stat_level(key), MAX_STAT_LEVEL) if hasattr(caller, "get_stat_level") else "Q"
+            stored = caller.get_stat_level(key) if hasattr(caller, "get_stat_level") else 0
+            letter = get_stat_grade(stored)
             adj = caller.get_stat_grade_adjective(letter, key) if hasattr(caller, "get_stat_grade_adjective") else letter
             output += "|x│|n   |w{}|n  |R[{}]|n {}\n".format(key.capitalize().ljust(12), letter, adj)
         output += edge + "\n"
         output += "|x│|n |R IMPLANTS|n" + " ".ljust(w - 14) + "|x│|n\n"
-        # Pad skill labels to fixed width so [letter] and grade align (longest is "Electrical Engineering")
         skill_label_width = 24
         for key in SKILL_KEYS:
-            letter = level_to_letter(caller.get_skill_level(key), MAX_LEVEL) if hasattr(caller, "get_skill_level") else "Q"
+            level = caller.get_skill_level(key) if hasattr(caller, "get_skill_level") else (skills.get(key, 0) or 0)
+            if not level:
+                continue
+            letter = get_skill_grade(level)
             adj = caller.get_skill_grade_adjective(letter) if hasattr(caller, "get_skill_grade_adjective") else letter
             label = SKILL_DISPLAY_NAMES.get(key, key.replace("_", " ").title())
             output += "|x│|n   |w{}|n  |R[{}]|n {}\n".format(label.ljust(skill_label_width), letter, adj)
@@ -142,39 +142,44 @@ class CmdStats(Command):
 
 class CmdXp(Command):
     """
-    View XP and spend it to advance stats or skills (cost for next raise increases with level).
+    View XP and spend it to advance stats or skills (cost per level from milestone curves).
 
     Usage:
-      xp                          - show XP and XP needed for next raise per stat/skill
-      xp advance stat <name> [N]   - spend XP to raise a stat by N levels (default 1)
-      xp advance skill <name> [N]  - spend XP to raise a skill by N levels (default 1)
-    Bulk advances account for the rising cost curve.
+      @xp                          - show XP and XP needed for next raise per stat/skill
+      @xp advance stat <name> [N]   - spend XP to raise a stat by N levels (default 1)
+      @xp advance skill <name> [N]  - spend XP to raise a skill by N levels (default 1)
+    Bulk advances deduct the exact cost for each level step (while loop; max 3050 earnable XP).
 
-    XP is granted every 6 hours (max 4 drops per 24h). Cap tuned for ~1 year of play.
+    XP: 2 per 6h window, max 4 drops per 24h (8 XP/day).
     """
-    key = "xp"
-    aliases = ["advance", "progress"]
+    key = "@xp"
+    aliases = ["@advance", "@progress"]
     locks = "cmd:all()"
     help_category = "General"
 
     def func(self):
-        from world.xp import XP_CAP, get_xp_cost_stat, get_xp_cost_skill, _stat_level, _skill_level, _stat_cap_level, _skill_cap_level
-        from world.levels import level_to_letter, MAX_STAT_LEVEL, MAX_LEVEL
+        from world.xp import (
+            XP_CAP, get_xp_cost_stat, get_xp_cost_skill,
+            xp_cost_for_stat_level, xp_cost_for_skill_level,
+            _stat_level, _skill_level, _stat_cap_level, _skill_cap_level,
+        )
+        from world.levels import get_stat_grade, get_skill_grade, MAX_STAT_LEVEL, MAX_LEVEL
         from world.chargen import STAT_KEYS
         from world.skills import SKILL_KEYS, SKILL_DISPLAY_NAMES
         caller = self.caller
-        xp = int(getattr(caller.db, "xp", 0) or 0)
+        xp = float(getattr(caller.db, "xp", 0) or 0)
         cap = int(getattr(caller.db, "xp_cap", XP_CAP) or XP_CAP)
 
         if not self.args or self.args.strip().lower() in ("show", ""):
             # Column widths for aligned display (match chargen)
             NAME_W, LETTER_W, ADJ_W = 24, 5, 20
-            output = "|cXP|n: |w{}|n / {}\n\n".format(xp, cap)
+            xp_display = int(xp) if xp == int(xp) else round(xp, 2)
+            output = "|cXP|n: |w{}|n\n\n".format(xp_display)
             output += "|cXP needed for next raise:|n\n\n"
             output += "|wStats|n:\n"
             for sk in STAT_KEYS:
                 cost, _ = get_xp_cost_stat(caller, sk)
-                letter = level_to_letter(_stat_level(caller, sk), MAX_STAT_LEVEL)
+                letter = get_stat_grade(_stat_level(caller, sk))
                 adj = caller.get_stat_grade_adjective(letter, sk)
                 name_pad = sk.capitalize().ljust(NAME_W)
                 letter_part = ("[" + letter + "] ").ljust(LETTER_W)
@@ -182,11 +187,12 @@ class CmdXp(Command):
                 if cost is None:
                     output += "  {} {} {} |x(at cap)|n\n".format(name_pad, letter_part, adj_pad)
                 else:
-                    output += "  {} {} {} next raise: |w{} XP|n\n".format(name_pad, letter_part, adj_pad, cost)
+                    cost_str = str(int(cost)) if cost == int(cost) else str(round(cost, 2))
+                    output += "  {} {} {} next raise: |w{} XP|n\n".format(name_pad, letter_part, adj_pad, cost_str)
             output += "\n|wSkills|n:\n"
             for sk in SKILL_KEYS:
                 cost, _ = get_xp_cost_skill(caller, sk)
-                letter = level_to_letter(_skill_level(caller, sk), MAX_LEVEL)
+                letter = get_skill_grade(_skill_level(caller, sk))
                 adj = caller.get_skill_grade_adjective(letter)
                 label = SKILL_DISPLAY_NAMES.get(sk, sk.replace("_", " ").title())
                 name_pad = label.ljust(NAME_W)
@@ -195,19 +201,73 @@ class CmdXp(Command):
                 if cost is None:
                     output += "  {} {} {} |x(at cap)|n\n".format(name_pad, letter_part, adj_pad)
                 else:
-                    output += "  {} {} {} next raise: |w{} XP|n\n".format(name_pad, letter_part, adj_pad, cost)
-            output += "\nUse |wxp advance stat <name> [N]|n or |wxp advance skill <name> [N]|n to spend XP (N = number of raises)."
+                    cost_str = str(int(cost)) if cost == int(cost) else str(round(cost, 2))
+                    output += "  {} {} {} next raise: |w{} XP|n\n".format(name_pad, letter_part, adj_pad, cost_str)
+            output += "\nUse |w@xp advance stat <name> [N]|n or |w@xp advance skill <name> [N]|n to spend XP (N = number of raises). You will be asked to confirm with |w@xp confirm|n."
             caller.msg(output)
             return
 
         parts = self.args.strip().split()
+        # Handle confirm/cancel for pending XP spend
+        if parts and parts[0].lower() == "confirm":
+            pending = getattr(caller.db, "pending_xp_advance", None)
+            if not pending:
+                caller.msg("You have no pending XP advance. Use |w@xp advance stat <name> [N]|n or |w@xp advance skill <name> [N]|n.")
+            else:
+                from world.levels import get_stat_grade, get_skill_grade
+                sub = pending["sub"]
+                attr_key = pending["attr_key"]
+                levels_gained = pending["levels_gained"]
+                total_spent = pending["total_spent"]
+                new_val = pending["new_val"]
+                cur = pending["cur"]
+                cap = pending["cap"]
+                label = pending["label"]
+                db_key = pending["db_key"]
+                xp_now = float(getattr(caller.db, "xp", 0) or 0)
+                if xp_now < total_spent:
+                    caller.msg("You no longer have enough XP (need {}). Advance cancelled.".format(total_spent))
+                    del caller.db.pending_xp_advance
+                else:
+                    get_grade_fn = get_stat_grade if sub == "stat" else get_skill_grade
+                    get_adj_fn = (lambda letter: caller.get_stat_grade_adjective(letter, attr_key)) if sub == "stat" else caller.get_skill_grade_adjective
+                    if not getattr(caller.db, db_key, None):
+                        setattr(caller.db, db_key, {})
+                    getattr(caller.db, db_key)[attr_key] = new_val
+                    caller.db.xp = xp_now - total_spent
+                    remainder = caller.db.xp
+                    old_letter = get_grade_fn(cur)
+                    new_letter = get_grade_fn(new_val)
+                    letter_changed = old_letter != new_letter
+                    spent_str = str(int(total_spent)) if total_spent == int(total_spent) else str(round(total_spent, 2))
+                    if levels_gained == 1:
+                        msg = "You spend {} XP.".format(spent_str)
+                    else:
+                        msg = "You spend {} XP and raise {} {} time{}.".format(spent_str, label, levels_gained, "s" if levels_gained > 1 else "")
+                    if letter_changed:
+                        adj = get_adj_fn(new_letter)
+                        msg += " {} is now [{}] {}.".format(label, new_letter, adj)
+                    rem_str = str(int(remainder)) if remainder == int(remainder) else str(round(remainder, 2))
+                    if new_val >= cap and remainder > 0:
+                        msg += " You reached your cap; {} XP remains.".format(rem_str)
+                    caller.msg(msg)
+                    del caller.db.pending_xp_advance
+            return
+        if parts and parts[0].lower() == "cancel":
+            if getattr(caller.db, "pending_xp_advance", None):
+                del caller.db.pending_xp_advance
+                caller.msg("Pending XP advance cancelled.")
+            else:
+                caller.msg("You have no pending XP advance to cancel.")
+            return
+
         if len(parts) < 2 or parts[0].lower() != "advance":
-            caller.msg("Usage: xp [show] | xp advance stat <name> [N] | xp advance skill <name> [N]")
+            caller.msg("Usage: @xp [show] | @xp advance stat <name> [N] | @xp advance skill <name> [N] | @xp confirm | @xp cancel")
             return
         sub = parts[1].lower()
         # Parse: advance stat <name> [N] or advance skill <name> [N]
         if sub not in ("stat", "skill"):
-            caller.msg("Use |wxp advance stat <name> [N]|n or |wxp advance skill <name> [N]|n.")
+            caller.msg("Use |w@xp advance stat <name> [N]|n or |w@xp advance skill <name> [N]|n.")
             return
         if len(parts) < 3:
             caller.msg("Specify which stat or skill to advance.")
@@ -223,7 +283,48 @@ class CmdXp(Command):
             caller.msg("Specify which stat or skill to advance.")
             return
 
-        from world.levels import xp_cost_for_next_level
+        def advance_loop(cur, cap, bulk_n, xp_available, get_cost_fn):
+            """Bulk-buy loop: sum cost step-by-step until cap or XP runs out. Returns (levels_gained, total_spent, new_val)."""
+            total_spent = 0.0
+            levels_gained = 0
+            while levels_gained < bulk_n and cur + levels_gained < cap:
+                cost = get_cost_fn(cur + levels_gained)
+                if cost is None or xp_available - total_spent < cost:
+                    break
+                total_spent += cost
+                levels_gained += 1
+            new_val = min(cap, cur + levels_gained)
+            return levels_gained, total_spent, new_val
+
+        def format_insufficient_xp(get_cost_fn, cur, xp_available):
+            cost_one = get_cost_fn(cur)
+            cost_str = str(int(cost_one)) if cost_one is not None and cost_one == int(cost_one) else str(round(cost_one, 2)) if cost_one is not None else "?"
+            xp_str = int(xp_available) if xp_available == int(xp_available) else round(xp_available, 2)
+            caller.msg("You need {} XP for the next raise. You have {} XP.".format(cost_str, xp_str))
+
+        def apply_and_msg(levels_gained, total_spent, new_val, cur, cap, get_grade_fn, label, db_key, attr_key, get_adj_fn):
+            if levels_gained == 0:
+                return
+            if not getattr(caller.db, db_key, None):
+                setattr(caller.db, db_key, {})
+            getattr(caller.db, db_key)[attr_key] = new_val
+            caller.db.xp = xp - total_spent
+            remainder = xp - total_spent
+            old_letter = get_grade_fn(cur)
+            new_letter = get_grade_fn(new_val)
+            letter_changed = old_letter != new_letter
+            spent_str = str(int(total_spent)) if total_spent == int(total_spent) else str(round(total_spent, 2))
+            if levels_gained == 1:
+                msg = "You spend {} XP.".format(spent_str)
+            else:
+                msg = "You spend {} XP and raise {} {} time{}.".format(spent_str, label, levels_gained, "s" if levels_gained > 1 else "")
+            if letter_changed:
+                adj = get_adj_fn(new_letter)
+                msg += " {} is now [{}] {}.".format(label, new_letter, adj)
+            rem_str = str(int(remainder)) if remainder == int(remainder) else str(round(remainder, 2))
+            if new_val >= cap and remainder > 0:
+                msg += " You reached your cap; {} XP remains.".format(rem_str)
+            caller.msg(msg)
 
         if sub == "stat":
             stat_key = None
@@ -235,45 +336,28 @@ class CmdXp(Command):
                 caller.msg("Unknown stat. Use one of: {}.".format(", ".join(STAT_KEYS)))
                 return
             cur = _stat_level(caller, stat_key)
-            cap = _stat_cap_level(caller, stat_key)
-            if cur >= cap:
+            stat_cap = _stat_cap_level(caller, stat_key)
+            if cur >= stat_cap:
                 caller.msg("That stat is already at its cap.")
                 return
-            total_spent = 0
-            levels_gained = 0
-            while levels_gained < bulk_n and cur + levels_gained < cap:
-                cost = xp_cost_for_next_level(cur + levels_gained, MAX_STAT_LEVEL)
-                if cost is None or xp - total_spent < cost:
-                    break
-                total_spent += cost
-                levels_gained += 1
+            from world.xp import get_stat_cost
+            levels_gained, total_spent, new_val = advance_loop(cur, stat_cap, bulk_n, xp, get_stat_cost)
             if levels_gained == 0:
-                cost_one = xp_cost_for_next_level(cur, MAX_STAT_LEVEL)
-                caller.msg("You need {} XP for the next raise. You have {} XP.".format(cost_one, xp))
+                format_insufficient_xp(get_stat_cost, cur, xp)
                 return
-            if not getattr(caller.db, "stats", None):
-                caller.db.stats = {}
-            new_val = min(cap, cur + levels_gained)
-            caller.db.stats[stat_key] = new_val
-            caller.db.xp = xp - total_spent
-            remainder = xp - total_spent
-            old_letter = level_to_letter(cur, MAX_STAT_LEVEL)
-            new_letter = level_to_letter(new_val, MAX_STAT_LEVEL)
-            letter_changed = old_letter != new_letter
-            if levels_gained == 1:
-                msg = "You spend {} XP.".format(total_spent)
-                if letter_changed:
-                    adj = caller.get_stat_grade_adjective(new_letter, stat_key)
-                    msg += " {} is now [{}] {}.".format(stat_key.capitalize(), new_letter, adj)
-            else:
-                msg = "You spend {} XP and raise {} {} time{}.".format(
-                    total_spent, stat_key.capitalize(), levels_gained, "s" if levels_gained > 1 else "")
-                if letter_changed:
-                    adj = caller.get_stat_grade_adjective(new_letter, stat_key)
-                    msg += " {} is now [{}] {}.".format(stat_key.capitalize(), new_letter, adj)
-            if new_val >= cap and remainder > 0:
-                msg += " You reached your cap; {} XP remains.".format(remainder)
-            caller.msg(msg)
+            spent_str = str(int(total_spent)) if total_spent == int(total_spent) else str(round(total_spent, 2))
+            caller.db.pending_xp_advance = {
+                "sub": "stat", "attr_key": stat_key, "levels_gained": levels_gained,
+                "total_spent": total_spent, "new_val": new_val, "cur": cur, "cap": stat_cap,
+                "label": stat_key.capitalize(), "db_key": "stats",
+            }
+            raise_msg = "time" if levels_gained == 1 else "times"
+            caller.msg(
+                "Raise |w{}|n by |w{}|n level(s)? This will spend |w{}|n XP ({} raise{}). "
+                "Type |w@xp confirm|n to confirm or |w@xp cancel|n to cancel.".format(
+                    stat_key.capitalize(), levels_gained, spent_str, levels_gained, raise_msg
+                )
+            )
             return
 
         if sub == "skill":
@@ -286,49 +370,32 @@ class CmdXp(Command):
                 caller.msg("Unknown skill. Use one of: {}.".format(", ".join(SKILL_DISPLAY_NAMES.get(s, s.replace("_", " ").title()) for s in SKILL_KEYS)))
                 return
             cur = _skill_level(caller, skill_key)
-            cap = _skill_cap_level(caller, skill_key)
-            if cur >= cap:
+            skill_cap = _skill_cap_level(caller, skill_key)
+            if cur >= skill_cap:
                 caller.msg("That skill is already at its cap.")
                 return
-            total_spent = 0
-            levels_gained = 0
-            while levels_gained < bulk_n and cur + levels_gained < cap:
-                cost = xp_cost_for_next_level(cur + levels_gained, MAX_LEVEL)
-                if cost is None or xp - total_spent < cost:
-                    break
-                total_spent += cost
-                levels_gained += 1
+            from world.xp import get_skill_cost
+            levels_gained, total_spent, new_val = advance_loop(cur, skill_cap, bulk_n, xp, get_skill_cost)
             if levels_gained == 0:
-                cost_one = xp_cost_for_next_level(cur, MAX_LEVEL)
-                caller.msg("You need {} XP for the next raise. You have {} XP.".format(cost_one, xp))
+                format_insufficient_xp(get_skill_cost, cur, xp)
                 return
-            if not getattr(caller.db, "skills", None):
-                caller.db.skills = {}
-            new_val = min(cap, cur + levels_gained)
-            caller.db.skills[skill_key] = new_val
-            caller.db.xp = xp - total_spent
-            remainder = xp - total_spent
-            old_letter = level_to_letter(cur, MAX_LEVEL)
-            new_letter = level_to_letter(new_val, MAX_LEVEL)
-            letter_changed = old_letter != new_letter
             label = SKILL_DISPLAY_NAMES.get(skill_key, skill_key.replace("_", " ").title())
-            if levels_gained == 1:
-                msg = "You spend {} XP.".format(total_spent)
-                if letter_changed:
-                    adj = caller.get_skill_grade_adjective(new_letter)
-                    msg += " {} is now [{}] {}.".format(label, new_letter, adj)
-            else:
-                msg = "You spend {} XP and raise {} {} time{}.".format(
-                    total_spent, label, levels_gained, "s" if levels_gained > 1 else "")
-                if letter_changed:
-                    adj = caller.get_skill_grade_adjective(new_letter)
-                    msg += " {} is now [{}] {}.".format(label, new_letter, adj)
-            if new_val >= cap and remainder > 0:
-                msg += " You reached your cap; {} XP remains.".format(remainder)
-            caller.msg(msg)
+            spent_str = str(int(total_spent)) if total_spent == int(total_spent) else str(round(total_spent, 2))
+            caller.db.pending_xp_advance = {
+                "sub": "skill", "attr_key": skill_key, "levels_gained": levels_gained,
+                "total_spent": total_spent, "new_val": new_val, "cur": cur, "cap": skill_cap,
+                "label": label, "db_key": "skills",
+            }
+            raise_msg = "time" if levels_gained == 1 else "times"
+            caller.msg(
+                "Raise |w{}|n by |w{}|n level(s)? This will spend |w{}|n XP ({} raise{}). "
+                "Type |w@xp confirm|n to confirm or |w@xp cancel|n to cancel.".format(
+                    label, levels_gained, spent_str, levels_gained, raise_msg
+                )
+            )
             return
 
-        caller.msg("Use |wxp advance stat <name> [N]|n or |wxp advance skill <name> [N]|n.")
+        caller.msg("Use |w@xp advance stat <name> [N]|n or |w@xp advance skill <name> [N]|n.")
 
 
 from world.combat import start_combat_ticker, stop_combat_ticker, _get_combat_target
@@ -378,6 +445,16 @@ class CmdAttack(Command):
                 return
         except ImportError:
             pass
+        # If you're holding them in a grapple, attack = strangle (stamina drain until knockout); starts recurring tick
+        if getattr(caller.db, "grappling", None) == target:
+            from world.grapple import grapple_strike, start_grapple_strike_ticker
+            success, msg = grapple_strike(caller, target)
+            if success:
+                caller.msg("|g%s|n" % msg)
+                start_grapple_strike_ticker(caller, target)
+            else:
+                caller.msg("|r%s|n" % msg)
+            return
         current = _get_combat_target(caller)
         if current == target:
             caller.msg("|yYou're already fighting them.|n")
@@ -386,6 +463,14 @@ class CmdAttack(Command):
             stop_combat_ticker(caller, current)
             caller.msg(f"|yYou switch targets to {target.name}.|n")
         start_combat_ticker(caller, target)
+        # If target is a creature, set its target to you and start its AI so it fights back
+        if getattr(target.db, "is_creature", False):
+            target.db.current_target = caller
+            try:
+                from world.creature_combat import start_creature_ai_ticker
+                start_creature_ai_ticker(target)
+            except Exception:
+                pass
 
 class CmdStop(Command):
     """
@@ -418,6 +503,106 @@ class CmdStop(Command):
         stop_combat_ticker(caller, target)
 
 
+class CmdFlee(Command):
+    """
+    Try to break away from combat and run. Contested evasion roll vs your opponent.
+    Without a direction you flee to a random exit; with a direction you try that exit.
+    Usage: flee [direction]
+    """
+    key = "flee"
+    aliases = ["run", "escape"]
+    locks = "cmd:all()"
+    help_category = "Combat"
+
+    def func(self):
+        caller = _combat_caller(self)
+        if not getattr(caller, "db", None) or not hasattr(caller.db, "stats"):
+            self.caller.msg("You must be in character to do that.")
+            return
+        from world.combat import _get_combat_target, remove_both_combat_tickers
+        opponent = _get_combat_target(caller)
+        if not opponent:
+            caller.msg("You're not in combat.")
+            return
+        loc = caller.location
+        if not loc:
+            caller.msg("You have nowhere to go.")
+            return
+        exits = getattr(loc, "exits", None) or []
+        if not exits:
+            caller.msg("There's nowhere to flee!")
+            return
+        direction = (self.args or "").strip().lower()
+        if direction:
+            exit_obj = None
+            for ex in exits:
+                key = (getattr(ex, "key", None) or "").strip().lower()
+                aliases = getattr(ex, "aliases", None)
+                if hasattr(aliases, "all"):
+                    aliases = [a.strip().lower() for a in (aliases.all() if aliases else [])]
+                else:
+                    aliases = [str(a).strip().lower() for a in (aliases or [])]
+                if key == direction or direction in aliases:
+                    exit_obj = ex
+                    break
+                if key.startswith(direction) or any(a.startswith(direction) for a in (aliases or [])):
+                    exit_obj = ex
+                    break
+            if not exit_obj:
+                caller.msg("No exit in that direction.")
+                return
+        else:
+            import random
+            exit_obj = random.choice(exits)
+        dest = getattr(exit_obj, "destination", None)
+        if not dest or not hasattr(caller, "move_to"):
+            caller.msg("You can't flee that way.")
+            return
+        from world.skills import SKILL_STATS, DEFENSE_SKILL
+        defense_stats = SKILL_STATS.get(DEFENSE_SKILL, ["agility", "perception"])
+        _, flee_val = caller.roll_check(defense_stats, DEFENSE_SKILL, modifier=0)
+        _, opp_val = opponent.roll_check(defense_stats, DEFENSE_SKILL, modifier=0)
+        if flee_val <= opp_val:
+            caller.msg("|rYou couldn't break away!|n")
+            opponent.msg("|gThey tried to flee but you keep them in the fight.|n")
+            if loc:
+                loc.msg_contents(
+                    "%s tries to flee but %s keeps them in the fight." % (caller.name, opponent.name),
+                    exclude=(caller, opponent),
+                )
+            return
+        remove_both_combat_tickers(caller, opponent)
+        victim = getattr(caller.db, "grappling", None)
+        if getattr(caller.db, "grappled_by", None) == opponent:
+            caller.db.grappled_by = None
+            if hasattr(opponent.db, "grappling") and opponent.db.grappling == caller:
+                opponent.db.grappling = None
+        dir_name = (getattr(exit_obj, "key", None) or "away").strip()
+        caller.move_to(dest)
+        if victim and hasattr(victim, "move_to"):
+            victim.move_to(dest)
+            dest.msg_contents("%s is dragged in by %s." % (victim.name, caller.name), exclude=(caller, victim))
+        caller.msg("|gYou break away and flee %s!|n" % dir_name)
+        opponent.msg("|r%s breaks away and flees %s!|n" % (caller.name, dir_name))
+        if loc:
+            loc.msg_contents("%s breaks away and flees %s!" % (caller.name, dir_name), exclude=(caller,))
+        if dest:
+            dest.msg_contents("%s bursts in from %s, out of breath." % (caller.name, dir_name), exclude=(caller,))
+
+
+def _combat_caller(cmd_self):
+    """Resolve caller to puppeted character when command runs with Account as caller (e.g. from Session cmdset)."""
+    caller = cmd_self.caller
+    if not getattr(caller.db, "stats", None) and getattr(cmd_self, "session", None):
+        try:
+            puppet = getattr(cmd_self.session, "puppet", None)
+            if puppet:
+                return puppet
+        except Exception:
+            pass
+    return caller
+
+
 class CmdGrapple(Command):
     """
     Grapple a character: agility vs perception (see it coming), then agility vs agility (land the grab).
@@ -430,7 +615,10 @@ class CmdGrapple(Command):
     help_category = "Combat"
 
     def func(self):
-        caller = self.caller
+        caller = _combat_caller(self)
+        if not getattr(caller, "db", None) or not hasattr(caller.db, "stats"):
+            self.caller.msg("You must be in character to grapple.")
+            return
         args = (self.args or "").strip()
         if not args:
             caller.msg("Grapple who? Usage: grapple <target>")
@@ -438,19 +626,17 @@ class CmdGrapple(Command):
         target = caller.search(args, location=caller.location)
         if not target:
             return
-        from world.grapple import attempt_grapple
-        success, msg = attempt_grapple(caller, target)
-        if success:
-            caller.msg("|g%s|n" % msg)
-            if target != caller:
-                target.msg("|r%s has you locked in their grasp! You can try |wresist|n to break free.|n" % caller.name)
-            if caller.location:
-                caller.location.msg_contents(
-                    "%s locks %s in their grasp." % (caller.name, target.name),
-                    exclude=(caller, target),
-                )
-        else:
-            caller.msg("|r%s|n" % msg)
+        # Third party trying to grapple someone already in another's grasp (with delay like normal grapple)
+        if getattr(target.db, "grappled_by", None):
+            from world.grapple import start_grapple_third_party_attempt
+            started, err = start_grapple_third_party_attempt(caller, target)
+            if not started:
+                caller.msg("|r%s|n" % err)
+            return
+        from world.grapple import start_grapple_attempt
+        started, err = start_grapple_attempt(caller, target)
+        if not started:
+            caller.msg("|r%s|n" % err)
 
 
 class CmdLetGo(Command):
@@ -459,12 +645,15 @@ class CmdLetGo(Command):
     Usage: letgo
     """
     key = "letgo"
-    aliases = ["let go", "release grapple", "ungrapple"]
+    aliases = ["let go", "release", "ungrapple"]
     locks = "cmd:all()"
     help_category = "Combat"
 
     def func(self):
-        caller = self.caller
+        caller = _combat_caller(self)
+        if not getattr(caller, "db", None) or not hasattr(caller.db, "stats"):
+            self.caller.msg("You must be in character to do that.")
+            return
         victim = getattr(caller.db, "grappling", None)
         from world.grapple import release_grapple
         success, msg = release_grapple(caller)
@@ -492,7 +681,10 @@ class CmdResist(Command):
     help_category = "Combat"
 
     def func(self):
-        caller = self.caller
+        caller = _combat_caller(self)
+        if not getattr(caller, "db", None) or not hasattr(caller.db, "stats"):
+            self.caller.msg("You must be in character to do that.")
+            return
         grappler = getattr(caller.db, "grappled_by", None)
         from world.grapple import attempt_resist
         freed, msg_you, msg_holder = attempt_resist(caller)
@@ -530,7 +722,7 @@ class CmdExecute(Command):
             return
         try:
             from world.death import is_flatlined, is_permanently_dead, make_permanent_death, is_character_logged_off
-            if is_character_logged_off(target):
+            if is_character_logged_off(target) and not is_flatlined(target):
                 caller.msg("Kill them when they wake up. It's more fun that way.")
                 return
             if is_permanently_dead(target):
@@ -573,32 +765,163 @@ class CmdStance(Command):
 
         caller.db.combat_stance = args
         caller.msg(f"You shift into an |y{args.upper()}|n stance.")
-class CmdSpawn(Command):
+class CmdNpc(Command):
     """
-    Spawns a randomized combat NPC. (Admin/Builder only.)
+    List, summon, unsummon, rename, or set base attributes on NPCs. Builder+.
     Usage:
-      spawn <name>
+      @npc/list                          - list NPC templates
+      @npc/summon <template>             - summon NPC from template
+      @npc/summon <template>=<name>      - summon and set name
+      @npc/unsummon <npc>                - remove NPC from the world
+      @npc/rename <npc>=<name>           - rename NPC (IC)
+      @npc/attr <npc>/<attr>=<value>     - set NPC base stat or skill
     """
-    key = "spawn"
-    locks = ADMIN_LOCK
-    help_category = "Admin"
+    key = "@npc"
+    locks = "cmd:perm(Builder)"
+    help_category = "Staff"
 
     def func(self):
-        if not self.args:
-            self.caller.msg("Usage: spawn <name>")
+        caller = self.caller
+        raw = (self.args or "").strip()
+        # Parse subcommand: first word (e.g. "list" or "summon ..."); allow leading slash (@npc/list)
+        parts = raw.split(None, 1)
+        sub = (parts[0].lower() if parts else "").lstrip("/")
+        rest = (parts[1] if len(parts) > 1 else "").strip()
+
+        if sub == "list":
+            self._do_list(caller)
             return
-        
-        name = self.args.strip()
-        # Create the NPC object
-        from evennia.utils.create import create_object
-        
-        new_npc = create_object(
-            "typeclasses.npc.NPC",
-            key=name,
-            location=self.caller.location
-        )
-        
-        self.caller.msg(f"|gA haggered individual named '{name}' emerges from the shadows.|n")
+        if sub == "summon":
+            self._do_summon(caller, rest)
+            return
+        if sub == "unsummon":
+            self._do_unsummon(caller, rest)
+            return
+        if sub == "rename":
+            self._do_rename(caller, rest)
+            return
+        if sub == "attr":
+            self._do_attr(caller, rest)
+            return
+        caller.msg("Usage: @npc/list | @npc/summon <template>[=<name>] | @npc/unsummon <npc> | @npc/rename <npc>=<name> | @npc/attr <npc>/<attr>=<value>")
+
+    def _do_list(self, caller):
+        from world.npc_templates import NPC_TEMPLATES
+        from evennia.utils.evtable import EvTable
+        table = EvTable("|wtemplate|n", "|wdescription|n", border="cells")
+        for key, t in sorted(NPC_TEMPLATES.items()):
+            table.add_row(key, t.get("name", key))
+        caller.msg("|wNPC templates:|n |w@npc/summon <template>|n or |w@npc/summon <template>=<name>|n")
+        caller.msg(table)
+
+    def _do_summon(self, caller, rest):
+        from world.npc_templates import create_npc_from_template, get_npc_template
+        name = None
+        if "=" in rest:
+            template_part, name = rest.split("=", 1)
+            template_key = template_part.strip().lower()
+            name = name.strip()
+        else:
+            template_key = rest.strip().lower()
+        if not template_key:
+            caller.msg("Usage: @npc/summon <template> or @npc/summon <template>=<name>")
+            return
+        if get_npc_template(template_key) is None:
+            caller.msg("|rUnknown template. Use |w@npc/list|n for templates.|n")
+            return
+        loc = caller.location
+        if not loc:
+            caller.msg("You have no location.")
+            return
+        npc = create_npc_from_template(template_key, name=name, location=loc)
+        if not npc:
+            caller.msg("|rFailed to create NPC.|n")
+            return
+        caller.msg("|gSummoned:|n %s." % npc.name)
+        loc.msg_contents("%s appears." % npc.name, exclude=caller)
+
+    def _do_unsummon(self, caller, rest):
+        if not rest:
+            caller.msg("Usage: @npc/unsummon <npc>")
+            return
+        target = caller.search(rest)
+        if not target:
+            return
+        if getattr(target, "has_account", False):
+            caller.msg("|rCannot unsummon a player character.|n")
+            return
+        name = target.name
+        target.delete()
+        caller.msg("|y%s has been unsummoned.|n" % name)
+        if caller.location:
+            caller.location.msg_contents("%s vanishes." % name, exclude=caller)
+
+    def _do_rename(self, caller, rest):
+        if "=" not in rest:
+            caller.msg("Usage: @npc/rename <npc>=<name>")
+            return
+        npc_part, new_name = rest.split("=", 1)
+        npc_part = npc_part.strip()
+        new_name = new_name.strip()
+        if not npc_part or not new_name:
+            caller.msg("Usage: @npc/rename <npc>=<name>")
+            return
+        target = caller.search(npc_part)
+        if not target:
+            return
+        if getattr(target, "has_account", False):
+            caller.msg("|rThat is a player character.|n")
+            return
+        old = target.name
+        target.key = new_name
+        target.save()
+        caller.msg("|gYou know them as %s now.|n" % new_name)
+        if caller.location and caller.location == target.location:
+            caller.location.msg_contents("%s is now called %s." % (old, new_name), exclude=(caller, target))
+
+    def _do_attr(self, caller, rest):
+        # @npc/attr <npc>/<attr>=<value>
+        if "/" not in rest or "=" not in rest:
+            caller.msg("Usage: @npc/attr <npc>/<attr>=<value>")
+            return
+        npc_part, rhs = rest.split("=", 1)
+        rhs = rhs.strip()
+        if "/" not in npc_part:
+            caller.msg("Usage: @npc/attr <npc>/<attr>=<value>")
+            return
+        npc_spec, attr = npc_part.strip().rsplit("/", 1)
+        npc_spec = npc_spec.strip()
+        attr = attr.strip().lower()
+        if not npc_spec or not attr or not rhs:
+            caller.msg("Usage: @npc/attr <npc>/<attr>=<value>")
+            return
+        target = caller.search(npc_spec)
+        if not target:
+            return
+        if getattr(target, "has_account", False):
+            caller.msg("|rThat is a player character.|n")
+            return
+        try:
+            value = int(rhs)
+        except ValueError:
+            caller.msg("|rValue must be an integer.|n")
+            return
+        from world.skills import SKILL_KEYS
+        from world.chargen import STAT_KEYS
+        if attr in STAT_KEYS:
+            if not hasattr(target.db, "stats") or target.db.stats is None:
+                target.db.stats = {}
+            target.db.stats[attr] = max(0, min(300, value))
+            caller.msg("|g%s's %s is now %s.|n" % (target.name, attr, target.db.stats[attr]))
+            return
+        if attr in SKILL_KEYS:
+            if not hasattr(target.db, "skills") or target.db.skills is None:
+                from world.skills import SKILL_KEYS as SK
+                target.db.skills = {k: 0 for k in SK}
+            target.db.skills[attr] = max(0, min(150, value))
+            caller.msg("|g%s's %s is now %s.|n" % (target.name, attr, target.db.skills[attr]))
+            return
+        caller.msg("|rUnknown attribute. Use a stat (%s) or skill (e.g. evasion, medicine).|n" % ", ".join(STAT_KEYS))
 
 
 class CmdCreateItem(Command):
@@ -706,6 +1029,132 @@ class CmdTypeclasses(Command):
         caller.msg(f"|w({len(paths)} typeclass(s).)|n")
 
 
+class CmdSpawnItem(Command):
+    """
+    Spawn test items by prototype key. List is auto-generated from your game's
+    prototype modules (e.g. world.prototypes). Builder/Admin only.
+
+    Usage:
+      spawnitem list              - list all available prototype keys
+      spawnitem <prototype_key>   - spawn one into your inventory (e.g. spawnitem bolt_of_silk)
+
+    New prototypes you add to world.prototypes (or other PROTOTYPE_MODULES) will
+    appear in the list automatically. For typeclass-only items use |wtypeclasses|n
+    and |wcreate <typeclass> = <key>|n.
+    """
+    key = "spawnitem"
+    aliases = ["debugspawn", "spawni"]
+    locks = ADMIN_LOCK
+    help_category = "Admin"
+
+    def func(self):
+        caller = self.caller
+        args = (self.args or "").strip()
+        if not args or args.lower() == "list":
+            self._show_list(caller)
+            return
+        self._spawn_prototype(caller, args)
+
+    def _show_list(self, caller):
+        from evennia.prototypes import prototypes as protlib
+        from evennia.utils.evtable import EvTable
+        protlib.load_module_prototypes()
+        # All module-based prototypes (no_db=True = don't hit DB prototypes)
+        try:
+            all_prots = protlib.search_prototype(no_db=True)
+        except Exception as e:
+            caller.msg("|rCould not load prototypes: %s|n" % e)
+            return
+        if not all_prots:
+            caller.msg("|yNo prototypes found in PROTOTYPE_MODULES. Add dicts to world.prototypes (or your module) to see them here.|n")
+            caller.msg("For typeclass items use |wtypeclasses|n and |wcreate <typeclass> = <key>|n.")
+            return
+        table = EvTable("|wprototype_key|n", "|wspawns as (key)|n", border="cells")
+        for prot in sorted(all_prots, key=lambda p: (p.get("prototype_key") or "").lower()):
+            pk = prot.get("prototype_key") or "(unnamed)"
+            key = prot.get("key") or "(no key)"
+            if callable(key):
+                key = "(dynamic)"
+            else:
+                key = str(key)
+            table.add_row(pk, key)
+        caller.msg("|wSpawn:|n |wspawnitem <prototype_key>|n (e.g. |wspawnitem %s|n)" % (all_prots[0].get("prototype_key", "bolt_of_silk")))
+        caller.msg(table)
+        caller.msg("|wTypeclass items:|n use |wtypeclasses|n and |wcreate <typeclass> = <key>|n.")
+
+    def _spawn_prototype(self, caller, prototype_key):
+        from evennia.prototypes import spawner
+        from evennia.prototypes import prototypes as protlib
+        protlib.load_module_prototypes()
+        key_lower = str(prototype_key).strip().lower()
+        try:
+            objs = spawner.spawn(key_lower, caller=caller)
+        except KeyError as e:
+            caller.msg("|rNo prototype with that key. Use |wspawnitem list|n for options.|n")
+            return
+        except Exception as e:
+            caller.msg("|rSpawn failed: %s|n" % e)
+            return
+        if not objs:
+            caller.msg("|rNo object spawned (prototype key may be wrong).|n")
+            return
+        for obj in objs:
+            obj.location = caller
+        names = [o.get_display_name(caller) for o in objs]
+        caller.msg("|gSpawned into your inventory:|n %s" % ", ".join(names))
+
+
+class CmdSpawnArmor(Command):
+    """
+    Spawn placeholder/basic armor from world.armor_levels templates. Builder+.
+    Usage:
+      @spawnarmor list                    - list template keys by level
+      @spawnarmor <template_key> [quality] - spawn one (quality 0-100, default 100)
+    """
+    key = "@spawnarmor"
+    locks = "cmd:perm(Builder)"
+    help_category = "Staff"
+
+    def func(self):
+        caller = self.caller
+        args = (self.args or "").strip()
+        if not args or args.lower() == "list":
+            self._show_list(caller)
+            return
+        parts = args.split()
+        template_key = parts[0].strip().lower()
+        quality = 100
+        if len(parts) >= 2:
+            try:
+                quality = max(0, min(100, int(parts[1])))
+            except ValueError:
+                pass
+        from world.armor_levels import create_armor_from_template, get_armor_template
+        if get_armor_template(template_key) is None:
+            caller.msg("|rUnknown armor template. Use |w@spawnarmor list|n for keys.|n")
+            return
+        obj = create_armor_from_template(template_key, location=caller, quality=quality)
+        if not obj:
+            caller.msg("|rFailed to create armor.|n")
+            return
+        caller.msg("|gSpawned:|n %s (quality %s)." % (obj.get_display_name(caller), quality))
+
+    def _show_list(self, caller):
+        from world.armor_levels import ARMOR_TEMPLATES, ARMOR_LEVEL_STREET, ARMOR_LEVEL_ARMOR_WEAR, ARMOR_LEVEL_MEDIUM, ARMOR_LEVEL_HEAVY
+        from evennia.utils.evtable import EvTable
+        level_names = {
+            ARMOR_LEVEL_STREET: "Street",
+            ARMOR_LEVEL_ARMOR_WEAR: "Armor wear",
+            ARMOR_LEVEL_MEDIUM: "Medium",
+            ARMOR_LEVEL_HEAVY: "Heavy",
+        }
+        table = EvTable("|wkey|n", "|wname|n", "|wlevel|n", border="cells")
+        for t in ARMOR_TEMPLATES:
+            table.add_row(t["key"], t["name"], level_names.get(t.get("level", 1), "?"))
+        caller.msg("|wArmor templates:|n |w@spawnarmor <key> [quality]|n")
+        caller.msg(table)
+
+
 def _get_vehicle_from_caller(caller):
     """If caller is inside a vehicle interior, return the vehicle; else None."""
     loc = caller.location
@@ -749,8 +1198,8 @@ class CmdExitVehicle(Command):
     """
     Get out of the vehicle. You appear in the same room as the vehicle.
     """
-    key = "exit"
-    aliases = ["get out", "leave vehicle"]
+    key = "disembark"
+    aliases = ["disembark"]
     locks = "cmd:all()"
     help_category = "General"
     usage_typeclasses = ["typeclasses.vehicles.VehicleInterior"]
@@ -1124,6 +1573,7 @@ class CmdSpawnMedical(Command):
             ("typeclasses.medical_tools.SutureKit", "suture kit"),
             ("typeclasses.medical_tools.Splint", "splint"),
             ("typeclasses.medical_tools.HemostaticAgent", "hemostatic agent"),
+            ("typeclasses.medical_tools.Tourniquet", "tourniquet"),
             ("typeclasses.medical_tools.Defibrillator", "defibrillator"),
         ]:
             try:
@@ -1229,6 +1679,147 @@ class CmdSpawnPod(Command):
             caller.msg("|rCould not create splinter pod: %s|n" % e)
 
 
+# Predefined creature types for spawncreature (key for display, typeclass path)
+CREATURE_SPAWN_TYPES = {
+    "gutter hulk": ("typeclasses.creatures.GutterHulk", "Gutter Hulk"),
+    "gutterhulk": ("typeclasses.creatures.GutterHulk", "Gutter Hulk"),
+    "spore runner": ("typeclasses.creatures.SporeRunner", "Spore Runner"),
+    "sporerunner": ("typeclasses.creatures.SporeRunner", "Spore Runner"),
+    "rust stalker": ("typeclasses.creatures.RustStalker", "Rust Stalker"),
+    "ruststalker": ("typeclasses.creatures.RustStalker", "Rust Stalker"),
+    "creature": ("typeclasses.creatures.Creature", "Creature"),
+}
+
+
+class CmdSpawnCreature(Command):
+    """
+    Spawn a PvE creature in the room. Builder+.
+    Usage:
+      spawncreature list
+      spawncreature <type> [= name]
+    Types: gutter hulk, spore runner, rust stalker, creature (base).
+    """
+    key = "spawncreature"
+    aliases = ["spawnc"]
+    locks = "cmd:perm(Builder)"
+    help_category = "Admin"
+
+    def func(self):
+        caller = self.caller
+        args = (self.args or "").strip()
+        if not args:
+            caller.msg("Usage: |wspawncreature list|n or |wspawncreature <type> [= name]|n")
+            return
+        loc = caller.location
+        if not loc:
+            caller.msg("You need to be in a room to spawn a creature.")
+            return
+        if args.lower() == "list":
+            caller.msg("|wAvailable creature types:|n gutter hulk, spore runner, rust stalker, creature")
+            caller.msg("Use |wspawncreature <type>|n or |wspawncreature <type> = Custom Name|n")
+            return
+        name = None
+        if "=" in args:
+            type_part, name = args.split("=", 1)
+            type_part = type_part.strip().lower()
+            name = name.strip() or None
+        else:
+            type_part = args.strip().lower()
+        entry = CREATURE_SPAWN_TYPES.get(type_part)
+        if not entry:
+            caller.msg("Unknown type. Use |wspawncreature list|n for options.")
+            return
+        typeclass_path, default_key = entry
+        key = name or default_key
+        from evennia.utils.create import create_object
+        try:
+            creature = create_object(typeclass_path, key=key, location=loc)
+            caller.msg("|gCreature |w%s|n spawned here. Use |wcreatureset %s target <player>|n to make it attack, or attack it yourself.|n" % (creature.key, creature.key))
+        except Exception as e:
+            caller.msg("|rCould not spawn creature: %s|n" % e)
+
+
+class CmdCreatureSet(Command):
+    """
+    Set a creature's target so it uses its AI to attack. Builder+.
+    Usage:
+      creatureset <creature> target <player>   - creature will attack that player every ~8s
+      creatureset <creature> notarget          - clear target and stop AI
+    If a player attacks a creature, the creature automatically targets them and fights back.
+    """
+    key = "creatureset"
+    aliases = ["cset", "creature target"]
+    locks = "cmd:perm(Builder)"
+    help_category = "Admin"
+
+    def func(self):
+        caller = self.caller
+        args = (self.args or "").strip().split()
+        if len(args) < 2:
+            caller.msg("Usage: |wcreatureset <creature> target <player>|n or |wcreatureset <creature> notarget|n")
+            return
+        creature = caller.search(args[0], location=caller.location)
+        if not creature:
+            return
+        if not getattr(creature.db, "is_creature", False):
+            caller.msg("%s is not a creature." % creature.name)
+            return
+        sub = args[1].lower()
+        if sub == "notarget":
+            from world.creature_combat import stop_creature_ai_ticker
+            creature.db.current_target = None
+            creature.db.ai_state = "idle"
+            stop_creature_ai_ticker(creature)
+            caller.msg("|g%s no longer has a target. AI stopped.|n" % creature.name)
+            return
+        if sub == "target":
+            if len(args) < 3:
+                caller.msg("Usage: |wcreatureset <creature> target <player>|n")
+                return
+            target_name = " ".join(args[2:])
+            target = caller.search(target_name, location=caller.location)
+            if not target:
+                return
+            if not hasattr(target, "db") or not hasattr(target.db, "current_hp"):
+                caller.msg("That is not a valid target.")
+                return
+            creature.db.current_target = target
+            creature.db.ai_state = "aggro"
+            from world.creature_combat import start_creature_ai_ticker
+            start_creature_ai_ticker(creature)
+            caller.msg("|g%s will now attack %s. AI runs every ~8 seconds.|n" % (creature.name, target.name))
+            return
+        caller.msg("Use |wtarget <player>|n or |wnotarget|n.")
+
+
+class CmdGenerateCreature(Command):
+    """
+    Open a menu to generate a custom creature with your own stats and moves. Builder+.
+    Usage: generatecreature
+    """
+    key = "generatecreature"
+    aliases = ["gencreature", "create creature", "creature menu"]
+    locks = "cmd:perm(Builder)"
+    help_category = "Admin"
+
+    def func(self):
+        caller = self.caller
+        if not caller.location:
+            caller.msg("You need to be in a room to create a creature.")
+            return
+        from evennia.utils.evmenu import EvMenu
+        # Initialize builder state
+        caller.ndb.creature_gen = {
+            "key": "Custom Creature",
+            "max_hp": 100,
+            "armor_rating": 10,
+            "base_attack": 50,
+            "room_pose": "standing here",
+            "moves": {},
+        }
+        EvMenu(caller, "world.creature_gen_menu", startnode="node_start")
+
+
 def _get_pod_from_caller(caller):
     """If caller is inside a splinter pod interior, return the pod object; else None."""
     loc = getattr(caller, "location", None)
@@ -1250,7 +1841,7 @@ class CmdEnterPod(Command):
     Usage: enter pod [or enter <pod>]
     """
     key = "enter pod"
-    aliases = ["get in pod", "enter splinter pod"]
+    aliases = ["enter pod", "enter splinter pod"]
     locks = "cmd:all()"
     help_category = "General"
 
@@ -1566,10 +2157,10 @@ class CmdLieOnTable(Command):
 class CmdGetOffTable(Command):
     """
     Get up from a seat, bed, or operating table.
-    Usage: getup / get up / stand
+    Usage: getup / stand (avoid 'get' prefix so 'get <item>' is not stolen)
     """
     key = "getup"
-    aliases = ["get up", "get off", "get off table", "stand up", "stand"]
+    aliases = ["stand up", "stand", "getoff", "getofftable"]
     locks = "cmd:all()"
     help_category = "General"
 
@@ -1702,7 +2293,7 @@ class CmdStaffSheet(Command):
             return
         from world.chargen import STAT_KEYS
         from world.skills import SKILL_KEYS, SKILL_DISPLAY_NAMES
-        from world.levels import level_to_letter, MAX_STAT_LEVEL, MAX_LEVEL
+        from world.levels import get_stat_grade, get_skill_grade
         stats = target.db.stats or {}
         skills = target.db.skills or {}
         bg = target.db.background or "Unknown"
@@ -1725,14 +2316,14 @@ class CmdStaffSheet(Command):
         output += "|c|||n  |W S P E C I A L|n\n"
         for key in STAT_KEYS:
             lv = stats.get(key, 0)
-            letter = level_to_letter(lv, MAX_STAT_LEVEL)
+            letter = get_stat_grade(target.get_stat_level(key) if hasattr(target, "get_stat_level") else lv)
             adj = target.get_stat_grade_adjective(letter, key) if hasattr(target, "get_stat_grade_adjective") else letter
             output += "|c|||n    |w{}|n  |w[{}]|n {} ({})\n".format(key.capitalize().ljust(12), letter, adj, lv)
         output += thin + "\n"
         output += "|c|||n  |W SKILLS|n\n"
         for key in SKILL_KEYS:
             lv = skills.get(key, 0)
-            letter = level_to_letter(lv, MAX_LEVEL)
+            letter = get_skill_grade(target.get_skill_level(key) if hasattr(target, "get_skill_level") else lv)
             adj = target.get_skill_grade_adjective(letter) if hasattr(target, "get_skill_grade_adjective") else letter
             label = SKILL_DISPLAY_NAMES.get(key, key.replace("_", " ").title())
             output += "|c|||n    |w{}|n  |w[{}]|n {} ({})\n".format(label.ljust(20), letter, adj, lv)
@@ -1851,7 +2442,7 @@ class CmdMakeNpc(Command):
                 key=name,
                 location=caller.location,
             )
-            caller.msg("|gNPC |w{}|n created here. Use |wic {}|n to puppet.|n".format(name, name))
+            caller.msg("|gNPC |w{}|n created here. Use |w@puppet {}|n to puppet.|n".format(name, name))
         except Exception as e:
             caller.msg("|rCould not create NPC: {}|n".format(e))
 
@@ -1961,7 +2552,7 @@ class CmdSetVoid(Command):
         try:
             from evennia.server.models import ServerConfig
             ServerConfig.objects.conf("VOID_ROOM_ID", loc.id)
-            caller.msg("|gThis room is now the void. Use |wvoid <character> [reason]|n to send someone here, |wrelease <character>|n to free them.|n")
+            caller.msg("|gThis room is now the void. Use |wvoid <character> [reason]|n to send someone here, |w@release <character>|n to free them.|n")
         except Exception as e:
             caller.msg("|rCould not set void room: {}|n".format(e))
 
@@ -2014,9 +2605,9 @@ class CmdVoid(Command):
 class CmdRelease(Command):
     """
     Release a character from the void and bring them to your location. Builder+.
-    Usage: release <character>
+    Usage: @release <character>
     """
-    key = "release"
+    key = "@release"
     aliases = ["unvoid", "free", "unjail"]
     locks = "cmd:perm(Builder)"
     help_category = "Staff"
@@ -2025,7 +2616,7 @@ class CmdRelease(Command):
         caller = self.caller
         args = (self.args or "").strip()
         if not args:
-            caller.msg("Usage: release <character>")
+            caller.msg("Usage: @release <character>")
             return
         target = caller.search(args, global_search=True)
         if not target or not hasattr(target, "db"):
@@ -2044,6 +2635,133 @@ class CmdRelease(Command):
         target.move_to(dest)
         caller.msg("|g{} has been released here.|n".format(target.name))
         target.msg("|gYou have been released from the void.|n")
+
+
+def _can_use_ooc_room(character):
+    """Return (True, None) or (False, reason_string). Blocks combat, dead, corpse, grappled, unconscious, voided."""
+    if not character or not getattr(character, "db", None):
+        return False, "You can't do that right now."
+    if getattr(character.db, "combat_target", None) is not None:
+        return False, "You can't go OOC while in combat."
+    try:
+        from world.death import is_flatlined, is_permanently_dead
+        if is_flatlined(character):
+            return False, "You can't go OOC while dying."
+        if is_permanently_dead(character):
+            return False, "You're dead."
+    except ImportError:
+        if getattr(character.db, "current_hp", None) is not None and (character.db.current_hp or 0) <= 0:
+            return False, "You can't go OOC in that state."
+    try:
+        from typeclasses.corpse import Corpse
+        if isinstance(character, Corpse):
+            return False, "You're a corpse."
+    except ImportError:
+        pass
+    if getattr(character.db, "grappled_by", None) or getattr(character.db, "grappling", None):
+        return False, "You can't go OOC while grappled."
+    try:
+        from world.grapple import is_unconscious
+        if is_unconscious(character):
+            return False, "You can't go OOC while unconscious."
+    except ImportError:
+        pass
+    if getattr(character.db, "voided", False):
+        return False, "You can't go OOC from the void."
+    return True, None
+
+
+class CmdGoOOC(Command):
+    """
+    Temporarily move to the OOC room. You remain puppeted; use @ic to return.
+    Blocked while in combat, dead, grappled, unconscious, or voided.
+    Usage: @ooc
+    """
+    key = "@ooc"
+    aliases = []
+    locks = "cmd:all()"
+    help_category = "General"
+
+    def func(self):
+        caller = _combat_caller(self)
+        if not getattr(caller, "db", None) or not hasattr(caller.db, "stats"):
+            self.caller.msg("You must be in character to use that.")
+            return
+        ok, reason = _can_use_ooc_room(caller)
+        if not ok:
+            self.caller.msg("|r%s|n" % reason)
+            return
+        from django.conf import settings
+        from evennia.utils.search import search_object
+        ooc_id = getattr(settings, "OOC_ROOM_ID", None)
+        ooc_room = None
+        if ooc_id is not None:
+            try:
+                res = search_object("#%s" % int(ooc_id))
+                if res:
+                    ooc_room = res[0]
+            except (TypeError, ValueError):
+                pass
+        if not ooc_room:
+            try:
+                from evennia.utils.search import search_tag
+                res = search_tag("ooc_room", category="room")
+                if res:
+                    ooc_room = res[0] if hasattr(res[0], "move_to") else res
+            except Exception:
+                pass
+        if not ooc_room or not hasattr(ooc_room, "move_to"):
+            self.caller.msg("|rNo OOC room is configured. Ask staff to set OOC_ROOM_ID or tag a room 'ooc_room'.|n")
+            return
+        here = caller.location
+        if not here:
+            self.caller.msg("|rYou have no location to leave from.|n")
+            return
+        caller.db.ooc_previous_location_id = here.id
+        caller.move_to(ooc_room)
+        self.caller.msg("|gYou step OOC. Use |w@ic|n to return.|n")
+        if here:
+            here.msg_contents("%s steps out of the world for a moment." % caller.name, exclude=(caller,))
+
+
+class CmdReturnIC(Command):
+    """
+    Return from the OOC room to where you were. Only works if you used @ooc.
+    Usage: @ic
+    """
+    key = "@ic"
+    aliases = []
+    locks = "cmd:all()"
+    help_category = "General"
+
+    def func(self):
+        caller = _combat_caller(self)
+        if not getattr(caller, "db", None) or not hasattr(caller.db, "stats"):
+            self.caller.msg("You must be in character to use that.")
+            return
+        prev_id = getattr(caller.db, "ooc_previous_location_id", None)
+        if prev_id is None:
+            self.caller.msg("|rYou're already in the world. Use |w@ooc|n to step out first.|n")
+            return
+        from evennia.utils.search import search_object
+        try:
+            res = search_object("#%s" % int(prev_id))
+            if not res:
+                self.caller.msg("|rThat place is gone. You remain here.|n")
+                try:
+                    caller.attributes.remove("ooc_previous_location_id")
+                except Exception:
+                    pass
+                return
+            dest = res[0]
+        except (TypeError, ValueError):
+            self.caller.msg("|rSomething went wrong.|n")
+            return
+        del caller.db.ooc_previous_location_id
+        caller.move_to(dest)
+        self.caller.msg("|gYou step back into the world.|n")
+        if dest:
+            dest.msg_contents("%s steps back into the world." % caller.name, exclude=(caller,))
 
 
 class CmdBoot(Command):
@@ -2130,11 +2848,11 @@ class CmdAnnounce(Command):
 
 class CmdRestore(Command):
     """
-    Restore a character's HP and stamina to full. Builder+.
-    Usage: restore <character>
+    Restore a character to full health: HP, stamina, flatline state, and all trauma (bleeding, fractures, organ damage). Builder+.
+    Usage: @restore <character>
     """
-    key = "restore"
-    aliases = ["fullheal", "healup", "heal"]  # single admin restore command; heal removed to avoid alias clash
+    key = "@restore"
+    aliases = ["restore", "fullheal", "healup", "heal"]
     locks = "cmd:perm(Builder)"
     help_category = "Staff"
 
@@ -2142,18 +2860,23 @@ class CmdRestore(Command):
         caller = self.caller
         args = (self.args or "").strip()
         if not args:
-            caller.msg("Usage: restore <character>")
+            caller.msg("Usage: @restore <character>")
             return
         target = caller.search(args, global_search=True)
         if not target or not hasattr(target, "db"):
             return
         try:
+            from world.death import is_flatlined, clear_flatline
+            if is_flatlined(target):
+                clear_flatline(target)
+            from world.medical import reset_medical
+            reset_medical(target)
             mx = target.max_hp
             target.db.current_hp = mx
             target.db.current_stamina = target.max_stamina
-            caller.msg("|g{} restored to full HP and stamina.|n".format(target.name))
+            caller.msg("|g{} restored to full HP, stamina, and trauma cleared (no bleeding/fractures/organ damage).|n".format(target.name))
             if target != caller:
-                target.msg("|gYou have been restored to full health and stamina.|n")
+                target.msg("|gYou have been restored to full health; all trauma has been cleared.|n")
         except Exception as e:
             caller.msg("|rCould not restore: {}|n".format(e))
 
@@ -2205,18 +2928,18 @@ class CmdExamine(Command):
     Look at an object and see what commands you can use with it.
 
     Usage:
-      examine <object>
-      ex <object>
+      @examine <object>
+      @ex <object>
     """
-    key = "examine"
-    aliases = ["ex", "inspect"]
+    key = "@examine"
+    aliases = ["@ex"]
     locks = "cmd:all()"
     help_category = "General"
 
     def func(self):
         caller = self.caller
         if not self.args:
-            caller.msg("Examine what? Usage: examine <object>")
+            caller.msg("Examine what? Usage: @examine <object>")
             return
         obj = caller.search(self.args.strip(), location=caller.location)
         if not obj:
@@ -2245,45 +2968,156 @@ class CmdExamine(Command):
             caller.msg(f"\n|y(Could not determine usage: {e})|n")
 
 
-class CmdDiagnose(Command):
+class CmdSurvey(Command):
     """
-    Assess the physical condition of a target (physical exam). With medicine skill,
-    you notice more: bleeding, possible fractures, then exact areas; higher skill
-    reveals more. For full detail (vitals, exact organs) use a bioscanner.
+    Inspect armor to determine protection and mobility impact. Requires arms_tech skill.
 
     Usage:
-      diagnose <target>
-      diag <target>
+      survey <armor>
     """
-    key = "diagnose"
-    aliases = ["diag", "check"]
+    key = "survey"
+    aliases = ["armor survey", "inspect armor"]
     locks = "cmd:all()"
     help_category = "General"
-    usage_typeclasses = ["typeclasses.characters.Character"]
-    usage_hint = "|wdiagnose|n (to check condition)"
 
     def func(self):
         caller = self.caller
         if not self.args:
-            # If no target, diagnose yourself
+            caller.msg("Survey what? Usage: survey <armor>")
+            return
+        from world.armor import _is_armor
+        from world.skills import SKILL_STATS
+
+        obj = caller.search(self.args.strip(), location=caller)
+        if not obj:
+            obj = caller.search(self.args.strip(), location=caller.location)
+        if not obj:
+            return
+        if not _is_armor(obj):
+            caller.msg(f"{obj.get_display_name(caller)} is not armor you can survey.")
+            return
+
+        stats = SKILL_STATS.get("arms_tech", ["intelligence", "perception"])
+        level, roll_value = caller.roll_check(stats, "arms_tech")
+
+        if level == "Failure":
+            caller.msg("You can't tell much about its armor properties.")
+            return
+
+        # Basic: damage types protected, mobility yes/no
+        from world.damage_types import DAMAGE_TYPES
+        prot = getattr(obj.db, "protection", None) or {}
+        types_protected = [dt for dt in DAMAGE_TYPES if prot.get(dt, 0) > 0]
+        mobility = obj.get_mobility_impact() if hasattr(obj, "get_mobility_impact") else (getattr(obj.db, "mobility_impact", 0) or 0)
+        has_mobility = mobility != 0
+
+        if level == "Critical Success" or (level == "Full Success" and roll_value > 75):
+            # High success: exact protection per type, exact mobility
+            lines = ["|wArmor survey (detailed):|n"]
+            if types_protected:
+                for dt in types_protected:
+                    base = prot.get(dt, 0)
+                    effective = obj.get_protection(dt) if hasattr(obj, "get_protection") else base
+                    lines.append("  %s: %s (effective %s)" % (dt.capitalize(), base, effective))
+            else:
+                lines.append("  No damage protection.")
+            lines.append("  Mobility impact: %s" % mobility)
+            quality = max(0, min(100, int(getattr(obj.db, "quality", 100) or 100)))
+            lines.append("  Quality (durability): %s" % quality)
+            caller.msg("\n".join(lines))
+        else:
+            # Basic success: types and mobility yes/no
+            if types_protected:
+                caller.msg("It protects against: %s." % ", ".join(types_protected))
+            else:
+                caller.msg("It offers no significant damage protection.")
+            if has_mobility:
+                caller.msg("It impacts mobility.")
+            else:
+                caller.msg("It does not impact mobility.")
+
+
+class CmdRepairArmor(Command):
+    """
+    Restore armor quality (durability) using arms_tech. Use on worn or held armor.
+
+    Usage:
+      repair <armor>
+    """
+    key = "repair"
+    aliases = ["repair armor", "fix armor"]
+    locks = "cmd:all()"
+    help_category = "General"
+
+    def func(self):
+        caller = self.caller
+        if not self.args:
+            caller.msg("Repair what? Usage: repair <armor>")
+            return
+        from world.armor import _is_armor, repair_armor
+        from world.skills import SKILL_STATS
+
+        obj = caller.search(self.args.strip(), location=caller)
+        if not obj:
+            obj = caller.search(self.args.strip(), location=caller.location)
+        if not obj:
+            return
+        if not _is_armor(obj):
+            caller.msg(f"{obj.get_display_name(caller)} is not armor you can repair.")
+            return
+
+        quality_before = max(0, min(100, int(getattr(obj.db, "quality", 100) or 100)))
+        if quality_before >= 100:
+            caller.msg("It's already in peak condition.")
+            return
+
+        stats = SKILL_STATS.get("arms_tech", ["intelligence", "perception"])
+        level, _ = caller.roll_check(stats, "arms_tech")
+
+        if level == "Failure":
+            caller.msg("You fail to improve its condition.")
+            return
+        amount = 15 if level == "Critical Success" else (10 if level == "Full Success" else 5)
+        repair_armor(obj, amount)
+        quality_after = max(0, min(100, int(getattr(obj.db, "quality", 100) or 100)))
+        caller.msg("You restore some of its condition. Quality: %s -> %s." % (quality_before, quality_after))
+
+
+class CmdHt(Command):
+    """
+    Quick health check: condition (HP), rested (stamina), and recovering (stamina regen rate).
+    Use on yourself or another; wording uses their pronouns when checking others.
+
+    Usage:
+      ht
+      ht <target>
+    """
+    key = "ht"
+    aliases = ["diagnose", "diag", "check"]
+    locks = "cmd:all()"
+    help_category = "General"
+    usage_typeclasses = ["typeclasses.characters.Character"]
+    usage_hint = "|wht|n or |wht <target>|n"
+
+    def func(self):
+        caller = self.caller
+        if not self.args:
             target = caller
         else:
             target = caller.search(self.args)
-            
         if not target:
             return
-
-        if not hasattr(target, "get_health_description"):
+        if not hasattr(target, "db") or not hasattr(target, "max_hp"):
             caller.msg("You cannot assess that.")
             return
-        status = target.get_health_description(include_trauma=False)
+        from world.medical import get_ht_summary, get_diagnose_trauma_for_skill
+        first_person = target == caller
+        status = get_ht_summary(target, first_person=first_person)
         med_level = getattr(caller, "get_skill_level", lambda s: 0)("medicine")
-        from world.medical import get_diagnose_trauma_for_skill
         extra = get_diagnose_trauma_for_skill(target, med_level)
         if extra:
             status = status + "\n\n" + extra
-        prefix = "You assess your own condition:" if target == caller else f"You eye {target.name} critically:"
-        caller.msg(f"{prefix}\n{status}")
+        caller.msg(status)
 
 
 class CmdUse(Command):
@@ -2422,7 +3256,7 @@ class CmdStabilize(Command):
             return
         tool_type = getattr(tool.db, "medical_tool_type", None)
         if tool_type not in TOOL_CAN_STOP_BLEEDING:
-            caller.msg("That tool isn't meant for bleeding control. Use bandages, a medkit, suture kit, hemostatic agent, or surgical kit.")
+            caller.msg("That tool isn't meant for bleeding control. Use bandages, a medkit, suture kit, hemostatic agent, tourniquet, or surgical kit.")
             return
 
         target = caller.search(args)
@@ -3127,7 +3961,7 @@ class CmdCheckAmmo(Command):
 
 class CmdWear(Command):
     """
-    Wear a piece of clothing from your inventory.
+    Wear a piece of clothing or armor from your inventory.
 
     Usage:
       wear <clothing>
@@ -3155,6 +3989,31 @@ class CmdWear(Command):
         if target in worn:
             caller.msg(f"You're already wearing {target.get_display_name(caller)}.")
             return
+
+        # Armor stacking: enforce max total stacking_score
+        from world.armor import (
+            MAX_ARMOR_STACKING_SCORE,
+            get_worn_armor_stack_total,
+            check_layer_warning,
+            _is_armor,
+        )
+        if _is_armor(target):
+            current_stack = get_worn_armor_stack_total(caller)
+            add_score = target.get_stacking_score()
+            if current_stack >= MAX_ARMOR_STACKING_SCORE:
+                caller.msg("You cannot wear any more armor.")
+                return
+            if current_stack + add_score > MAX_ARMOR_STACKING_SCORE:
+                caller.msg(
+                    "That would exceed your armor limit. You may be able to wear a smaller piece of armor instead."
+                )
+                return
+
+        # Layering warning: lower layer under higher on same part (don't block)
+        warn, higher = check_layer_warning(caller, target)
+        if warn and higher:
+            caller.msg("The item must be worn under %s." % higher.get_display_name(caller))
+
         caller.db.worn = worn + [target]
         caller.msg(f"You put on {target.get_display_name(caller)}.")
         caller.location.msg_contents(
@@ -3334,6 +4193,31 @@ except ImportError:
 
 class CmdGet(DefaultCmdGet if DefaultCmdGet else BaseCommand):
     """Get: supports 'get <item> from <container>'; from logged-off/corpse only when allowed."""
+    key = "get"
+    aliases = ["take", "pick up"]
+
+    def at_pre_cmd(self):
+        # Block when flatlined/dead (CmdGet does not inherit from Command)
+        char = _command_character(self)
+        try:
+            if char.account and (char.account.permissions.check("Builder") or char.account.permissions.check("Admin")):
+                return super().at_pre_cmd() if hasattr(super(), "at_pre_cmd") else None
+        except Exception:
+            pass
+        try:
+            from world.death import is_flatlined, is_permanently_dead
+            if is_flatlined(char):
+                self.caller.msg("|rYou are dying. There is nothing you can do.|n")
+                return True
+            if is_permanently_dead(char):
+                self.caller.msg("|rYou are dead. Only an administrator can help you now.|n")
+                return True
+        except Exception:
+            pass
+        if getattr(char, "hp", None) is not None and char.hp <= 0:
+            self.caller.msg("|rYou are dying. There is nothing you can do.|n")
+            return True
+        return super().at_pre_cmd() if hasattr(super(), "at_pre_cmd") else None
 
     def func(self):
         caller = self.caller
@@ -3401,6 +4285,726 @@ class CmdGet(DefaultCmdGet if DefaultCmdGet else BaseCommand):
                 "%s gets %s from %s." % (caller.get_display_name(caller), obj_name, container.get_display_name(caller)),
                 exclude=caller,
             )
+
+
+class CmdPut(Command):
+    """Put an object you're holding into a container (e.g. put cassette in television)."""
+    key = "put"
+    aliases = ["insert"]
+    locks = "cmd:all()"
+    help_category = "General"
+
+    def func(self):
+        caller = _command_character(self)
+        if not caller or not caller.location:
+            return
+        args = (self.args or "").strip()
+        if " in " not in args and " into " not in args:
+            self.caller.msg("Usage: put <item> in <container>")
+            return
+        for sep in (" in ", " into "):
+            if sep in args:
+                item_spec, _, container_spec = args.partition(sep)
+                break
+        else:
+            item_spec = container_spec = ""
+        item_spec = item_spec.strip()
+        container_spec = container_spec.strip()
+        if not item_spec or not container_spec:
+            self.caller.msg("Usage: put <item> in <container>")
+            return
+        obj = caller.search(item_spec, location=caller)
+        if not obj:
+            return
+        container = caller.search(container_spec, location=caller.location)
+        if not container:
+            return
+        if container == caller:
+            self.caller.msg("You can't put something into yourself.")
+            return
+        if obj == container:
+            self.caller.msg("You can't put something into itself.")
+            return
+        if not hasattr(obj, "move_to"):
+            self.caller.msg("You can't put that anywhere.")
+            return
+        if obj.location != caller:
+            self.caller.msg("You're not holding that.")
+            return
+        if not container.access(caller, "get"):
+            self.caller.msg("You can't put anything in that.")
+            return
+        if hasattr(container, "at_pre_object_receive") and not container.at_pre_object_receive(obj, caller):
+            return
+        if obj.move_to(container, quiet=True):
+            if hasattr(container, "at_object_receive"):
+                container.at_object_receive(obj, caller)
+            obj_name = obj.get_numbered_name(1, caller, return_string=True)
+            cont_name = container.get_display_name(caller)
+            self.caller.msg("You put %s in %s." % (obj_name, cont_name))
+            caller.location.msg_contents(
+                "%s puts %s in %s." % (caller.get_display_name(caller), obj_name, cont_name),
+                exclude=caller,
+            )
+        else:
+            self.caller.msg("You can't put that in there.")
+
+
+def _find_camera(caller):
+    """Return a Camera in caller's location or in caller's inventory, or None."""
+    try:
+        from typeclasses.broadcast import Camera
+    except ImportError:
+        return None
+    loc = caller.location
+    if loc:
+        for obj in loc.contents:
+            if isinstance(obj, Camera):
+                return obj
+    for obj in (caller.contents if hasattr(caller, "contents") else []):
+        if isinstance(obj, Camera):
+            return obj
+    return None
+
+
+def _find_television(caller):
+    """Return a Television in caller's location, or None."""
+    try:
+        from typeclasses.broadcast import Television
+    except ImportError:
+        return None
+    loc = caller.location
+    if not loc:
+        return None
+    for obj in loc.contents:
+        if isinstance(obj, Television):
+            return obj
+    return None
+
+
+class CmdCamera(Command):
+    """
+    Operate a camera: set live (link to a TV), record, stop, or unlink from TV.
+    Usage:
+      camera live <television>   - broadcast this room to that TV in real time
+      camera unlink             - unlink camera from TV and turn off live
+      camera record             - start recording (stop with 'camera stop')
+      camera stop               - stop recording and create a cassette here
+      camera                    - show camera status
+    """
+    key = "camera"
+    aliases = ["operate camera"]
+    locks = "cmd:all()"
+    help_category = "General"
+
+    def func(self):
+        caller = _command_character(self)
+        if not caller or not caller.location:
+            return
+        args = (self.args or "").strip().lower()
+        camera = _find_camera(caller)
+        if not camera:
+            self.caller.msg("There's no camera here or in your inventory.")
+            return
+        if not args:
+            mode = getattr(camera.db, "mode", "off")
+            tv_id = getattr(camera.db, "linked_tv", None)
+            tv = _get_object_by_id(tv_id) if tv_id else None
+            tv_name = tv.get_display_name(caller) if tv else "none"
+            self.caller.msg("Camera is |w%s|n. Linked TV: %s." % (mode, tv_name))
+            if mode == "record":
+                buf = getattr(camera.db, "recording_buffer", []) or []
+                self.caller.msg("Recording: %s lines so far." % len(buf))
+            return
+        parts = args.split(None, 1)
+        sub = parts[0]
+        rest = (parts[1] if len(parts) > 1 else "").strip()
+        if sub == "live":
+            if not rest:
+                self.caller.msg("Usage: camera live <television>")
+                return
+            tv = caller.search(rest, location=caller.location)
+            if not tv:
+                return
+            try:
+                from typeclasses.broadcast import Television
+                if not isinstance(tv, Television):
+                    self.caller.msg("That's not a television.")
+                    return
+            except ImportError:
+                self.caller.msg("That's not a television.")
+                return
+            camera.db.mode = "live"
+            camera.db.linked_tv = tv.id
+            self.caller.msg("Camera is now |wlive|n, broadcasting to %s." % tv.get_display_name(caller))
+            return
+        if sub in ("unlink", "off"):
+            was_live = getattr(camera.db, "mode", "off") == "live"
+            camera.db.mode = "off"
+            camera.db.linked_tv = None
+            if was_live:
+                self.caller.msg("Camera unlinked from the television and turned off.")
+            else:
+                self.caller.msg("Camera is off. (It wasn't linked to a TV.)")
+            return
+        if sub == "record":
+            camera.db.mode = "record"
+            camera.db.recording_buffer = []
+            camera.db.record_start_time = None
+            self.caller.msg("Camera is now |wrecording|n. Use |wcamera stop|n to finish and create a cassette.")
+            return
+        if sub == "stop":
+            if getattr(camera.db, "mode", "off") != "record":
+                self.caller.msg("The camera isn't recording.")
+                return
+            cassette = camera.stop_recording_and_make_cassette(caller.location)
+            if cassette:
+                self.caller.msg("Recording stopped. A |wrecording cassette|n appears here.")
+                caller.location.msg_contents(
+                    "%s stops the camera; a recording cassette appears." % caller.get_display_name(caller),
+                    exclude=caller,
+                )
+            else:
+                self.caller.msg("Recording stopped. (Nothing was recorded.)")
+            return
+        self.caller.msg("Usage: camera live <tv> | camera unlink | camera record | camera stop")
+
+
+def _get_object_by_id(dbref):
+    if dbref is None:
+        return None
+    from evennia.utils.search import search_object
+    try:
+        ref = "#%s" % int(dbref)
+        result = search_object(ref)
+        return result[0] if result else None
+    except (TypeError, ValueError):
+        return None
+
+
+class CmdTuneTelevision(Command):
+    """
+    Play the cassette that's inside a television in the room.
+    Usage: tune television   or   tune tv
+    Put a cassette in the TV first with: put <cassette> in <television>
+    """
+    key = "tune"
+    aliases = ["tune television", "tune tv", "play television", "play tv"]
+    locks = "cmd:all()"
+    help_category = "General"
+
+    def func(self):
+        caller = _command_character(self)
+        if not caller or not caller.location:
+            return
+        tv = _find_television(caller)
+        if not tv:
+            self.caller.msg("There's no television here.")
+            return
+        cassette = tv.get_cassette()
+        if not cassette:
+            self.caller.msg("There's no cassette in the television. Put one in first.")
+            return
+        self.caller.msg("You tune the television; the recording begins to play.")
+        caller.location.msg_contents(
+            "%s tunes the television; the recording begins to play." % caller.get_display_name(caller),
+            exclude=caller,
+        )
+        tv.play_recording()
+
+
+class CmdSpawnCamera(Command):
+    """Create a camera in the current room. (Builder+.)"""
+    key = "@spawncamera"
+    aliases = ["@spawn camera"]
+    locks = ADMIN_LOCK
+    help_category = "Admin"
+
+    def func(self):
+        caller = self.caller
+        loc = caller.location
+        if not loc:
+            caller.msg("You need to be in a room.")
+            return
+        from evennia.utils.create import create_object
+        try:
+            cam = create_object("typeclasses.broadcast.Camera", key="camera", location=loc)
+            caller.msg("|gCreated|n |w%s|n here. Use |wcamera record|n, |wcamera live <tv>|n, |wcamera stop|n." % cam.key)
+        except Exception as e:
+            caller.msg("|rCould not create camera: %s|n" % e)
+
+
+class CmdSpawnTelevision(Command):
+    """Create a television in the current room. (Builder+.)"""
+    key = "@spawntv"
+    aliases = ["@spawn television", "@spawn tv"]
+    locks = ADMIN_LOCK
+    help_category = "Admin"
+
+    def func(self):
+        caller = self.caller
+        loc = caller.location
+        if not loc:
+            caller.msg("You need to be in a room.")
+            return
+        from evennia.utils.create import create_object
+        try:
+            tv = create_object("typeclasses.broadcast.Television", key="television", location=loc)
+            caller.msg("|gCreated|n |w%s|n here. |wPut|n a cassette in it and |wtune television|n to play." % tv.key)
+        except Exception as e:
+            caller.msg("|rCould not create television: %s|n" % e)
+
+
+# --- Multi-puppet: run commands as a specific puppeted NPC (p1, p2, ... p9) ---
+
+
+def _clear_multi_puppet_links_for_account(account):
+    """Remove _multi_puppet_account_id and _multi_puppet_slot from all characters in account's multi_puppets."""
+    ids = list(getattr(account.db, "multi_puppets", None) or [])
+    for oid in ids:
+        obj = _get_object_by_id(oid)
+        if obj and hasattr(obj, "db"):
+            if hasattr(obj.db, "_multi_puppet_account_id"):
+                try:
+                    del obj.db["_multi_puppet_account_id"]
+                except Exception:
+                    pass
+            if hasattr(obj.db, "_multi_puppet_slot"):
+                try:
+                    del obj.db["_multi_puppet_slot"]
+                except Exception:
+                    pass
+
+
+def _set_multi_puppet_link(char, account_id, slot_1based):
+    """Mark a character as being in an account's multi-puppet set at the given slot (1-based)."""
+    if char and hasattr(char, "db"):
+        char.db._multi_puppet_account_id = account_id
+        char.db._multi_puppet_slot = slot_1based
+
+
+def _multi_puppet_account(caller):
+    """Return the Account for multi-puppet commands (caller may be Account or Character)."""
+    if hasattr(caller, "account") and caller.account:
+        return caller.account
+    return caller
+
+
+def _multi_puppet_list(account):
+    """Return list of puppet dbrefs; ensure current session.puppet is in the list if we're puppeting."""
+    ids = list(getattr(account.db, "multi_puppets", None) or [])
+    session = getattr(account, "sessions", None)
+    if session and hasattr(session, "get"):
+        sess_list = session.get()
+        if sess_list:
+            sess = sess_list[0]
+            puppet = getattr(sess, "puppet", None)
+            if puppet and (not ids or ids[-1] != getattr(puppet, "id", None)):
+                if not ids:
+                    ids = [puppet.id]
+                elif puppet.id not in ids:
+                    ids = list(ids) + [puppet.id]
+                account.db.multi_puppets = ids
+    return ids
+
+
+def _resolve_multi_puppet(account, index):
+    """Return (Character or None, 0-based index). index 0 = first in list (p1)."""
+    ids = _multi_puppet_list(account)
+    if index < 0 or index >= len(ids):
+        return None, index
+    from evennia.utils.search import search_object
+    try:
+        ref = "#%s" % int(ids[index])
+        result = search_object(ref)
+        return (result[0] if result else None), index
+    except (TypeError, ValueError):
+        return None, index
+
+
+class CmdAddPuppet(BaseCommand):
+    """
+    Add another character to your multi-puppet set without unpuppeting the current one.
+    Your session will now control the new character (normal commands use them); use p1, p2, ...
+    to run commands as the first, second, etc. puppet.
+    Usage: @addpuppet <character>
+    """
+    key = "@addpuppet"
+    locks = "cmd:perm(Builder)"
+    help_category = "Admin"
+
+    def func(self):
+        account = getattr(self.caller, "account", self.caller)
+        if not hasattr(account, "db"):
+            self.msg("No account.")
+            return
+        session = getattr(self, "session", None)
+        if not session:
+            self.msg("No session.")
+            return
+        if not self.args or not self.args.strip():
+            self.msg("Usage: @addpuppet <character>")
+            return
+        # Resolve character: search from current puppet's location or globally
+        searcher = getattr(session, "puppet", None) or self.caller
+        char = searcher.search(self.args.strip(), global_search=True) if hasattr(searcher, "search") else None
+        if not char:
+            from evennia.utils.search import search_object
+            char = search_object(self.args.strip())
+            char = char[0] if char else None
+        if not char:
+            return
+        from evennia.utils import make_iter
+        char = make_iter(char)[0] if make_iter(char) else char
+        if not hasattr(char, "location"):
+            self.msg("That's not a character you can puppet.")
+            return
+        # Build multi_puppets: current puppet is always p1; newly added go to p2, p3, ... Do NOT call puppet_object.
+        ids = list(getattr(account.db, "multi_puppets", None) or [])
+        if not ids and getattr(session, "puppet", None):
+            ids = [session.puppet.id]
+            _set_multi_puppet_link(session.puppet, account.id, 1)
+        if char.id in ids:
+            self.msg("You already have that character in your puppet set.")
+            return
+        # Append: p1 = current (first in list), p2 = first added, p3 = second added, etc.
+        ids.append(char.id)
+        account.db.multi_puppets = ids
+        for i, oid in enumerate(ids):
+            obj = _get_object_by_id(oid)
+            if obj:
+                _set_multi_puppet_link(obj, account.id, i + 1)
+        self.msg("You add |w%s|n to your puppet set. You remain controlling your current character (p1). Use |wp2|n to act as %s, |wp3|n for the next, etc." % (char.get_display_name(self.caller), char.get_display_name(self.caller)))
+
+
+class CmdPuppetList(BaseCommand):
+    """
+    List your current multi-puppet set (p1, p2, ... and which character each slot is).
+    Usage: @puppet/list
+    """
+    key = "@puppet/list"
+    aliases = ["@puppetlist", "puppet list"]
+    locks = "cmd:perm(Builder)"
+    help_category = "Admin"
+
+    def func(self):
+        account = getattr(self.caller, "account", self.caller)
+        if not hasattr(account, "db"):
+            self.msg("No account.")
+            return
+        session = getattr(self, "session", None)
+        ids = _multi_puppet_list(account)
+        if not ids:
+            self.msg("You have no puppets in your set. Use |w@puppet|n to puppet a character, then |w@addpuppet <name>|n to add more.")
+            return
+        lines = []
+        current = getattr(session, "puppet", None) if session else None
+        for i, oid in enumerate(ids):
+            obj = _get_object_by_id(oid)
+            name = obj.get_display_name(self.caller) if obj else "#%s (gone)" % oid
+            slot = i + 1
+            mark = " |w(you)|n" if obj and obj == current else ""
+            lines.append("  p%s: %s%s" % (slot, name, mark))
+        self.msg("|wYour puppet set:|n\n%s" % "\n".join(lines))
+
+
+class CmdPuppetSlot(BaseCommand):
+    """
+    Run a command as one of your multi-puppeted characters.
+    Usage: p1 <command>   p2 <command>   ...   p9 <command>
+    Example: p1 say Hello world   p2 go north
+    """
+    key = "p1"
+    aliases = ["p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9"]
+    locks = "cmd:perm(Builder)"
+    help_category = "Admin"
+
+    def func(self):
+        account = _multi_puppet_account(self.caller)
+        session = getattr(self, "session", None)
+        if not session:
+            # Fallback: get session from account
+            if hasattr(account, "sessions") and account.sessions.get():
+                session = account.sessions.get()[0]
+        if not session:
+            self.msg("No session.")
+            return
+        # Parse slot from cmdstring: p1 -> 0, p2 -> 1, ...
+        raw = (self.cmdstring or "").strip().lower()
+        if raw.startswith("p") and len(raw) >= 2 and raw[1:].isdigit():
+            index = int(raw[1:]) - 1
+        else:
+            index = 0
+        char, _ = _resolve_multi_puppet(account, index)
+        if not char:
+            self.msg("You don't have a puppet in slot %s. Use |w@puppet|n and |w@addpuppet|n to build your set." % (index + 1))
+            return
+        sub_cmd = (self.args or "").strip()
+        if not sub_cmd:
+            self.msg("Usage: %s <command>   (e.g. %s say Hello)" % (self.cmdstring, self.cmdstring))
+            return
+        # Temporarily set session.puppet to this character so the command runs as them (cmdset merge uses session.puppet)
+        old_puppet = getattr(session, "puppet", None)
+        session.puppet = char
+        try:
+            d = char.execute_cmd(sub_cmd, session=session)
+            if d is not None and hasattr(d, "addBoth"):
+                def _restore(_):
+                    session.puppet = old_puppet
+                d.addBoth(_restore)
+            else:
+                session.puppet = old_puppet
+        except Exception as e:
+            session.puppet = old_puppet
+            self.msg("|rError running command: %s|n" % e)
+
+
+def _send_to_channel(caller, channel_alias, args, session, msg_func, no_channel_msg, no_send_msg, usage_msg):
+    """Helper: resolve account, find channel by alias, check send, send message."""
+    from evennia import search_channel
+    from evennia.utils.utils import strip_unsafe_input
+    account = getattr(caller, "account", caller)
+    if not hasattr(account, "permissions"):
+        msg_func("You must be logged in to use channels.")
+        return
+    channels = search_channel(channel_alias)
+    if not channels:
+        msg_func(no_channel_msg)
+        return
+    try:
+        channel = channels[0]
+    except (TypeError, IndexError):
+        msg_func(no_channel_msg)
+        return
+    if not channel.access(account, "send"):
+        msg_func(no_send_msg)
+        return
+    message = (args or "").strip()
+    if not message:
+        msg_func(usage_msg)
+        return
+    message = strip_unsafe_input(message, session)
+    channel.msg(message, senders=account)
+
+
+def _subscribe_channel(account, alias, msg_func):
+    """Subscribe account to channel by alias (xooc, xgame, xstaff). Returns True on success."""
+    from evennia import search_channel
+    channels = search_channel(alias)
+    if not channels:
+        msg_func("No channel found matching '%s'." % alias)
+        return False
+    try:
+        channel = channels[0]
+    except (TypeError, IndexError):
+        msg_func("No channel found matching '%s'." % alias)
+        return False
+    if not channel.access(account, "listen"):
+        msg_func("You are not allowed to subscribe to that channel.")
+        return False
+    if channel.has_connection(account):
+        msg_func("You are already subscribed to %s." % channel.key)
+        return False
+    if not channel.connect(account):
+        msg_func("Could not subscribe to %s." % channel.key)
+        return False
+    msg_func("You are now subscribed to |w%s|n (%s). You can leave with |wchannelunsub %s|n." % (channel.key, alias, alias))
+    return True
+
+
+def _unsubscribe_channel(account, alias, msg_func):
+    """Unsubscribe account from channel by alias. Returns True on success."""
+    from evennia import search_channel
+    channels = search_channel(alias)
+    if not channels:
+        msg_func("No channel found matching '%s'." % alias)
+        return False
+    try:
+        channel = channels[0]
+    except (TypeError, IndexError):
+        msg_func("No channel found matching '%s'." % alias)
+        return False
+    if not channel.has_connection(account):
+        msg_func("You are not subscribed to %s." % channel.key)
+        return False
+    channel.disconnect(account)
+    msg_func("You left %s (%s)." % (channel.key, alias))
+    return True
+
+
+class CmdChannelSub(Command):
+    """Subscribe to an OOC channel so you can send and receive. Usage: channelsub xooc"""
+    key = "channelsub"
+    aliases = ["chsub"]
+    locks = "cmd:all()"
+    help_category = "Channels"
+
+    def func(self):
+        account = getattr(self.caller, "account", self.caller)
+        if not hasattr(account, "permissions"):
+            self.msg("You must be logged in.")
+            return
+        alias = (self.args or "").strip().lower()
+        if not alias:
+            self.msg("Usage: channelsub <channel>   (e.g. channelsub xooc, channelsub xgame). Staff: channelsub xstaff")
+            return
+        _subscribe_channel(account, alias, self.msg)
+
+
+class CmdChannelUnsub(Command):
+    """Leave an OOC channel. Usage: channelunsub xooc"""
+    key = "channelunsub"
+    aliases = ["chunsub"]
+    locks = "cmd:all()"
+    help_category = "Channels"
+
+    def func(self):
+        account = getattr(self.caller, "account", self.caller)
+        if not hasattr(account, "permissions"):
+            self.msg("You must be logged in.")
+            return
+        alias = (self.args or "").strip().lower()
+        if not alias:
+            self.msg("Usage: channelunsub <channel>   (e.g. channelunsub xooc)")
+            return
+        _unsubscribe_channel(account, alias, self.msg)
+
+
+class CmdXooc(Command):
+    """Send a message to OOC-Chat (xooc). Use @oocname to set the name others see."""
+    key = "xooc"
+    locks = "cmd:all()"
+    help_category = "Channels"
+
+    def func(self):
+        _send_to_channel(
+            self.caller, "xooc", self.args, self.session, self.msg,
+            "OOC-Chat channel is not available.",
+            "You are not allowed to send to OOC-Chat.",
+            "Usage: xooc <message>",
+        )
+
+
+class CmdXgame(Command):
+    """Send a message to Game-Help (xgame)."""
+    key = "xgame"
+    locks = "cmd:all()"
+    help_category = "Channels"
+
+    def func(self):
+        _send_to_channel(
+            self.caller, "xgame", self.args, self.session, self.msg,
+            "Game-Help channel is not available.",
+            "You are not allowed to send to Game-Help.",
+            "Usage: xgame <message>",
+        )
+
+
+class CmdXstaff(Command):
+    """Send a message to the Staff channel (staff only)."""
+    key = "xstaff"
+    locks = "cmd:perm(Builder)"
+    help_category = "Channels"
+
+    def func(self):
+        _send_to_channel(
+            self.caller, "xstaff", self.args, self.session, self.msg,
+            "Staff channel is not available.",
+            "You are not allowed to send to the Staff channel.",
+            "Usage: xstaff <message>",
+        )
+
+
+def _xhelp_staff_reply(caller, target_name, message, msg_func, session):
+    """Send a private help reply from staff to one account. Returns True on success."""
+    from evennia.utils.search import search_account
+    from evennia.utils.utils import strip_unsafe_input
+    if not target_name or not (message or "").strip():
+        return False
+    accounts = search_account(target_name, exact=False)
+    if not accounts:
+        msg_func("No account found matching '%s'." % target_name)
+        return False
+    account = accounts[0] if isinstance(accounts, list) else accounts
+    message = strip_unsafe_input(message.strip(), session)
+    account.msg("|m[Help reply from Staff]|n %s" % message)
+    msg_func("You replied privately to |w%s|n: %s" % (account.key, message))
+    return True
+
+
+class CmdHelpReply(Command):
+    """Staff only: send a private reply to one player on the Help channel. Usage: xhelpreply <account> <message>"""
+    key = "xhelpreply"
+    locks = "cmd:perm(Builder)"
+    help_category = "Channels"
+
+    def func(self):
+        caller = getattr(self.caller, "account", self.caller)
+        raw = (self.args or "").strip()
+        parts = raw.split(None, 1)
+        if len(parts) < 2:
+            self.msg("Usage: xhelpreply <account> <message>   (e.g. xhelpreply skythia Hello.)")
+            return
+        _xhelp_staff_reply(caller, parts[0], parts[1], self.msg, self.session)
+
+
+class CmdHelp(Command):
+    """
+    Send to the Help channel (you only see your own; staff see all).
+    Staff reply privately with: xhelpreply <account> <message>
+    """
+    key = "xhelp"
+    aliases = ["help"]
+    locks = "cmd:all()"
+    help_category = "Channels"
+
+    def func(self):
+        from evennia import search_channel
+        from evennia.utils.utils import strip_unsafe_input
+        caller = getattr(self.caller, "account", self.caller)
+        if not hasattr(caller, "permissions"):
+            self.msg("You must be logged in to use the Help channel.")
+            return
+        raw = (self.args or "").strip()
+        channels = search_channel("xhelp") or search_channel("Help")
+        if not channels:
+            self.msg("Help channel is not available.")
+            return
+        channel = channels[0]
+        if not channel.access(caller, "send"):
+            self.msg("You are not allowed to send to the Help channel.")
+            return
+        if not raw:
+            self.msg("Usage: xhelp <message>   (Staff reply privately: xhelpreply <account> <message>)")
+            return
+        message = strip_unsafe_input(raw, self.session)
+        channel.msg(message, senders=caller)
+
+
+class CmdOocName(Command):
+    """
+    Set the name shown when you speak on OOC-Chat (xooc). If unset, your account name is used.
+    Usage:
+      @oocname [name]
+    With no args, show current OOC name. With a name, set it.
+    """
+    key = "@oocname"
+    aliases = ["oocname"]
+    locks = "cmd:all()"
+    help_category = "Channels"
+
+    def func(self):
+        caller = getattr(self.caller, "account", self.caller)
+        if not hasattr(caller, "db"):
+            self.msg("No account.")
+            return
+        if not self.args or not self.args.strip():
+            current = getattr(caller.db, "ooc_display_name", None) or caller.key
+            self.msg("Your OOC display name is: |w%s|n. Set it with |w@oocname <name>|n." % current)
+            return
+        name = self.args.strip()[:64]
+        caller.db.ooc_display_name = name
+        self.msg("OOC display name set to |w%s|n. You will appear as this on OOC-Chat (xooc)." % name)
 
 
 def _loot_finish(caller_id, corpse_id):
@@ -3473,56 +5077,34 @@ class CmdLoot(Command):
         delay(5.5, _loot_finish, caller.id, corpse.id)
 
 
-# Tailor subcommands: first occurrence in args splits bolt_spec | subcmd | value
-_TAILOR_SUBCMDS = ["name", "aliases", "worn", "worndesc", "desc", "tease", "coverage", "finalize"]
-
-
-def _tailor_parse_args(args):
-    """Return (bolt_spec, subcmd, value) or (None, None, None) if no subcmd found."""
-    if not args or not args.strip():
-        return None, None, None
-    args = args.strip()
-    best_pos = len(args)
-    found_sub = None
-    for sub in _TAILOR_SUBCMDS:
-        pos = args.find(sub)
-        if pos == 0 or (pos > 0 and args[pos - 1].isspace()):
-            if pos < best_pos:
-                best_pos = pos
-                found_sub = sub
-    if found_sub is None:
-        return args.strip(), None, None
-    bolt_spec = args[:best_pos].strip()
-    rest = args[best_pos + len(found_sub):].strip()
-    return bolt_spec, found_sub, rest
-
-
 class CmdTailor(Command):
     """
     Customize a bolt of cloth (name, aliases, desc, tease, coverage) then finalize into clothing.
 
     Usage:
-      tailor [bolt]                    - show draft status
-      tailor [bolt] name <name>
-      tailor [bolt] aliases <a1> [a2 ...]
-      tailor [bolt] desc <text>         - main desc (when item is looked at)
-      tailor [bolt] worndesc <text>     - worn desc (replaces body parts on look; $N, $P, $S)
-      tailor [bolt] tease <text>        - wearer $N $P $S; target $T $R $U; item $I (see help tease)
-      tailor [bolt] coverage <part> [part ...]  - body parts (lfoot, rshoulder, torso, etc.)
-      tailor [bolt] finalize            - turn bolt into wearable clothing
+      @tailor [bolt]                    - show draft status
+      @tailor [bolt] name <name>
+      @tailor [bolt] aliases <a1> [a2 ...]
+      @tailor [bolt] desc <text>         - main desc (when item is looked at)
+      @tailor [bolt] worndesc <text>     - worn desc (replaces body parts on look; $N, $P, $S)
+      @tailor [bolt] tease <text>        - wearer $N $P $S; target $T $R $U; item $I (see help tease)
+      @tailor [bolt] coverage <part> [part ...]  - body parts (lfoot, rshoulder, torso, etc.)
+      @tailor [bolt] finalize            - turn bolt into wearable clothing
     """
-    key = "tailor"
+    key = "@tailor"
+    aliases = []
     locks = "cmd:all()"
     help_category = "General"
     usage_typeclasses = ["typeclasses.bolt_of_cloth.BoltOfCloth"]
-    usage_hint = "|wtailor|n (to make clothing)"
+    usage_hint = "|w@tailor|n (to make clothing)"
 
     def func(self):
         caller = self.caller
-        bolt_spec, subcmd, value = _tailor_parse_args(self.args)
+        from world.tailoring import tailor_parse_args
+        bolt_spec, subcmd, value = tailor_parse_args(self.args)
 
         if not bolt_spec and not subcmd:
-            caller.msg("Usage: tailor [bolt] [name|aliases|desc|worndesc|tease|coverage|finalize] ...")
+            caller.msg("Usage: @tailor [bolt] [name|aliases|desc|worndesc|tease|coverage|finalize] ...")
             return
 
         if bolt_spec:
@@ -3540,7 +5122,7 @@ class CmdTailor(Command):
                 caller.msg("You aren't holding a bolt of cloth. Specify which bolt or get one.")
                 return
             if len(bolts) > 1:
-                caller.msg("You have more than one bolt; specify which: tailor <bolt> ...")
+                caller.msg("You have more than one bolt; specify which: @tailor <bolt> ...")
                 return
             bolt = bolts[0]
 
@@ -3548,6 +5130,7 @@ class CmdTailor(Command):
             # Status
             st = bolt.get_draft_status()
             caller.msg("|wDraft status|n for %s:" % bolt.get_display_name(caller))
+            caller.msg("  Material: %s" % st.get("material", "bolt of cloth"))
             caller.msg("  Name: %s" % st["name"])
             caller.msg("  Aliases: %s" % (st["aliases"] or "(none)"))
             caller.msg("  Desc: %s" % (st["desc"] or "(none)"))
@@ -3558,7 +5141,7 @@ class CmdTailor(Command):
 
         if subcmd == "name":
             if not value:
-                caller.msg("Usage: tailor [bolt] name <name>")
+                caller.msg("Usage: @tailor [bolt] name <name>")
                 return
             bolt.db.draft_name = value
             caller.msg("Draft name set to: %s" % value)
@@ -3598,27 +5181,9 @@ class CmdTailor(Command):
             return
 
         if subcmd == "finalize":
-            name = (bolt.db.draft_name or "").strip() or "garment"
-            if not bolt.db.draft_covered_parts:
-                caller.msg("Set coverage before finalizing (e.g. tailor bolt coverage torso lshoulder rshoulder).")
-                return
-            try:
-                bolt.swap_typeclass("typeclasses.clothing.Clothing")
-            except Exception as e:
-                caller.msg("Could not finalize: %s" % e)
-                return
-            bolt.key = name
-            bolt.aliases.clear()
-            for a in (bolt.db.draft_aliases or []):
-                bolt.aliases.add(a)
-            bolt.db.desc = bolt.db.draft_desc or ""
-            bolt.db.worn_desc = bolt.db.draft_worn_desc or ""
-            bolt.db.tease_message = bolt.db.draft_tease or ""
-            bolt.db.covered_parts = list(bolt.db.draft_covered_parts or [])
-            for k in ("draft_name", "draft_aliases", "draft_desc", "draft_worn_desc", "draft_tease", "draft_covered_parts"):
-                if bolt.attributes.has(k):
-                    bolt.attributes.remove(k)
-            caller.msg("You finalize the bolt into: %s" % bolt.get_display_name(caller))
+            from world.tailoring import finalize_bolt_to_clothing
+            clothing, msg = finalize_bolt_to_clothing(bolt, caller)
+            caller.msg(msg)
             return
 
         caller.msg("Unknown subcommand. Use: name, aliases, desc, worndesc, tease, coverage, finalize.")
@@ -3813,15 +5378,15 @@ class CmdDescribeBodypart(Command):
     You can use tokens $N (your name), $P/$p (possessive), $S/$s (subject). See help tokens.
 
     Usage:
-      describe_bodypart <body part> = <text>
-      describe_bodypart head = scarred and crooked
-      describe_bodypart lshoulder = $S has an old burn mark on $p shoulder
+      @describe_bodypart <body part> = <text>
+      @describe_bodypart head = scarred and crooked
+      @descpart lshoulder = $S has an old burn mark on $p shoulder
 
     Body parts (head to feet): head, face, neck, lshoulder, rshoulder, torso, back,
     abdomen, larm, rarm, lhand, rhand, groin, lthigh, rthigh, lfoot, rfoot
     """
-    key = "describe_bodypart"
-    aliases = ["descpart"]
+    key = "@describe_bodypart"
+    aliases = ["@descpart"]
     locks = "cmd:all()"
     help_category = "General"
 
@@ -3831,7 +5396,7 @@ class CmdDescribeBodypart(Command):
             caller.msg("You cannot set body descriptions.")
             return
         if not self.args or "=" not in self.args:
-            caller.msg("Usage: describe_bodypart <body part> = <text>")
+            caller.msg("Usage: @describe_bodypart <body part> = <text>")
             caller.msg("Body parts: " + ", ".join(_body_parts_usage_list()))
             return
         raw, _, rest = self.args.partition("=")
@@ -3848,15 +5413,92 @@ class CmdDescribeBodypart(Command):
         caller.msg(f"Set your |w{part}|n description: {rest}")
 
 
+class CmdDescribeMeAs(Command):
+    """
+    Set the short "describe me as" line shown when someone looks at you (first line after your name).
+
+    Usage:
+      @dmas              - show your current general description
+      @dmas = <text>     - set it (e.g. @dmas = A grizzled veteran with a permanent scowl.)
+    """
+    key = "@dmas"
+    aliases = ["@describe me as", "@describe_me_as"]
+    locks = "cmd:all()"
+    help_category = "General"
+
+    def func(self):
+        caller = self.caller
+        if not hasattr(caller, "db"):
+            return
+        args = (self.args or "").strip()
+        if "=" in args:
+            _, _, rest = args.partition("=")
+            rest = rest.strip()
+            caller.db.general_desc = rest if rest else "This is a character."
+            if rest:
+                caller.msg("When someone looks at you, they will see: |w%s|n" % rest)
+            else:
+                caller.msg("Reset to default: |wThis is a character.|n")
+            return
+        current = getattr(caller.db, "general_desc", None) or "This is a character."
+        caller.msg("|wYour general description|n (the first line when someone looks at you):")
+        caller.msg("  %s" % current)
+        caller.msg("To change: |w@dmas = <text>|n")
+
+
+class CmdVoice(Command):
+    """
+    Set the optional voice description shown rarely when you speak (say/emote), based on listeners' perception.
+
+    Usage:
+      @voice           - show your current voice setting
+      @voice = <text>  - set it (e.g. @voice = British accented). Affixed with " voice" automatically.
+      @voice clear     - clear your voice (stop showing)
+    """
+    key = "@voice"
+    locks = "cmd:all()"
+    help_category = "General"
+
+    def func(self):
+        caller = self.caller
+        if not hasattr(caller, "db"):
+            return
+        args = (self.args or "").strip()
+        if args.lower() == "clear" or args == "" and "=" not in (self.args or ""):
+            if args.lower() == "clear":
+                caller.db.voice = ""
+                caller.msg("Voice cleared. Your speech will no longer show a voice description.")
+                return
+            current = getattr(caller.db, "voice", None) or ""
+            if current:
+                caller.msg("|wYour voice|n (shown rarely to listeners who pass a perception check): |w%s voice|n" % current)
+            else:
+                caller.msg("|wYour voice|n: not set. Use |w@voice = <text>|n (e.g. @voice = British accented).")
+            return
+        if "=" in args:
+            _, _, rest = args.partition("=")
+            rest = rest.strip()
+            caller.db.voice = rest
+            if rest:
+                caller.msg("Voice set. Listeners may occasionally see you |wspeaking in a %s voice|n." % rest)
+            else:
+                caller.msg("Voice cleared.")
+            return
+        current = getattr(caller.db, "voice", None) or ""
+        if current:
+            caller.msg("|wYour voice|n: |w%s voice|n" % current)
+        else:
+            caller.msg("|wYour voice|n: not set. Use |w@voice = <text>|n.")
+
+
 class CmdBody(Command):
     """
     List all body parts and their current descriptions (head to feet).
 
     Usage:
-      body
+      @body
     """
-    key = "body"
-    aliases = ["bodyparts", "mydesc"]
+    key = "@body"
     help_category = "General"
 
     def func(self):
@@ -3867,7 +5509,7 @@ class CmdBody(Command):
             return
         # Show raw descriptions you set, not clothing-overridden (look uses effective desc)
         parts = caller.db.body_descriptions or {}
-        caller.msg("|wYour body part descriptions|n (use |wdescribe_bodypart <part> = <text>|n to set)")
+        caller.msg("|wYour body part descriptions|n (use |w@describe_bodypart <part> = <text>|n to set)")
         caller.msg("")
         for part in BODY_PARTS_HEAD_TO_FEET:
             text = (parts.get(part) or "").strip()
@@ -3877,18 +5519,139 @@ class CmdBody(Command):
                 caller.msg(f"  |w{part}|n: |x(not set)|n")
 
 
+class CmdSdesc(Command):
+    """
+    View or customize your short description (the phrase in parentheses next to your name in the room).
+
+    Usage:
+      @sdesc                    - show your current sdesc and gender term
+      @sdesc customize          - list choices for your gender; pick by number
+      @sdesc set <term>         - set the gender term (e.g. @sdesc set lad, @sdesc set bloke)
+      @sdesc custom <word>      - request a custom one-word term (staff approval required; max 15 chars)
+    """
+    key = "@sdesc"
+    locks = "cmd:all()"
+    help_category = "General"
+
+    def func(self):
+        from world.sdesc import get_short_desc, get_gender_term, get_gender_terms_list, _article_for
+        from world.staff_pending import add_pending, get_pending
+        caller = self.caller
+        args = (self.args or "").strip().lower()
+        # sdesc custom <word> - submit for staff approval
+        if args.startswith("custom "):
+            word = args[6:].strip()
+            if not word:
+                caller.msg("Usage: @sdesc custom <word>")
+                caller.msg("Request a custom one-word gender term (max 15 characters). Staff must approve.")
+                return
+            if len(word) > 15:
+                caller.msg("Custom term must be 15 characters or fewer.")
+                return
+            if len(word.split()) != 1:
+                caller.msg("Custom term must be a single word.")
+                return
+            # One pending sdesc_gender_term per character
+            for job in get_pending("sdesc_gender_term"):
+                if job.get("requester_id") == getattr(caller, "id", None) or job.get("requester_id") == getattr(caller, "dbref", None):
+                    caller.msg("You already have a pending custom term request. Wait for staff to approve or deny it.")
+                    return
+            job_id, ok = add_pending("sdesc_gender_term", caller, {"term": word})
+            if not ok:
+                caller.msg("The approval queue is unavailable. Try again later.")
+                return
+            caller.msg("|gYour request for the custom sdesc term |w%s|g has been submitted for staff approval. You will be notified when it is approved or denied.|n" % word)
+            return
+        # sdesc set <term>
+        if args.startswith("set "):
+            term = args[4:].strip()
+            allowed = get_gender_terms_list(caller)
+            if not term:
+                caller.msg("Usage: @sdesc set <term>")
+                caller.msg("Options: %s" % ", ".join(allowed))
+                return
+            if term not in [t.lower() for t in allowed]:
+                caller.msg("That term isn't valid for your gender. Use |w@sdesc customize|n to see options.")
+                return
+            caller.db.sdesc_gender_term = term
+            caller.db.sdesc_gender_term_custom = False  # clear custom flag when picking from list
+            caller.msg("Your short description will now use |w%s|n (e.g. \"a rangy %s\")." % (term, term))
+            return
+        # sdesc customize: show numbered list
+        if args == "customize" or args == "customise":
+            allowed = get_gender_terms_list(caller)
+            current = get_gender_term(caller)
+            caller.msg("|wCurrent term:|n %s" % current)
+            caller.msg("")
+            caller.msg("|wChoose a term (use |w@sdesc set <term>|n):|n")
+            for i, t in enumerate(allowed, 1):
+                mark = " |y(current)|n" if t.lower() == current else ""
+                caller.msg("  %2d: %s%s" % (i, t, mark))
+            caller.msg("")
+            caller.msg("Or request a custom one-word term (staff approval required, max 15 chars): |w@sdesc custom <word>|n")
+            return
+        # sdesc (no args): show current sdesc and term
+        full = get_short_desc(caller, caller)
+        current_term = get_gender_term(caller)
+        caller.msg("|wYour short description:|n")
+        caller.msg("  %s" % full)
+        caller.msg("")
+        article = _article_for(current_term)
+        caller.msg("|wCurrently appearing as|n %s %s." % (article, current_term))
+        caller.msg("Use |w@sdesc customize|n to see options, |w@sdesc set <term>|n to change, or |w@sdesc custom <word>|n to request a custom term.")
+
+
+class CmdPending(Command):
+    """
+    View and resolve the staff pending-approval queue (custom sdesc terms, etc.).
+    Use @pending so it is not overridden by the staff_pending channel nick.
+
+    Usage:
+      @pending              - list all pending jobs
+      @pending approve <id> - approve (id = short id from channel, e.g. b841ccfc)
+      @pending deny <id>     - deny
+    """
+    key = "@pending"
+    aliases = ["staffpending", "approvals"]
+    locks = "cmd:perm(Builder)"
+    help_category = "Staff"
+
+    def func(self):
+        from world.staff_pending import get_pending, get_by_id, resolve, _format_job_summary
+        args = (self.args or "").strip().split()
+        if len(args) >= 2 and args[0].lower() in ("approve", "deny"):
+            action = args[0].lower()
+            job_id = args[1].strip()
+            if not job_id:
+                self.caller.msg("Usage: @pending %s <id>   (id = short id from channel, e.g. b841ccfc)" % action)
+                return
+            success, msg = resolve(job_id, approved=(action == "approve"), staff_member=self.caller)
+            self.caller.msg(msg)
+            return
+        pending = get_pending()
+        if not pending:
+            self.caller.msg("No pending approval requests.")
+            return
+        self.caller.msg("|wPending approval requests:|n")
+        for job in pending:
+            summary = _format_job_summary(job)
+            if summary:
+                self.caller.msg("  " + summary)
+        self.caller.msg("Use |w@pending approve <id>|n or |w@pending deny <id>|n (id = short id from channel).")
+
+
 class CmdLookPlace(Command):
     """
     Set how you appear in the room when someone looks (e.g. "standing here", "sitting by the fire").
     You can use tokens $N (your name), $P/$p (possessive), $S/$s (subject). See help tokens.
 
     Usage:
-      lp <text>
-      look_place <text>
-      lp                    (show current)
+      @lp <text>
+      @look_place <text>
+      @lp                    (show current)
     """
-    key = "lp"
-    aliases = ["look_place", "standing", "roompose"]
+    key = "@lp"
+    aliases = ["@look_place", "@standing", "@roompose"]
     locks = "cmd:all()"
     help_category = "General"
 
@@ -3898,7 +5661,7 @@ class CmdLookPlace(Command):
         if not args:
             current = getattr(caller.db, "room_pose", None) or "standing here"
             caller.msg(f"You appear in the room as: |w{current}|n.")
-            caller.msg("Use |wlp <text>|n to change it (e.g. lp leaning against the wall).")
+            caller.msg("Use |w@lp <text>|n to change it (e.g. @lp leaning against the wall).")
             return
         caller.db.room_pose = args
         pose = args.rstrip(".")
@@ -3907,18 +5670,16 @@ class CmdLookPlace(Command):
 
 class CmdSleepPlace(Command):
     """
-    Set how you appear when logged off: both the look line (e.g. "is sleeping here") and
-    the message the room sees when you log off (e.g. "$N falls asleep."). Same command sets both.
+    Set how you appear when logged off (look line) and/or the message the room sees when you log off.
     Use $N $P $S in the text. See help tokens.
 
     Usage:
-      sp <text>
-      sleep place <text>
-      sleep_place <text>
-      sp                    (show current)
+      @sp                         - show current appearance and log-off message
+      @sp <text>                   - set how you appear when logged off (e.g. "sleeping here")
+      @sp msg <text>               - set the message the room sees when you log off (e.g. "$N falls asleep.")
     """
-    key = "sp"
-    aliases = ["sleep place", "sleep_place", "sleepplace", "logout_pose"]
+    key = "@sp"
+    aliases = ["@sleep place", "@sleep_place", "@sleepplace", "@logout_pose"]
     locks = "cmd:all()"
     help_category = "General"
 
@@ -3930,13 +5691,19 @@ class CmdSleepPlace(Command):
             fall = getattr(caller.db, "fall_asleep_message", None) or "$N falls asleep."
             caller.msg(f"When logged off, you appear: |w{place}|n.")
             caller.msg(f"When you log off, the room sees: |w{fall}|n")
-            caller.msg("Use |wsp <text>|n to set both (e.g. sp slumps into a doze).")
+            caller.msg("Use |w@sp <text>|n to set how you appear when logged off.")
+            caller.msg("Use |w@sp msg <text>|n to set the message the room sees when you log off.")
             return
+        # @sp msg <text> or @sp message <text> -> set fall_asleep_message only
+        if args.lower().startswith("msg ") or args.lower().startswith("message "):
+            prefix = "msg " if args.lower().startswith("msg ") else "message "
+            text = args[len(prefix):].strip()
+            caller.db.fall_asleep_message = text if text else "$N falls asleep."
+            caller.msg(f"When you log off, the room will see: |w{caller.db.fall_asleep_message}|n")
+            return
+        # @sp <text> -> set sleep_place only (how you appear when logged off)
         caller.db.sleep_place = args
-        fall_msg = "$N " + args.rstrip(".") + "." if args else "$N falls asleep."
-        caller.db.fall_asleep_message = fall_msg
         caller.msg(f"When logged off, others will see you as: |w{caller.name} is {args.rstrip('.')}.|n")
-        caller.msg(f"When you log off, the room will see: |w{fall_msg}|n")
 
 
 class CmdWakeMsg(Command):
@@ -3945,11 +5712,11 @@ class CmdWakeMsg(Command):
     Use $N for your name. See help tokens.
 
     Usage:
-      wakemsg <text>
-      wakemsg                 (show current)
+      @wakemsg <text>
+      @wakemsg                 (show current)
     """
-    key = "wakemsg"
-    aliases = ["wake_up", "wakeupmsg", "loginmsg"]
+    key = "@wakemsg"
+    aliases = ["@wake_up", "@wakeupmsg", "@loginmsg"]
     locks = "cmd:all()"
     help_category = "General"
 
@@ -3959,24 +5726,58 @@ class CmdWakeMsg(Command):
         if not args:
             current = getattr(caller.db, "wake_up_message", None) or "$N wakes up."
             caller.msg(f"When you log on, the room sees: |w{current}|n")
-            caller.msg("Use |wwakemsg <text>|n (e.g. wakemsg $N stirs and opens $p eyes.).")
+            caller.msg("Use |w@wakemsg <text>|n (e.g. @wakemsg $N stirs and opens $p eyes.).")
             return
         caller.db.wake_up_message = args
         caller.msg(f"Set. When you log on, the room will see: |w{args}|n")
 
 
+class CmdFlatlineMsg(Command):
+    """
+    Set the message the room sees when you fall flatlined (dying). Use {name} for your name.
+
+    Usage:
+      @flatlinemsg <text>
+      @flatlinemsg              (show current; clear to use default)
+    """
+    key = "@flatlinemsg"
+    aliases = ["@flatline", "@deathmsg", "@dyingmsg"]
+    locks = "cmd:all()"
+    help_category = "General"
+
+    def func(self):
+        caller = self.caller
+        args = self.args.strip()
+        if not args:
+            current = getattr(caller.db, "flatline_room_msg", None)
+            if current:
+                caller.msg(f"When you flatline, the room will see: |w{current}|n")
+                caller.msg("Use |w@flatlinemsg <text>|n to change, or |w@flatlinemsg default|n to clear and use the default.")
+            else:
+                from world.death import DEFAULT_FLATLINE_ROOM_MSG
+                caller.msg(f"Currently using the default: |w{DEFAULT_FLATLINE_ROOM_MSG}|n")
+                caller.msg("Use |w@flatlinemsg <text>|n to customize (use {{name}} for your name).")
+            return
+        if args.lower() == "default":
+            if hasattr(caller.db, "flatline_room_msg"):
+                del caller.db.flatline_room_msg
+            caller.msg("Cleared. The default flatline message will be used.")
+            return
+        caller.db.flatline_room_msg = args
+        caller.msg(f"Set. When you flatline, the room will see: |w{args}|n")
+
+
 class CmdSetPlace(Command):
     """
     Set how an object/item appears in the room when someone looks (e.g. "on the ground", "leaning against the wall").
-    Only works on items and objects—you cannot set the place for characters (they use |wlp|n).
+    Only works on items and objects—you cannot set the place for characters (they use |w@lp|n).
 
     Usage:
-      set place <item> = <text>
-      setplace <item> = <text>
-      set place <item>     (show current; clear with empty text)
+      @setplace <item> = <text>
+      @setplace <item>     (show current; clear with empty text)
     """
-    key = "set place"
-    aliases = ["setplace"]
+    key = "@setplace"
+    aliases = []
     locks = "cmd:all()"
     help_category = "General"
 
@@ -3985,7 +5786,7 @@ class CmdSetPlace(Command):
         caller = self.caller
         args = self.args.strip()
         if not args:
-            caller.msg("Usage: |wset place <item> = <text>|n (e.g. set place knife = lying in a pool of blood)")
+            caller.msg("Usage: |w@setplace <item> = <text>|n (e.g. @setplace knife = lying in a pool of blood)")
             return
         if "=" in args:
             raw_name, _, text = args.partition("=")
@@ -3995,7 +5796,7 @@ class CmdSetPlace(Command):
             item_name = args
             text = None
         if not item_name:
-            caller.msg("Name an item: |wset place <item> = <text>|n")
+            caller.msg("Name an item: |w@setplace <item> = <text>|n")
             return
         location = caller.location
         if not location:
@@ -4005,7 +5806,7 @@ class CmdSetPlace(Command):
         if not obj:
             return
         if isinstance(obj, DefaultCharacter):
-            caller.msg("You can only set the place for objects and items, not for characters. Characters use |wlp|n.")
+            caller.msg("You can only set the place for objects and items, not for characters. Characters use |w@lp|n.")
             return
         try:
             from typeclasses.vehicles import Vehicle
@@ -4020,7 +5821,7 @@ class CmdSetPlace(Command):
         if text is None:
             current = getattr(obj.db, "room_pose", None) or "on the ground"
             caller.msg(f"|w{obj.get_display_name(caller)}|n appears here as: {current}.")
-            caller.msg("To change: |wset place {name} = <text>|n. To clear back to default: |wset place {name} = |n".format(name=obj.get_display_name(caller)))
+            caller.msg("To change: |w@setplace {name} = <text>|n. To clear back to default: |w@setplace {name} = |n".format(name=obj.get_display_name(caller)))
             return
         if not text:
             if obj.db.room_pose:
@@ -4034,7 +5835,7 @@ class CmdSetPlace(Command):
 
 class CmdPronoun(Command):
     """Set your gender/pronouns for poses: male, female, or nonbinary (set in chargen; change here if needed)."""
-    key = "pronoun"
+    key = "@pronoun"
     locks = "cmd:all()"
     help_category = "Roleplay"
 
@@ -4085,6 +5886,7 @@ def _run_emote(caller, text):
     if debug_on:
         debug_on = caller.account.permissions.check("Builder") or caller.account.permissions.check("Admin")
     debug_lines = [] if debug_on else None
+    room_line = None  # one canonical third-person line for cameras
 
     for viewer in viewers:
         if viewer == caller:
@@ -4140,6 +5942,14 @@ def _run_emote(caller, text):
             full_body = ". ".join(p.strip() for p in body_parts if p.strip())
             # Capitalize first letter after each ". " (e.g. "clear. he" -> "clear. He")
             full_body = re.sub(r"\.\s+(\w)", lambda m: ". " + m.group(1).upper(), full_body)
+            # Optional voice tag in quoted speech (perception check, rare)
+            try:
+                from world.voice import get_voice_phrase, get_speaking_tag, voice_perception_check
+                if get_voice_phrase(caller) and voice_perception_check(viewer, caller) and '"' in full_body:
+                    idx = full_body.index('"')
+                    full_body = full_body[: idx + 1] + get_speaking_tag(caller) + full_body[idx + 1 :]
+            except Exception:
+                pass
             if starts_with_comma:
                 pronoun_key = getattr(caller.db, "pronoun", "neutral")
                 full_body = replace_first_pronoun_with_name(full_body, pronoun_key, emitter_name)
@@ -4150,6 +5960,30 @@ def _run_emote(caller, text):
                 debug_lines.append((viewer.get_display_name(viewer), msg))
             viewer.msg(msg)
 
+    # Build one neutral third-person line for cameras (viewer=None so no "you", all names)
+    if segments:
+        body_parts = []
+        for seg in segments:
+            third = first_to_third(seg.strip(), caller)
+            targets = find_targets_in_text(third, location.contents_get(content_type="character"), caller)
+            body_parts.append(build_emote_for_viewer(third, None, targets, emitter_name))
+        full_body = ". ".join(p.strip() for p in body_parts if p.strip()).strip()
+        full_body = re.sub(r"\.\s+(\w)", lambda m: ". " + m.group(1).upper(), full_body)
+        if starts_with_comma:
+            pronoun_key = getattr(caller.db, "pronoun", "neutral")
+            full_body = replace_first_pronoun_with_name(full_body, pronoun_key, emitter_name)
+            room_line = (full_body[0].upper() + full_body[1:]) if full_body and full_body[0].islower() else (full_body or "")
+        else:
+            room_line = format_emote_message(emitter_name, full_body)
+    else:
+        room_line = None
+    if room_line:
+        try:
+            from typeclasses.broadcast import feed_cameras_in_location
+            feed_cameras_in_location(location, room_line)
+        except Exception:
+            pass
+
     if debug_lines:
         caller.msg("|w--- Emote debug ---|n")
         for who, line in debug_lines:
@@ -4158,6 +5992,44 @@ def _run_emote(caller, text):
             else:
                 caller.msg(f"|yTo {who}:|n {line}")
         caller.msg("|w---|n")
+
+
+class CmdLookUnconscious(Command):
+    """When unconscious, look only shows this."""
+    key = "look"
+    aliases = ["l"]
+    locks = "cmd:all()"
+
+    def func(self):
+        self.caller.msg("You are unconscious.")
+
+
+class CmdNoMatchUnconscious(Command):
+    """When unconscious, any other command shows this."""
+    key = CMD_NOMATCH
+    locks = "cmd:all()"
+
+    def func(self):
+        self.caller.msg("You are unconscious.")
+
+
+class CmdLookFlatlined(Command):
+    """When flatlined (dying), look only shows this."""
+    key = "look"
+    aliases = ["l"]
+    locks = "cmd:all()"
+
+    def func(self):
+        self.caller.msg("You are dying. Everything is fading. There is nothing you can do.")
+
+
+class CmdNoMatchFlatlined(Command):
+    """When flatlined, any other command shows this."""
+    key = CMD_NOMATCH
+    locks = "cmd:all()"
+
+    def func(self):
+        self.caller.msg("You are dying. There is nothing you can do.")
 
 
 class CmdNoMatch(Command):

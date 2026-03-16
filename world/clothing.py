@@ -36,6 +36,22 @@ _LOWER_BODY = (
 )
 _BODY_PART_GROUPS = (_HEAD_FACE, _UPPER_BODY, _LOWER_BODY)
 
+# For sdesc clothing state: upper body = shirt/torso coverage; if none covered → "topless"
+UPPER_BODY_PARTS = _UPPER_BODY
+
+
+def get_covered_parts_set(character):
+    """
+    Return a set of body part keys covered by any worn clothing/armor.
+    Used by sdesc to determine naked vs topless vs normally dressed.
+    """
+    worn = get_worn_items(character)
+    covered = set()
+    for item in worn:
+        parts = getattr(item.db, "covered_parts", None) or []
+        covered.update(p for p in parts if p in BODY_PARTS)
+    return covered
+
 
 def get_worn_items(character):
     """

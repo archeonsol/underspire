@@ -2,7 +2,7 @@
 # Gutterpunk/arcanepunk chargen: occult Rite, blood-signs, marks. Dark/red UI. No XP spend; skills by marks.
 import random
 
-from world.levels import MAX_LEVEL, MAX_STAT_LEVEL, level_to_letter, xp_cost_for_next_level
+from world.levels import MAX_LEVEL, MAX_STAT_LEVEL, level_to_letter
 
 STAT_KEYS = ["strength", "perception", "endurance", "charisma", "intelligence", "agility", "luck"]
 STAT_ABBREVS = {"str": "strength", "per": "perception", "end": "endurance", "cha": "charisma", "int": "intelligence", "agi": "agility", "lck": "luck"}
@@ -18,26 +18,52 @@ CHARGEN_LETTER_W = 5
 CHARGEN_ADJ_W = 20
 CHARGEN_FLAVOR_W = 42
 
-# Marks: each mark raises one skill to this level (E tier). No XP pool in chargen.
-CHARGEN_MARKS = 3
-CHARGEN_MARK_SKILL_LEVEL = (14 * MAX_LEVEL) // 17   # ~123 = high E / low D
+# Ladder of 6 Marks: tiered by what defined them (~240 XP total, realistic distribution).
+# (count, level, tier_label) — Job = one strong skill, Hobbies = two solid, Basics = three foundational.
+MARKS_LADDER = [
+    (1, 105, "Job"),      # Grade E — "Their Job" (~80 XP)
+    (2, 81, "Hobbies"),   # Grade H — "Their Hobbies" (~40 XP each)
+    (3, 52, "Basics"),    # Grade L — "Their Basics" (~26 XP each)
+]
+CHARGEN_MARKS_TOTAL = sum(n for n, _, _ in MARKS_LADDER)  # 6
 
-# Stat random ranges per priority slot (1=highest priority, 7=lowest). (min, max) stored value 0-300; kept well below caps.
-# Higher priority = higher cap later, and a bit higher starting range so you're "naturally" better there but still beginner.
+# Revised for 2.0 XP per level math to target ~450 XP starting power
 STAT_RANDOM_RANGES_BY_PRIORITY = [
-    (50, 120),   # 1st: best cap, decent starting spread
-    (40, 100),
-    (30, 85),
-    (25, 70),
-    (20, 55),
-    (15, 45),
-    (10, 35),    # 7th: lowest cap, lowest start
+    (35, 50),   # 1st: (70-100 XP)
+    (25, 35),   # 2nd
+    (15, 25),   # 3rd
+    (10, 15),   # 4th
+    (5, 10),    # 5th
+    (2, 5),     # 6th
+    (0, 2),     # 7th
+]
+
+# HP design: max_hp = BASE_HP (26.5) + end_display + max(0, (str_display-100)*0.5). Display = get_display_stat (stored//2).
+# Tiers: excellent <115, spectacular 115-129, magnificent 130-151, miraculous 152+.
+# XP from 0 (endurance only): Spectacular 356 (end 89 display / 178 stored), Magnificent 473 (104/208), Miraculous 1131 (126/252).
+# XP from cgen (end 50): Spectacular ~256, Magnificent ~373, Miraculous ~1031.
+XP_FOR_SPECTACULAR_HP = 256   # end 50 → 178 stored (89 display) = 115 HP
+XP_FOR_MAGNIFICENT_HP = 373   # end 50 → 208 stored (104 display) = 130 HP
+XP_FOR_MIRACULOUS_HP = 1031   # end 50 → 252 stored (126 display) = 152 HP (end-only)
+AVG_CGEN_HP = 50              # ~23 end display average across priority slots (no str bonus at cgen)
+MAX_CGEN_HP = 68              # end 1st (85→42 display), str 2nd; no str bonus below 100
+
+# Stat cap (min, max) per priority slot (1st = highest cap band, 7th = lowest). Narrow ranges so priority
+# choice isn't invalidated by a bad roll; tanks (end+str 1st/2nd) are guaranteed to reach miraculous.
+STAT_CAP_RANGES_BY_PRIORITY = [
+    (270, 300),   # 1st: high band, 300 max available
+    (263, 275),   # 2nd: high enough for miraculous with 1st
+    (240, 262),   # 3rd
+    (220, 239),   # 4th
+    (200, 219),   # 5th
+    (180, 199),   # 6th
+    (160, 179),   # 7th: low narrow band
 ]
 
 
 def _compute_stat_caps(order):
-    """Generate 7 random stat caps (160-280 on 0-300 scale) sorted by priority order. Not shown to player."""
-    caps = sorted([random.randint(160, 280) for _ in range(7)], reverse=True)
+    """Generate 7 stat caps from priority-based ranges (0-300 scale). Not shown to player."""
+    caps = [random.randint(lo, hi) for lo, hi in STAT_CAP_RANGES_BY_PRIORITY]
     return {stat: caps[i] for i, stat in enumerate(order)}
 
 
@@ -50,9 +76,6 @@ def _randomize_stats_from_priority(order):
     return stats
 
 
-def _compute_skill_caps():
-    """Random level cap per skill (80-150). Not shown to player."""
-    return {sk: random.randint(80, 150) for sk in SKILL_KEYS}
 
 
 # Flavor for stat priority CYOA (what defined you)
@@ -240,10 +263,8 @@ def node_priority_choose(caller, raw_string, **kwargs):
     if not remaining:
         caller.db.stat_caps = _compute_stat_caps(order)
         caller.db.stats = _randomize_stats_from_priority(order)
-        if getattr(caller.db, "skill_caps", None) is None:
-            caller.db.skill_caps = _compute_skill_caps()
         del caller.db.stat_priority_order
-        text = "|r'SIGIL SEQUENCE COMPLETE.'|n\n\nProceeding to readout — then |Rmarks|n."
+        text = "|r'SIGIL SEQUENCE COMPLETE.'|n\n\nProceeding to readout — then the |Rladder of marks|n."
         options = [{"desc": "|rContinue|n", "goto": "node_stats"}]
         return text, options
     slot = len(order) + 1
@@ -302,36 +323,117 @@ def node_stats(caller, raw_string, **kwargs):
         "|r── SIGIL READOUT ──|n\n\n"
         "The Rite has mapped you. Current profile:\n\n"
         "%s\n\n"
-        "Confirm. Then you will receive |Rmarks|n — skills etched into the sigil."
+        "Confirm. Then the sigil will etch the |Rladder of marks|n — what you were, in order."
     ) % "\n".join(lines)
     options = [{"desc": "|rConfirm|n", "goto": "node_skills_intro"}]
     return text, options
 
 
 # ==========================================
-# SKILL ALLOCATION — marks (no XP; each mark raises one skill to E/D tier)
+# SKILL ALLOCATION — Ladder of 6 Marks (Job / Hobbies / Basics)
 # ==========================================
 
+# Narrative copy for each tier (in-character; "grade" is background-type framing).
+MARKS_TIER_INTRO = {
+    "Job": (
+        "|r── YOUR JOB ──|n\n\n"
+        "|R\"The sigil reads what put food on the table. The thing you did when the shifts changed. "
+        "Your |rjob|n — the skill that kept you in the system, or outside it.\"|n\n\n"
+        "Choose |rone|n skill. This will be etched deepest."
+    ),
+    "Hobbies": (
+        "|r── YOUR HOBBIES ──|n\n\n"
+        "|R\"Next: what you did when nobody was watching. The things that kept you |rsane|n — "
+        "or sharp. Side work. Fixes. The range. The deck. Two marks.\"|n\n\n"
+        "Choose |rtwo|n skills. The sigil remembers what you did to stay human."
+    ),
+    "Basics": (
+        "|r── THE BASICS ──|n\n\n"
+        "|R\"Last: what everyone learns to survive down here. How to move. How to patch a wound. "
+        "How to talk your way past a checkpoint. |rThree|n marks. The foundation.\"|n\n\n"
+        "Choose |rthree|n skills. The minimum the undercity demands."
+    ),
+}
+
+
 def node_skills_intro(caller, raw_string, **kwargs):
-    caller.db.chargen_marks_used = 0
     caller.db.skills = getattr(caller.db, "skills", None) or {}
+    caller.db.chargen_mark_tier_index = 0
+    count, level, label = MARKS_LADDER[0]
+    caller.db.chargen_mark_tier_picks_left = count
     text = (
-        "|r── MARKS ──|n\n\n"
-        "|R\"The sigil can etch |rskills|n into you. Not study — |rblood-memory|n. Instinct.\"|n\n\n"
-        "You have |R%s|n mark(s). Each mark raises one skill to a set tier — enough to survive the first cut. "
-        "Choose which skills receive a mark. No take-backs.\n\n"
-        "|R\"Choose the first mark.\"|n"
-    ) % CHARGEN_MARKS
+        "|r── THE LADDER OF MARKS ──|n\n\n"
+        "|R\"The sigil can etch |rskills|n into you. Not study — |rblood-memory|n. What you were, "
+        "before the Rite. In order: the thing that defined your days, then what you did to stay alive in the gaps, "
+        "then the basics every rat learns.\"|n\n\n"
+        "You will place |R%d|n marks in three steps. Each step locks a layer of who you were.\n\n"
+        "|R\"First: what was your job?\"|n"
+    ) % CHARGEN_MARKS_TOTAL
     options = [{"desc": "|rContinue|n", "goto": "node_skills"}]
     return text, options
 
 
 def node_skills(caller, raw_string, **kwargs):
-    marks_used = int(getattr(caller.db, "chargen_marks_used", 0) or 0)
-    marks_left = CHARGEN_MARKS - marks_used
+    tier_index = int(getattr(caller.db, "chargen_mark_tier_index", 0) or 0)
+    picks_left = int(getattr(caller.db, "chargen_mark_tier_picks_left", 0) or 0)
     skills = caller.db.skills or {}
-    caps = getattr(caller.db, "skill_caps", None) or {}
-    mark_level = min(CHARGEN_MARK_SKILL_LEVEL, MAX_LEVEL)
+
+    if tier_index >= len(MARKS_LADDER):
+        return node_skills_done(caller, raw_string, **kwargs)
+
+    count, tier_level, tier_label = MARKS_LADDER[tier_index]
+    tier_level = min(tier_level, MAX_LEVEL)
+    intro_text = MARKS_TIER_INTRO.get(tier_label, "")
+
+    skill_lines = []
+    for sk in SKILL_KEYS:
+        name = SKILL_DISPLAY_NAMES.get(sk, sk.replace("_", " ").title())
+        cur = skills.get(sk, 0)
+        if not isinstance(cur, int):
+            cur = 0
+        letter = level_to_letter(cur, MAX_LEVEL)
+        name_pad = "|x" + name.ljust(CHARGEN_NAME_W) + "|n"
+        letter_part = "|r[%s]|n" % letter
+        skill_lines.append("  %s  %s" % (name_pad, letter_part))
+
+    if picks_left <= 0:
+        caller.db.chargen_mark_tier_index = tier_index + 1
+        if tier_index + 1 < len(MARKS_LADDER):
+            _, _, next_label = MARKS_LADDER[tier_index + 1]
+            next_count = MARKS_LADDER[tier_index + 1][0]
+            caller.db.chargen_mark_tier_picks_left = next_count
+        return node_skills(caller, raw_string, **kwargs)
+
+    pick_prompt = "Choose the skill that was |ryour job|n." if tier_label == "Job" else (
+        "Choose skill %d of %d for |r%s|n." % (count - picks_left + 1, count, tier_label.lower())
+    )
+    text = (
+        "%s\n\n"
+        "Current etchings:\n"
+        "%s\n\n"
+        "%s"
+    ) % (intro_text, "\n".join(skill_lines), pick_prompt)
+    options = []
+    for skill_key in SKILL_KEYS:
+        cur = skills.get(skill_key, 0)
+        if not isinstance(cur, int):
+            cur = 0
+        if cur < tier_level:
+            name = SKILL_DISPLAY_NAMES.get(skill_key, skill_key.replace("_", " ").title())
+            options.append({
+                "desc": "|r%s|n" % name,
+                "goto": ("node_apply_mark", {"skill": skill_key}),
+            })
+    options.append({
+        "desc": "|xSkip to identity|n" if picks_left > 0 else "|rContinue to identity|n",
+        "goto": "node_gender",
+    })
+    return text, options
+
+
+def node_skills_done(caller, raw_string, **kwargs):
+    """All 6 marks placed; show summary and go to identity."""
+    skills = caller.db.skills or {}
     skill_lines = []
     for sk in SKILL_KEYS:
         name = SKILL_DISPLAY_NAMES.get(sk, sk.replace("_", " ").title())
@@ -343,55 +445,36 @@ def node_skills(caller, raw_string, **kwargs):
         letter_part = "|r[%s]|n" % letter
         skill_lines.append("  %s  %s" % (name_pad, letter_part))
     text = (
-        "|r── MARKS (%s remaining) ──|n\n\n"
-        "Current etchings:\n"
+        "|r'SIGIL ETCHING COMPLETE.'|n\n\n"
+        "The ladder is fixed. Your job, your hobbies, your basics — locked in blood-memory.\n\n"
         "%s\n\n"
-        "%s"
-    ) % (
-        marks_left,
-        "\n".join(skill_lines),
-        "Choose a skill to mark." if marks_left > 0 else "All marks placed."
-    )
-    options = []
-    if marks_left > 0:
-        for skill_key in SKILL_KEYS:
-            cur = skills.get(skill_key, 0)
-            if not isinstance(cur, int):
-                cur = 0
-            cap = caps.get(skill_key, MAX_LEVEL)
-            if not isinstance(cap, int):
-                cap = MAX_LEVEL
-            target = min(mark_level, cap)
-            if cur < target:
-                name = SKILL_DISPLAY_NAMES.get(skill_key, skill_key.replace("_", " ").title())
-                options.append({
-                    "desc": "|rMark: %s|n" % name,
-                    "goto": ("node_apply_mark", {"skill": skill_key}),
-                })
-    options.append({"desc": "|rContinue to identity|n" if marks_left == 0 else "|xSkip remaining marks|n", "goto": "node_gender"})
+        "|R\"Now. How will the world name you?\"|n"
+    ) % "\n".join(skill_lines)
+    options = [{"desc": "|rContinue|n", "goto": "node_gender"}]
     return text, options
 
 
 def node_apply_mark(caller, raw_string, **kwargs):
-    """Apply one mark to the chosen skill; then back to node_skills or node_gender."""
+    """Apply one mark at the current tier level; advance picks; next tier if tier exhausted."""
     skill_key = kwargs.get("skill")
     if skill_key not in SKILL_KEYS:
         return node_skills(caller, raw_string, **kwargs)
-    caps = getattr(caller.db, "skill_caps", None) or {}
+    tier_index = int(getattr(caller.db, "chargen_mark_tier_index", 0) or 0)
+    picks_left = int(getattr(caller.db, "chargen_mark_tier_picks_left", 0) or 0)
+    if tier_index >= len(MARKS_LADDER) or picks_left <= 0:
+        return node_skills(caller, raw_string, **kwargs)
+    count, tier_level, tier_label = MARKS_LADDER[tier_index]
+    tier_level = min(tier_level, MAX_LEVEL)
     skills = caller.db.skills or {}
     cur = skills.get(skill_key, 0)
     if not isinstance(cur, int):
         cur = 0
-    cap = caps.get(skill_key, MAX_LEVEL)
-    if not isinstance(cap, int):
-        cap = MAX_LEVEL
-    target = min(CHARGEN_MARK_SKILL_LEVEL, cap)
-    if cur >= target:
+    if cur >= tier_level:
         return node_skills(caller, raw_string, **kwargs)
     if not caller.db.skills:
         caller.db.skills = {}
-    caller.db.skills[skill_key] = target
-    caller.db.chargen_marks_used = int(getattr(caller.db, "chargen_marks_used", 0) or 0) + 1
+    caller.db.skills[skill_key] = tier_level
+    caller.db.chargen_mark_tier_picks_left = picks_left - 1
     return node_skills(caller, raw_string, **kwargs)
 
 
@@ -419,7 +502,85 @@ def node_apply_gender(caller, raw_string, **kwargs):
     gender = kwargs.get("gender", "nonbinary")
     caller.db.gender = gender
     caller.db.pronoun = gender
-    text = "|r'IDENTITY LOCKED.'|n\n\n|R\"The Rite is complete. Rise.\"|n"
+    text = "|r'IDENTITY LOCKED.'|n\n\n|R\"How do you stand?\"|n"
+    options = [{"desc": "|rContinue|n", "goto": "node_build"}]
+    return text, options
+
+
+# ==========================================
+# BUILD (height)
+# ==========================================
+
+# Height category -> (min_cm, max_cm) for random assignment. Narrative choice only.
+HEIGHT_RANGES_CM = {
+    "short": (152, 165),
+    "average": (166, 178),
+    "tall": (180, 195),
+}
+
+
+def node_build(caller, raw_string, **kwargs):
+    text = (
+        "|r── BUILD ──|n\n\n"
+        "|R\"The sigil remembers the body. How do you stand in the world?\"|n\n\n"
+        "  |xShort|n — you are on the shorter side.\n"
+        "  |xAverage|n — neither short nor tall.\n"
+        "  |xTall|n — you stand taller than most."
+    )
+    options = [
+        {"desc": "|rShort|n", "goto": ("node_apply_build", {"height_category": "short"})},
+        {"desc": "|rAverage|n", "goto": ("node_apply_build", {"height_category": "average"})},
+        {"desc": "|rTall|n", "goto": ("node_apply_build", {"height_category": "tall"})},
+    ]
+    return text, options
+
+
+def node_apply_build(caller, raw_string, **kwargs):
+    import random
+    height_category = kwargs.get("height_category", "average")
+    mn, mx = HEIGHT_RANGES_CM.get(height_category, (166, 178))
+    caller.db.height_category = height_category
+    caller.db.height_cm = random.randint(mn, mx)
+    text = "|r'HEIGHT LOCKED.'|n\n\n|R\"And your frame?\"|n"
+    options = [{"desc": "|rContinue|n", "goto": "node_weight"}]
+    return text, options
+
+
+# ==========================================
+# WEIGHT
+# ==========================================
+
+# Weight category -> (min_kg, max_kg) for random assignment. Narrative choice only.
+WEIGHT_RANGES_KG = {
+    "thin": (45, 58),
+    "average": (59, 82),
+    "heavy": (83, 110),
+}
+
+
+def node_weight(caller, raw_string, **kwargs):
+    text = (
+        "|r── BUILD ──|n\n\n"
+        "|R\"How does the sigil remember your frame?\"|n\n\n"
+        "  |xThin|n — slender, lean.\n"
+        "  |xAverage|n — neither thin nor heavy.\n"
+        "  |xHeavy|n — broad, heavyset."
+    )
+    options = [
+        {"desc": "|rThin|n", "goto": ("node_apply_weight", {"weight_category": "thin"})},
+        {"desc": "|rAverage|n", "goto": ("node_apply_weight", {"weight_category": "average"})},
+        {"desc": "|rHeavy|n", "goto": ("node_apply_weight", {"weight_category": "heavy"})},
+    ]
+    return text, options
+
+
+def node_apply_weight(caller, raw_string, **kwargs):
+    import random
+    weight_category = kwargs.get("weight_category", "average")
+    mn, mx = WEIGHT_RANGES_KG.get(weight_category, (59, 82))
+    caller.db.weight_category = weight_category
+    caller.db.weight_kg = random.randint(mn, mx)
+    text = "|r'BUILD LOCKED.'|n\n\n|R\"The Rite is complete. Rise.\"|n"
     options = [{"desc": "|rFinalize|n", "goto": "node_finish"}]
     return text, options
 
@@ -430,7 +591,7 @@ def node_apply_gender(caller, raw_string, **kwargs):
 
 def node_finish(caller, raw_string, **kwargs):
     caller.db.needs_chargen = False
-    for attr in ("stat_points", "skill_points", "chargen_xp", "skill_chargen_xp", "chargen_marks_used",):
+    for attr in ("stat_points", "skill_points", "chargen_xp", "skill_chargen_xp", "chargen_marks_used", "chargen_mark_tier_index", "chargen_mark_tier_picks_left",):
         if hasattr(caller.db, attr) and getattr(caller, "attributes", None) and caller.attributes.has(attr):
             try:
                 caller.attributes.remove(attr)

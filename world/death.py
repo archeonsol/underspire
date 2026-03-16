@@ -31,6 +31,9 @@ FLATLINE_MESSAGE = """
 # Message to attacker when someone drops
 FLATLINE_ATTACKER_MESSAGE = "|y{name} goes down and does not get up. The fight is over. You are still standing. They are not. That is the only difference that matters.|n"
 
+# Room message when someone flatlines (customizable via character.db.flatline_room_msg; use {name} for their name)
+DEFAULT_FLATLINE_ROOM_MSG = "{name} falls over and begins to die."
+
 # Death Lobby room description (set on limbo whenever we get/create it so existing rooms get it too)
 DEATH_LOBBY_DESC = (
     "|yTHE DEATH LOBBY|n\n\n"
@@ -80,13 +83,32 @@ def _log_limbo_error(step, err):
         pass
 
 
+def is_character_multi_puppeted(character):
+    """True if character is in an account's multi-puppet set and that account has a session (staff multi-puppeting)."""
+    if not character or not getattr(character, "db", None):
+        return False
+    account_id = getattr(character.db, "_multi_puppet_account_id", None)
+    if account_id is None:
+        return False
+    try:
+        from evennia.accounts.accounts import DefaultAccount
+        account = DefaultAccount.objects.get_account_from_uid(int(account_id))
+    except (TypeError, ValueError, AttributeError):
+        return False
+    if not account or not getattr(account, "sessions", None):
+        return False
+    return bool(account.sessions.get() if hasattr(account.sessions, "get") else [])
+
+
 def is_character_logged_off(character):
     """True if character has no connected sessions (player is logged off / sleeping).
-    NPCs are always treated as present (never logged off) for combat, get-from, etc."""
+    NPCs and multi-puppeted characters are always treated as present (never logged off)."""
     if not character or not getattr(character, "sessions", None):
         return True
     if getattr(character.db, "is_npc", False):
         return False  # NPCs act like they are always logged on
+    if is_character_multi_puppeted(character):
+        return False  # In someone's multi-puppet set with an active session = "present"
     try:
         return not character.sessions.get()
     except Exception:
@@ -109,8 +131,10 @@ def get_flatline_duration_seconds(character):
     """Seconds until flatlined character becomes permanently dead. Minimum 5 minutes; endurance adds time."""
     base = FLATLINE_MIN_SECONDS
     end = 0
-    if hasattr(character, "get_stat_level"):
-        end = character.get_stat_level("endurance") or 0
+    if hasattr(character, "get_display_stat"):
+        end = character.get_display_stat("endurance")
+    elif hasattr(character, "get_stat_level"):
+        end = (character.get_stat_level("endurance") or 0) // 2
     return base + (end * FLATLINE_SECONDS_PER_ENDURANCE)
 
 
@@ -147,6 +171,22 @@ def make_flatlined(character, attacker):
     character.db.flatline_at = time.time()
     character.db.combat_ended = True
     character.db.room_pose = "lying here, dead."
+    try:
+        # Remove the default character cmdset (index 0); remove() only affects stack[1:], so we must use remove_default().
+        character.cmdset.remove_default()
+        character.cmdset.add("commands.default_cmdsets.FlatlinedCmdSet", persistent=False)
+    except Exception:
+        pass
+    # Echo customizable message to the room
+    loc = character.location
+    if loc and hasattr(loc, "msg_contents"):
+        template = getattr(character.db, "flatline_room_msg", None) or DEFAULT_FLATLINE_ROOM_MSG
+        name = character.get_display_name(character) if hasattr(character, "get_display_name") else character.name
+        try:
+            room_msg = template.format(name=name)
+        except (KeyError, ValueError):
+            room_msg = template.replace("{name}", name)
+        loc.msg_contents(room_msg, exclude=(character,))
     character.msg(FLATLINE_MESSAGE)
     if attacker and attacker != character and hasattr(attacker, "msg"):
         attacker.msg(FLATLINE_ATTACKER_MESSAGE.format(name=character.name))
@@ -154,6 +194,16 @@ def make_flatlined(character, attacker):
         from world.combat import remove_both_combat_tickers
         other = attacker if attacker else getattr(character.db, "combat_target", None)
         remove_both_combat_tickers(character, other)
+    except Exception:
+        pass
+    try:
+        from world.grapple import release_grapple_forced
+        victim = getattr(character.db, "grappling", None)
+        if victim:
+            release_grapple_forced(
+                character,
+                room_message="%s's grip goes slack as they collapse; %s is free." % (character.name, victim.name),
+            )
     except Exception:
         pass
     sec = get_flatline_duration_seconds(character)
@@ -416,5 +466,12 @@ def clear_flatline(target):
     target.db.death_state = DEATH_STATE_ALIVE
     if hasattr(target.db, "flatline_at"):
         del target.db.flatline_at
+    try:
+        target.cmdset.remove("FlatlinedCmdSet")
+        from django.conf import settings
+        char_cmdset = getattr(settings, "CMDSET_CHARACTER", "commands.default_cmdsets.CharacterCmdSet")
+        target.cmdset.add_default(char_cmdset)
+    except Exception:
+        pass
     if getattr(target.db, "room_pose", None) == "lying here, dead.":
         target.db.room_pose = "standing here"

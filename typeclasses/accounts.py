@@ -25,6 +25,21 @@ several more options for customizing the Guest account system.
 from evennia.accounts.accounts import DefaultAccount, DefaultGuest
 
 
+def _auto_subscribe_help_channel(account):
+    """Subscribe account to Help (xhelp) only. Mandatory so staff can reach them; players only see their own messages and staff's private replies (xhelp/Name)."""
+    try:
+        from evennia import search_channel
+        channels = search_channel("xhelp")
+        if not channels:
+            return
+        channel = channels[0] if isinstance(channels, list) else channels
+        if not channel.access(account, "listen") or channel.has_connection(account):
+            return
+        channel.connect(account)
+    except Exception:
+        pass
+
+
 class Account(DefaultAccount):
     """
     An Account is the actual OOC player entity. It doesn't exist in the game,
@@ -156,8 +171,8 @@ class Account(DefaultAccount):
 
     def at_post_login(self, session=None, **kwargs):
         """
-        After login: show Soul Registry menu (main menu). No default account screen;
-        account stays separate — select a body or forge a new soul.
+        After login: first-time with one unfinished character -> puppet straight into
+        chargen. Otherwise show Soul Registry menu.
         """
         protocol_flags = self.attributes.get("_saved_protocol_flags", {})
         if session and protocol_flags:
@@ -165,6 +180,24 @@ class Account(DefaultAccount):
         if session:
             session.msg(logged_in={})
         self._send_to_connect_channel("|G{key} connected|n".format(key=self.key))
+
+        # Mandatory subscribe to Help (xhelp) so staff can reply; players only see their own messages and staff's private xhelp/Name replies
+        _auto_subscribe_help_channel(self)
+
+        # First login + exactly one character that still needs chargen -> skip menu, go straight to Rite
+        if getattr(self.db, "FIRST_LOGIN", False) and session:
+            chars = list(self.characters.all()) if hasattr(self, "characters") else []
+            if len(chars) == 1:
+                char = chars[0]
+                if getattr(char.db, "needs_chargen", False):
+                    try:
+                        char.db._suppress_become_message = True  # no "You become X" before chargen
+                        self.puppet_object(session, char)
+                    except Exception:
+                        pass
+                    else:
+                        return  # chargen will run in Character.at_post_puppet
+
         from world.main_menu import start_main_menu
         start_main_menu(self)
 
@@ -176,6 +209,38 @@ class Account(DefaultAccount):
             from evennia.commands.cmdset import CmdSet
             cur = CmdSet()
         return cur, stack
+
+    def at_look(self, target=None, session=None, **kwargs):
+        """OOC look: suppress the default 'Account X (you are Out-of-Character)' block entirely.
+        The Soul Registry menu is the only UI we show at account level."""
+        return ""
+
+    def at_pre_channel_msg(self, message, channel, senders=None, **kwargs):
+        """
+        - Help channel: non-staff only see their own messages; staff see all.
+        - OOC-Chat: use account's ooc_display_name (set with @oocname) instead of character/key.
+        """
+        chan_key = getattr(channel, "key", None) or ""
+        # Help: one-way to staff — players only see messages they sent
+        if chan_key == "Help" and senders:
+            if self not in senders and not self.permissions.check("Builder"):
+                return None  # abort receive for this recipient
+        # OOC-Chat: show account OOC display name, not character name
+        if chan_key == "OOC-Chat" and senders:
+            sender_string = ", ".join(
+                (getattr(s, "db", None) and getattr(s.db, "ooc_display_name", None)) or getattr(s, "key", str(s))
+                for s in senders
+            )
+            message_lstrip = message.lstrip()
+            if message_lstrip.startswith((":", ";")):
+                spacing = "" if message_lstrip[1:].startswith((":", "'", ",")) else " "
+                message = f"{sender_string}{spacing}{message_lstrip[1:]}"
+            else:
+                message = f"{sender_string}: {message}"
+            if not kwargs.get("no_prefix") and not kwargs.get("emit"):
+                message = channel.channel_prefix() + message
+            return message
+        return super().at_pre_channel_msg(message, channel, senders=senders, **kwargs)
 
 
 class Guest(DefaultGuest):

@@ -31,6 +31,18 @@ class Exit(ObjectParent, DefaultExit):
         if not destination:
             super().at_traverse(traversing_object, destination)
             return
+        # Flatlined (dying): no movement — lock all IC action
+        try:
+            from world.death import is_flatlined
+            if is_flatlined(traversing_object):
+                traversing_object.msg("|rYou are dying. There is nothing you can do.|n")
+                return
+        except ImportError:
+            pass
+        # In combat: must use flee to try to break away
+        if getattr(traversing_object.db, "combat_target", None) is not None:
+            traversing_object.msg("You're in combat! Use |wflee|n or |wflee <direction>|n to try to break away.")
+            return
         # Voided characters cannot leave the void room
         if getattr(traversing_object.db, "voided", False):
             try:
@@ -70,7 +82,7 @@ class Exit(ObjectParent, DefaultExit):
             traversing_object.move_to(destination)
             victim = getattr(getattr(traversing_object, "db", None), "grappling", None)
             if victim and hasattr(victim, "move_to"):
-                victim.move_to(destination)
+                victim.move_to(destination, quiet=True)
                 destination.msg_contents(
                     "%s is dragged in by %s." % (victim.name, traversing_object.name),
                     exclude=(traversing_object, victim),

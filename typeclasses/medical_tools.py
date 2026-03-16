@@ -13,6 +13,7 @@ from world.medical_treatment import (
     TOOL_SPLINT,
     TOOL_HEMOSTATIC,
     TOOL_SURGICAL_KIT,
+    TOOL_TOURNIQUET,
 )
 
 
@@ -112,11 +113,19 @@ class Splint(MedicalTool):
 
 
 class HemostaticAgent(MedicalTool):
-    """Hemostatic gel/compound for rapid bleeding control."""
+    """Hemostatic gel/compound for rapid bleeding control. Best for severe/critical bleeds; temporary until suture or surgery."""
     def at_object_creation(self):
         super().at_object_creation()
         self.db.medical_tool_type = TOOL_HEMOSTATIC
         self.db.uses_remaining = 2
+
+
+class Tourniquet(MedicalTool):
+    """Stops limb haemorrhage fast. Bleeding stops immediately but the limb is at risk; wound may reopen after a short time until proper closure."""
+    def at_object_creation(self):
+        super().at_object_creation()
+        self.db.medical_tool_type = TOOL_TOURNIQUET
+        self.db.uses_remaining = 1
 
 
 class SurgicalKit(MedicalTool):
@@ -175,7 +184,7 @@ def get_medical_tools_from_inventory(character):
     """
     from world.medical_treatment import (
         TOOL_SCANNER, TOOL_BANDAGES, TOOL_MEDKIT, TOOL_SUTURE_KIT,
-        TOOL_SPLINT, TOOL_HEMOSTATIC, TOOL_SURGICAL_KIT,
+        TOOL_SPLINT, TOOL_HEMOSTATIC, TOOL_TOURNIQUET, TOOL_SURGICAL_KIT,
     )
     result = {}
     if not character:

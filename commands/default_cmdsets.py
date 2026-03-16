@@ -37,6 +37,51 @@ class SplinterPodCmdSet(CmdSet):
         self.add(CmdLeavePod())
 
 
+class CombatGrappleCmdSet(CmdSet):
+    """
+    Grapple/letgo/resist with priority above ExitCmdSet (101) so "grapple"
+    is never taken by an exit or other location cmdset. Also added to
+    SessionCmdSet so these commands are always in the merge when logged in.
+    """
+    key = "CombatGrapple"
+    priority = 120
+
+    def at_cmdset_creation(self):
+        from commands.command import CmdGrapple, CmdLetGo, CmdResist
+        self.add(CmdGrapple())
+        self.add(CmdLetGo())
+        self.add(CmdResist())
+
+
+class UnconsciousCmdSet(CmdSet):
+    """
+    When character is knocked out (0 stamina from grapple strikes): only look (shows "You are unconscious.")
+    and everything else replies "You are unconscious." Added/removed by world.grapple.set_unconscious / wake.
+    """
+    key = "UnconsciousCmdSet"
+    priority = 200
+
+    def at_cmdset_creation(self):
+        from commands.command import CmdLookUnconscious, CmdNoMatchUnconscious
+        self.add(CmdLookUnconscious())
+        self.add(CmdNoMatchUnconscious())
+
+
+class FlatlinedCmdSet(CmdSet):
+    """
+    When character is flatlined (0 HP, dying): only look (shows "You are dying...") and
+    everything else replies "You are dying. There is nothing you can do."
+    Added/removed by world.death.make_flatlined / clear_flatline.
+    """
+    key = "FlatlinedCmdSet"
+    priority = 200
+
+    def at_cmdset_creation(self):
+        from commands.command import CmdLookFlatlined, CmdNoMatchFlatlined
+        self.add(CmdLookFlatlined())
+        self.add(CmdNoMatchFlatlined())
+
+
 class CharacterCmdSet(default_cmds.CharacterCmdSet):
     """
     The `CharacterCmdSet` contains general in-game commands like `look`,
@@ -52,14 +97,14 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         super().at_cmdset_creation()
 
         from commands.command import (
-            CmdStats, CmdAttack, CmdStance, CmdStop, CmdExecute, CmdGrapple, CmdLetGo, CmdResist, CmdDiagnose, CmdUse, CmdApply, CmdStabilize, CmdEat, CmdDrink, CmdWield, CmdUnwield, CmdFreehands, CmdInventory, CmdReload, CmdUnload, CmdCheckAmmo,
-            CmdWear, CmdRemove, CmdStrip, CmdLoot, CmdFrisk, CmdGet, CmdTailor, CmdTease, CmdXp,
-            CmdDescribeBodypart, CmdBody, CmdLookPlace, CmdSleepPlace, CmdWakeMsg, CmdSetPlace, CmdPose, CmdPronoun, CmdEmote, CmdNoMatch,
-            CmdEmoteDebug, CmdSpawn, CmdDespawn, CmdGiveXp, CmdCreateItem, CmdTypeclasses, CmdSpawnVehicle, CmdSpawnMedical, CmdSpawnOR, CmdDefib,
+            CmdStats, CmdAttack, CmdStance, CmdStop, CmdFlee, CmdExecute, CmdGrapple, CmdLetGo, CmdResist, CmdHt, CmdUse, CmdApply, CmdStabilize, CmdEat, CmdDrink, CmdWield, CmdUnwield, CmdFreehands, CmdInventory, CmdReload, CmdUnload, CmdCheckAmmo,
+            CmdWear, CmdRemove, CmdStrip, CmdSurvey, CmdRepairArmor, CmdLoot, CmdFrisk, CmdGet, CmdPut, CmdCamera, CmdTuneTelevision, CmdTailor, CmdTease, CmdXp,
+            CmdDescribeBodypart, CmdDescribeMeAs, CmdBody, CmdVoice, CmdSdesc, CmdPending, CmdLookPlace, CmdSleepPlace, CmdWakeMsg, CmdFlatlineMsg, CmdSetPlace, CmdPose, CmdPronoun, CmdEmote, CmdNoMatch,
+            CmdEmoteDebug, CmdNpc, CmdGiveXp, CmdCreateItem, CmdTypeclasses, CmdSpawnItem, CmdSpawnArmor, CmdSpawnVehicle, CmdSpawnMedical, CmdSpawnOR, CmdDefib, CmdSpawnCreature, CmdGenerateCreature, CmdCreatureSet,
             CmdSit, CmdLieOnTable, CmdGetOffTable, CmdSurgery,
             CmdStaffSheet, CmdStaffSetStat, CmdStaffSetSkill, CmdMakeNpc, CmdNpcSet, CmdGoto, CmdSummon,
-            CmdSetVoid, CmdVoid, CmdRelease, CmdBoot, CmdFind, CmdAnnounce, CmdRestore, CmdDebugKill,
-            CmdSpawnSeat, CmdSpawnBed, CmdSpawnPod,
+            CmdSetVoid, CmdVoid, CmdRelease, CmdGoOOC, CmdReturnIC, CmdBoot, CmdFind, CmdAnnounce, CmdRestore, CmdDebugKill,
+            CmdSpawnSeat, CmdSpawnBed, CmdSpawnPod, CmdSpawnCamera, CmdSpawnTelevision,
             CmdEnterPod, CmdSplinterMe,
             CmdEnterVehicle, CmdExitVehicle, CmdStartEngine, CmdStopEngine, CmdShutoffEngine, CmdDrive, CmdStartEngine, CmdStopEngine, CmdShutoffEngine, CmdDrive,
             CmdVehicleStatus, CmdRepairPart,             CmdDamageVehicle,
@@ -78,9 +123,10 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdStats())
         self.add(CmdAttack())
         self.add(CmdStop())
+        self.add(CmdFlee())
         self.add(CmdExecute())
         self.add(CmdStance())
-        self.add(CmdDiagnose())
+        self.add(CmdHt())
         self.add(CmdUse())
         self.add(CmdApply())
         self.add(CmdStabilize())
@@ -104,20 +150,32 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdWear())
         self.add(CmdRemove())
         self.add(CmdStrip())
+        self.add(CmdSurvey())
+        self.add(CmdRepairArmor())
         self.add(CmdLoot())
         self.add(CmdFrisk())
         if DefaultCmdGet is not None:
             self.remove(DefaultCmdGet)
             self.add(CmdGet())
+        self.add(CmdPut())
+        self.add(CmdCamera())
+        self.add(CmdTuneTelevision())
         self.add(CmdTailor())
         self.add(CmdTease())
         self.add(CmdXp())
         self.add(CmdDescribeBodypart())
+        self.add(CmdDescribeMeAs())
         self.add(CmdBody())
+        self.add(CmdVoice())
+        self.add(CmdSdesc())
+        self.add(CmdPending())
         self.add(CmdLookPlace())
         self.add(CmdSleepPlace())
         self.add(CmdWakeMsg())
+        self.add(CmdFlatlineMsg())
         self.add(CmdSetPlace())
+        self.add(CmdGoOOC())
+        self.add(CmdReturnIC())
         self.add(CmdPose())
         self.add(CmdPronoun())
         self.add(CmdEmote())
@@ -136,6 +194,7 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdEnterPod())
         self.add(CmdSplinterMe())
         self.add(SplinterPodCmdSet())  # CmdLeavePod here so it beats exits (priority 110)
+        self.add(CombatGrappleCmdSet())  # grapple/letgo/resist above exits (priority 120)
         self.add(CmdEnterVehicle())
         self.add(CmdExitVehicle())
         self.add(CmdStartEngine())
@@ -147,11 +206,12 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
 
         # --- Admin commands (Builder/Admin only; locked in command class) ---
         self.add(CmdEmoteDebug())
-        self.add(CmdSpawn())
-        self.add(CmdDespawn())
+        self.add(CmdNpc())
         self.add(CmdGiveXp())
         self.add(CmdCreateItem())
         self.add(CmdTypeclasses())
+        self.add(CmdSpawnItem())
+        self.add(CmdSpawnArmor())
         self.add(CmdSpawnVehicle())
         self.add(CmdDamageVehicle())
         self.add(CmdSpawnMedical())
@@ -174,15 +234,48 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdSpawnSeat())
         self.add(CmdSpawnBed())
         self.add(CmdSpawnPod())
+        self.add(CmdSpawnCamera())
+        self.add(CmdSpawnTelevision())
+        self.add(CmdSpawnCreature())
+        self.add(CmdGenerateCreature())
+        self.add(CmdCreatureSet())
 
-class AdminOnlyIC(CmdIC):
-    """IC/puppet: staff only (one character per account for players)."""
+class StaffOnlyPuppet(CmdIC):
+    """Puppet a character. Staff only (one character per account for players)."""
+    key = "@puppet"
+    aliases = []
     locks = "cmd:perm(Builder)"
 
+    def func(self):
+        from commands.command import _get_object_by_id, _clear_multi_puppet_links_for_account, _set_multi_puppet_link
+        old_ids = list(getattr(self.account.db, "multi_puppets", None) or [])
+        super().func()
+        for oid in old_ids:
+            obj = _get_object_by_id(oid)
+            if obj and hasattr(obj, "db"):
+                for key in ("_multi_puppet_account_id", "_multi_puppet_slot"):
+                    if hasattr(obj.db, key):
+                        try:
+                            del obj.db[key]
+                        except Exception:
+                            pass
+        if getattr(self.session, "puppet", None):
+            self.account.db.multi_puppets = [self.session.puppet.id]
+            _set_multi_puppet_link(self.session.puppet, self.account.id, 1)
 
-class AdminOnlyOOC(CmdOOC):
-    """OOC/unpuppet: staff only (players stay in their single character)."""
+
+class StaffOnlyUnpuppet(CmdOOC):
+    """Unpuppet / leave character. Staff only."""
+    key = "@unpuppet"
+    aliases = []
     locks = "cmd:perm(Builder)"
+
+    def func(self):
+        from commands.command import _clear_multi_puppet_links_for_account
+        _clear_multi_puppet_links_for_account(self.account)
+        super().func()
+        if hasattr(self.account, "db"):
+            self.account.db.multi_puppets = []
 
 
 class StaffCharCreate(CmdCharCreate):
@@ -215,17 +308,36 @@ class AccountCmdSet(default_cmds.AccountCmdSet):
         """
         super().at_cmdset_creation()
         self.remove(CmdIC)
-        self.add(AdminOnlyIC())
+        self.add(StaffOnlyPuppet())
         self.remove(CmdOOC)
-        self.add(AdminOnlyOOC())
+        self.add(StaffOnlyUnpuppet())
         self.remove(CmdCharCreate)
         self.add(StaffCharCreate())
         self.remove(CmdCharDelete)
         self.add(StaffCharDelete())
-        from commands.command import CmdStats, CmdGoLight, CmdGoShard
+        from commands.command import (
+            CmdStats, CmdGoLight, CmdGoShard, CmdGrapple, CmdLetGo, CmdResist,
+            CmdAddPuppet, CmdPuppetList, CmdPuppetSlot,
+            CmdChannelSub, CmdChannelUnsub,
+            CmdXooc, CmdXgame, CmdXstaff, CmdHelpReply, CmdHelp, CmdOocName,
+        )
         self.add(CmdStats())
         self.add(CmdGoLight())
         self.add(CmdGoShard())
+        self.add(CmdGrapple())
+        self.add(CmdLetGo())
+        self.add(CmdResist())
+        self.add(CmdAddPuppet())
+        self.add(CmdPuppetList())
+        self.add(CmdPuppetSlot())
+        self.add(CmdChannelSub())
+        self.add(CmdChannelUnsub())
+        self.add(CmdXooc())
+        self.add(CmdXgame())
+        self.add(CmdXstaff())
+        self.add(CmdHelpReply())
+        self.add(CmdHelp())
+        self.add(CmdOocName())
 
 
 class UnloggedinCmdSet(default_cmds.UnloggedinCmdSet):
@@ -238,18 +350,22 @@ class UnloggedinCmdSet(default_cmds.UnloggedinCmdSet):
 
     def at_cmdset_creation(self):
         """
-        Populates the cmdset
+        Populates the cmdset. Use our create command so account-creation
+        errors are surfaced instead of a generic message.
         """
         super().at_cmdset_creation()
-        #
-        # any commands you add below will overload the default ones.
-        #
+        from evennia.commands.default import unloggedin as default_unloggedin
+        from commands.unloggedin import CmdUnconnectedCreate
+        self.remove(default_unloggedin.CmdUnconnectedCreate)
+        self.add(CmdUnconnectedCreate())
 
 
 class SessionCmdSet(default_cmds.SessionCmdSet):
     """
     This cmdset is made available on Session level once logged in. It
-    is empty by default.
+    is empty by default. We add CombatGrappleCmdSet here so grapple/letgo/resist
+    are always in the merged set (priority 120), even if the character or
+    account cmdset is not merged yet or is overridden by location.
     """
 
     key = "DefaultSession"
@@ -263,6 +379,4 @@ class SessionCmdSet(default_cmds.SessionCmdSet):
         It prints some info.
         """
         super().at_cmdset_creation()
-        #
-        # any commands you add below will overload the default ones.
-        #
+        self.add(CombatGrappleCmdSet())

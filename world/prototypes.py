@@ -88,3 +88,30 @@ See the `spawn` command and `evennia.prototypes.spawner.spawn` for more info.
 # "key": "goblin archwizard",
 # "prototype_parent" : ("GOBLIN_WIZARD", "ARCHWIZARD_MIXIN")
 # }
+
+
+# Tailoring: bolts of material. Higher materials require more tailoring skill (see world.tailoring.BOLT_MATERIALS).
+# Spawn with: spawn bolt of cloth | spawn bolt of silk | spawn bolt of satin | spawn bolt of velvet
+BOLT_OF_CLOTH = {
+    "key": "bolt of cloth",
+    "typeclass": "typeclasses.bolt_of_cloth.BoltOfCloth",
+    "attrs": [("material_type", "cloth")],
+}
+
+BOLT_OF_SILK = {
+    "prototype_parent": "BOLT_OF_CLOTH",
+    "key": "bolt of silk",
+    "attrs": [("material_type", "silk")],
+}
+
+BOLT_OF_SATIN = {
+    "prototype_parent": "BOLT_OF_CLOTH",
+    "key": "bolt of satin",
+    "attrs": [("material_type", "satin")],
+}
+
+BOLT_OF_VELVET = {
+    "prototype_parent": "BOLT_OF_CLOTH",
+    "key": "bolt of velvet",
+    "attrs": [("material_type", "velvet")],
+}

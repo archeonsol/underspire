@@ -1,95 +1,141 @@
 """
-Numeric level system: skills 0-150 (1 raise = 1 point), stats same scale but 1 raise = 0.5 points.
-Stats stored internally as 0-300 (2 stored = 1 displayed point); letter/formulas use stored value.
-All 17 letters Q through A; XP cost increases with level (~1-1.5 year cap).
+Numeric level system: skills 0-150, stats 0-300 (stored).
+21-letter grade scale U (worst) to A (best). Thresholds and XP curve data in world.constants.
 """
+from world.constants import SKILL_GRADE_THRESHOLDS as _SKILL_GRADE_DICT, STAT_GRADE_THRESHOLDS as _STAT_GRADE_DICT
 
-# Class-level constants for configuration
-LEVEL_LETTERS = "QPONMLKJIHGFEDCBA"
+MAX_LEVEL = 150       # skills: 0-150
+MAX_STAT_LEVEL = 300  # stats: stored 0-300
+
+# 21 letters, worst to best (canonical scale)
+LEVEL_LETTERS = "UTSRQPONMLKJIHGFEDCBA"
 NUM_LEVEL_TIERS = len(LEVEL_LETTERS)
-MAX_LEVEL = 150       # skills: 0-150, 1 raise = +1
-MAX_STAT_LEVEL = 300  # stats: stored 0-300, 1 raise = +1 stored = +0.5 points (display as stored//2)
 
-# Combat attack tiers: which moves unlock at which skill level (integer, not letter)
+# Re-export for callers that expect the dict from constants
+SKILL_GRADE_THRESHOLDS = _SKILL_GRADE_DICT
+STAT_GRADE_THRESHOLDS = _STAT_GRADE_DICT
+
+# Bounds for letter_to_level_range: (level, letter) ascending by level
+def _bounds_from_threshold_dict(threshold_dict):
+    return [(0, "U")] + [(thresh, letter) for letter, thresh in sorted(threshold_dict.items(), key=lambda x: x[1])]
+
+STAT_LETTER_BOUNDS = _bounds_from_threshold_dict(_STAT_GRADE_DICT)
+SKILL_LETTER_BOUNDS = _bounds_from_threshold_dict(_SKILL_GRADE_DICT)
+_STAT_KEYS = [thresh for _letter, thresh in sorted(_STAT_GRADE_DICT.items(), key=lambda x: x[1])]
+_SKILL_KEYS = [thresh for _letter, thresh in sorted(_SKILL_GRADE_DICT.items(), key=lambda x: x[1])]
+
+# Combat / skill tier breakpoints (integer levels)
 SKILL_LEVEL_TIER_1 = 60
-SKILL_LEVEL_FOR_C = (14 * MAX_LEVEL) // NUM_LEVEL_TIERS  # 123 = first level in letter C
+SKILL_LEVEL_FOR_C = 123  # first level in letter C (from milestone 123)
+
+
+def _letter_for_level(level, bounds, max_level):
+    """Return letter for level using (min_level, letter) bounds. Level < 0 -> first letter; >= max -> last letter."""
+    if level is None or level < 0:
+        return bounds[0][1]
+    level = int(level)
+    if level >= max_level:
+        return bounds[-1][1]
+    letter = bounds[0][1]
+    for min_lv, ltr in bounds:
+        if level >= min_lv:
+            letter = ltr
+        else:
+            break
+    return letter
+
+
+def get_grade(level, threshold_dict):
+    """
+    Universal grade lookup: iterate threshold dict from highest to lowest, return letter when level >= threshold.
+    threshold_dict: letter -> minimum level (e.g. {"A": 141, "B": 132, ..., "U": 1}).
+    """
+    if level is None or level < 0:
+        return "U"
+    level = int(level)
+    for letter, thresh in sorted(threshold_dict.items(), key=lambda x: -x[1]):
+        if level >= thresh:
+            return letter
+    return "U"
+
+
+def get_skill_grade(level):
+    """Return letter grade for skill level (0-150)."""
+    return get_grade(level, SKILL_GRADE_THRESHOLDS)
+
+
+def get_stat_grade(stored_level):
+    """Return letter grade for stat stored level (0-300)."""
+    return get_grade(stored_level, STAT_GRADE_THRESHOLDS)
+
 
 def level_to_letter(level, max_level=None):
     """
-    Convert numeric level to grade letter. Uses all letters in LEVEL_LETTERS.
+    Convert numeric level to grade letter (U through A). Uses canonical milestone boundaries.
     max_level=150 for skills, 300 for stats (default 150).
     """
     max_level = MAX_LEVEL if max_level is None else max_level
-    if level is None:
-        return LEVEL_LETTERS[0]  # "Q"
-    try:
-        lv = int(level)
-    except (TypeError, ValueError):
-        return LEVEL_LETTERS[0]  # "Q"
-    if lv >= max_level:
-        return "A"
-    if lv < 0:
-        return LEVEL_LETTERS[0]  # "Q"
-    # NUM_LEVEL_TIERS tiers: 0 -> Q, ..., max_level-1 -> last letter before A
-    idx = (lv * NUM_LEVEL_TIERS) // max_level
-    idx = min(NUM_LEVEL_TIERS - 1, idx)
-    return LEVEL_LETTERS[idx]
+    if max_level == MAX_STAT_LEVEL:
+        return get_stat_grade(level)
+    return get_skill_grade(level)
+
 
 def letter_to_level_range(letter, max_level=None):
     """
-    Return (min_level, max_level) for a letter. For migration. max_level=150 skills, 300 stats.
+    Return (min_level, max_level) for a letter. For migration/lookup.
+    U = 0-11 (stats) or 0-5 (skills), A = 282-300 or 141-150.
     """
     max_level = MAX_LEVEL if max_level is None else max_level
-    default_hi = max_level // NUM_LEVEL_TIERS - 1
-    if not letter:
-        return 0, default_hi
-    ltr = str(letter).upper()
-    if ltr == "A":
-        return max_level, max_level
-    if ltr in LEVEL_LETTERS:
-        idx = LEVEL_LETTERS.index(ltr)
-        lo = (idx * max_level) // NUM_LEVEL_TIERS
-        hi = ((idx + 1) * max_level) // NUM_LEVEL_TIERS - 1
-        return max(0, lo), min(max_level, hi)
-    return 0, default_hi
+    ltr = str(letter).upper() if letter else "U"
+    if ltr not in LEVEL_LETTERS:
+        return 0, max_level
+    if max_level == MAX_STAT_LEVEL:
+        bounds = STAT_LETTER_BOUNDS
+    else:
+        bounds = SKILL_LETTER_BOUNDS
+    lo, hi = 0, max_level
+    found = False
+    for lv, b in bounds:
+        if b == ltr:
+            if not found:
+                lo = lv
+                found = True
+        elif found:
+            hi = lv - 1
+            break
+    return max(0, lo), min(max_level, hi)
+
 
 def level_to_effective_grade(level, max_level=None):
     """
-    Map level to 1-17 for formulas (max_hp, medical, etc). max_level=150 skills, 300 stats.
+    Map level to 1-21 for formulas (max_hp, etc). U=1, A=21.
     """
     max_level = MAX_LEVEL if max_level is None else max_level
-    if level is None:
+    if level is None or level < 0:
         return 1
     try:
         lv = int(level)
     except (TypeError, ValueError):
         return 1
-    if lv <= 0:
-        return 1
-    if lv >= max_level:
-        return NUM_LEVEL_TIERS
-    result = 1 + round(lv * (NUM_LEVEL_TIERS - 1) / max_level)
-    return max(1, min(NUM_LEVEL_TIERS, result))
+    letter = level_to_letter(lv, max_level)
+    grade = LEVEL_LETTERS.index(letter) + 1
+    return max(1, min(NUM_LEVEL_TIERS, grade))
+
 
 def xp_cost_for_next_level(current_level, max_level=None):
     """
-    XP required to raise from current_level to current_level + 1.
-    Steeper curve; higher XP gain compensates so full build fits in ~1.5 years.
-    Skills: cost steps every 12 (1 at 0-11, 2 at 12-23, ... 12 at 132-149).
-    Stats: cost steps every 30 (1 at 0-29, 2 at 30-59, ... 10 at 270-299).
-    Design math: 1 skill to B (135) ~828 XP, to E (108) ~540 XP; 1 B + 5 E ~3528 XP.
-    Stats (step 30): 1 B + 1 C + 2 D + 2 E + 1 M ~6721 XP; full build ~10250, cap 10500.
+    Legacy: XP for one level. Prefer world.xp.xp_cost_for_stat_level / xp_cost_for_skill_level.
     """
+    from world.xp import xp_cost_for_stat_level, xp_cost_for_skill_level
     max_level = MAX_LEVEL if max_level is None else max_level
-    if current_level is None:
+    try:
+        lv = int(current_level or 0)
+    except (TypeError, ValueError):
         lv = 0
-    else:
-        try:
-            lv = int(current_level)
-        except (TypeError, ValueError):
-            lv = 0
     if lv >= max_level:
         return None
     if max_level == MAX_STAT_LEVEL:
-        return 1 + (lv // 30)   # stats: 0-29 cost 1, 30-59 cost 2, ... 270-299 cost 10
-    return 1 + (lv // 12)       # skills: 0-11 cost 1, 12-23 cost 2, ...
+        cost = xp_cost_for_stat_level(lv)
+    else:
+        cost = xp_cost_for_skill_level(lv)
+    return int(cost) if cost is not None and cost == int(cost) else cost

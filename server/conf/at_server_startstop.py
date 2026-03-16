@@ -30,8 +30,9 @@ def at_server_start():
     This is called every time the server starts up, regardless of
     how it was shut down.
     """
-    from evennia import create_script
+    from evennia import create_script, create_channel, search_channel
     from evennia.scripts.models import ScriptDB
+    from world.staff_pending import PENDING_SCRIPT_KEY, STAFF_PENDING_CHANNEL_ALIAS
     if not ScriptDB.objects.filter(db_key="stamina_regen").first():
         create_script(
             "typeclasses.scripts.StaminaRegenScript",
@@ -44,6 +45,31 @@ def at_server_start():
             key="bleeding_tick",
             persistent=True,
         )
+    if not ScriptDB.objects.filter(db_key=PENDING_SCRIPT_KEY).first():
+        create_script(
+            "typeclasses.scripts.StaffPendingScript",
+            key=PENDING_SCRIPT_KEY,
+            persistent=True,
+        )
+    # Staff pending channel: so staff can subscribe and see new requests
+    if not list(search_channel(STAFF_PENDING_CHANNEL_ALIAS)):
+        create_channel(
+            key=STAFF_PENDING_CHANNEL_ALIAS,
+            aliases=["pending", "staffpending"],
+            desc="Staff queue for pending approval requests (sdesc custom terms, etc.). Subscribe to see new requests.",
+            locks="listen:perm(Builder);send:perm(Builder);control:perm(Admin)",
+        )
+
+    # OOC channels: xooc, xgame, xstaff, xhelp only (no non-x aliases)
+    ooc_channels = (
+        ("OOC-Chat", ["xooc"], "OOC chat. Uses your account OOC name (set with @oocname).", "listen:all();send:all();control:perm(Admin)"),
+        ("Game-Help", ["xgame"], "Game help. Ask questions about how to play.", "listen:all();send:all();control:perm(Admin)"),
+        ("Staff", ["xstaff"], "Staff-only channel.", "listen:perm(Builder);send:perm(Builder);control:perm(Admin)"),
+        ("Help", ["xhelp"], "One-way help to staff. You only see your own messages; staff see all. Staff reply privately with xhelp/Name message.", "listen:all();send:all();control:perm(Admin)"),
+    )
+    for key, aliases, desc, locks in ooc_channels:
+        if not list(search_channel(aliases[0])):
+            create_channel(key=key, aliases=aliases, desc=desc, locks=locks)
 
 
 def at_server_stop():

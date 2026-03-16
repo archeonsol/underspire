@@ -2,6 +2,56 @@ from evennia import DefaultCharacter
 from evennia.utils.utils import compress_whitespace
 import random
 
+
+def _multi_puppet_relay(self, text, session=None, **kwargs):
+    """
+    If this character is in an account's multi-puppet set, send the message to that
+    account's session(s) with "P1 Name: " prefix. When they are temporarily the current
+    puppet with no sessions (e.g. p2 look, p3 attack), we relay and return True so the
+    caller passes session=None to the parent (user sees only the prefixed feed).
+    """
+    account_id = getattr(self.db, "_multi_puppet_account_id", None)
+    slot = getattr(self.db, "_multi_puppet_slot", None)
+    if not account_id or not slot:
+        return False
+
+    # Use standard Django/Evennia ORM to get the account (get_account_from_uid is not on all manager setups)
+    try:
+        from evennia.accounts.models import AccountDB
+        account = AccountDB.objects.get(id=int(account_id))
+    except Exception:
+        # Catches AccountDB.DoesNotExist, ValueError if ID is invalid, etc.
+        return False
+
+    if not hasattr(account, "sessions"):
+        return False
+    sess_list = account.sessions.get()
+    if not sess_list:
+        return False
+
+    main_sess = sess_list[0]
+    # If the player is currently puppeting THIS character AND it has its own sessions, no relay needed
+    own_list = (getattr(self, "sessions", None) or [])
+    if hasattr(own_list, "get"):
+        own_list = own_list.get() or (own_list.all() if hasattr(own_list, "all") else [])
+    has_own_sessions = bool(own_list)
+    if getattr(main_sess, "puppet", None) == self and has_own_sessions:
+        return False
+
+    # Evennia often passes text as a tuple like ("Message", {"type": "say"})
+    raw = text[0] if isinstance(text, (tuple, list)) and text else text
+    if not raw or not isinstance(raw, str) or not raw.strip():
+        return False
+    raw = str(raw)
+
+    prefix = "|cP%s %s|n: " % (slot, self.name)
+    try:
+        account.msg(prefix + raw, session=sess_list)
+    except Exception:
+        pass
+    # When we relayed for a slot puppet (current puppet with no sessions), don't also send via parent
+    return getattr(main_sess, "puppet", None) == self and not has_own_sessions
+
 # Body-part groups for merging descriptions into three paragraphs (head/face, upper body, lower body)
 def _body_parts():
     from world.medical import BODY_PARTS
@@ -17,15 +67,31 @@ def _body_part_groups():
     return head_face, upper_body, lower_body
 
 
+# When you look at a character: name = orange (match room look), sdesc in parens = white
+LOOK_CHARACTER_NAME_COLOR = "|520"   # warm orange/amber (same as room character list)
+LOOK_SDESC_COLOR = "|w"              # white for (a tall man wearing...)
+
+
 class Character(DefaultCharacter):
     """
     The 'Colony' Core Engine. 
-    Uses a Qualitative Grade system (Q through A) where:
+    Uses a Qualitative Grade system (U through A, 21 letters) where:
     - Skill = The success ceiling (Technical precision)
     - Stat = The roll weight/floor (Raw power)
     """
 
-    # Stats 0-300, skills 0-150; letter tiers from world.levels (all 17 letters Q–A)
+    # Look-at-character header: orange name + white sdesc in parentheses (default Evennia uses cyan)
+    appearance_template = """
+{header}
+""" + LOOK_CHARACTER_NAME_COLOR + """{name}|n""" + LOOK_SDESC_COLOR + """{extra_name_info}|n
+{desc}
+{exits}
+{characters}
+{things}
+{footer}
+"""
+
+    # Stats 0-300, skills 0-150; letter tiers from world.levels (21 letters U–A)
 
     def at_object_creation(self):
         """Called only once, when the character is first created."""
@@ -51,6 +117,8 @@ class Character(DefaultCharacter):
         self.db.background = "Unknown"
         self.db.traits = []
         self.db.needs_chargen = True
+        # General "describe me as" line (shown first when someone looks at you; short one-liner)
+        self.db.general_desc = "This is a character."
         # Per-body-part descriptions for look/appearance (keys from world.medical.BODY_PARTS)
         self.db.body_descriptions = {part: "" for part in _body_parts()}
         # Medical / trauma (organs, fractures, bleeding) - see world.medical
@@ -70,6 +138,8 @@ class Character(DefaultCharacter):
         # Hands: what is held in each hand (for wield/unwield). None = free.
         self.db.left_hand_obj = None
         self.db.right_hand_obj = None
+        # Voice: optional short phrase (e.g. "British accented") shown rarely when speaking, based on listeners' perception
+        self.db.voice = ""
         # Pronouns for emotes: "male" (he/his/him), "female" (she/her/her), "neutral"/"they" (they/their/them)
         self.db.pronoun = "neutral"
         # XP: gained every 6h while eligible (max 4 drops/24h); cap enforced so you stop earning after XP_CAP
@@ -103,6 +173,46 @@ class Character(DefaultCharacter):
             cur = CmdSet()  # empty fallback so merger does not crash
         return cur, stack
 
+    def announce_move_from(self, destination, msg=None, mapping=None, move_type="move", **kwargs):
+        """Announce departure as 'X leaves (direction).' for normal movement."""
+        if not self.location:
+            return
+        if move_type not in ("move", "traverse") or not destination:
+            super().announce_move_from(destination, msg=msg, mapping=mapping, move_type=move_type, **kwargs)
+            return
+        location = self.location
+        exits = [
+            o for o in (getattr(location, "contents", None) or [])
+            if getattr(o, "destination", None) is destination
+        ]
+        if not exits:
+            super().announce_move_from(destination, msg=msg, mapping=mapping, move_type=move_type, **kwargs)
+            return
+        direction = exits[0].key.strip()
+        name = self.get_display_name(self)
+        string = "%s leaves %s." % (name, direction)
+        location.msg_contents(string, exclude=(self,), from_obj=self)
+
+    def announce_move_to(self, source_location, msg=None, mapping=None, move_type="move", **kwargs):
+        """Announce arrival as 'X walks in from the north' (or the exit key) for normal movement."""
+        if not self.location:
+            return
+        if move_type not in ("move", "traverse") or not source_location:
+            super().announce_move_to(source_location, msg=msg, mapping=mapping, move_type=move_type, **kwargs)
+            return
+        # Exit from source to here is in source's contents
+        exits = [
+            o for o in (getattr(source_location, "contents", None) or [])
+            if getattr(o, "destination", None) is self.location
+        ]
+        if not exits:
+            super().announce_move_to(source_location, msg=msg, mapping=mapping, move_type=move_type, **kwargs)
+            return
+        direction = exits[0].key.strip()
+        name = self.get_display_name(self)
+        string = "%s walks in from the %s." % (name, direction)
+        self.location.msg_contents(string, exclude=(self,), from_obj=self)
+
     def get_body_descriptions(self):
         """
         Return dict of body part -> description string (for appearance/look).
@@ -135,28 +245,134 @@ class Character(DefaultCharacter):
         return compress_whitespace(appearance, max_linebreaks=2).strip()
 
     def get_display_desc(self, looker, **kwargs):
-        """Use merged body-paragraphs as the main description, replacing the default."""
+        """
+        Look description order: general "describe me as" line first, then body-part paragraphs.
+        """
+        general = (getattr(self.db, "general_desc", None) or "This is a character.").strip()
         merged = self.format_body_appearance()
+        outfit_line = ""
+        try:
+            from world.tailoring import get_outfit_quality_line
+            outfit_line = get_outfit_quality_line(self, looker)
+        except Exception:
+            pass
+        parts = [general]
         if merged:
-            return merged
-        return super().get_display_desc(looker, **kwargs) or "This is a character."
+            parts.append(merged)
+        if outfit_line:
+            parts.append(outfit_line)
+        return "\n\n".join(parts)
 
     def get_extra_display_name_info(self, looker=None, **kwargs):
-        """Hide character dbref (#id) from look so names stay clean."""
+        """Short desc next to name: (a tall man wearing a silk shirt and carrying a blade)."""
+        try:
+            from world.sdesc import get_short_desc
+            sdesc = get_short_desc(self, looker)
+            if sdesc:
+                return " (" + sdesc + ")"
+        except Exception:
+            pass
         return ""
 
     def get_display_things(self, looker, **kwargs):
-        """Show what is held in each hand when looking at a character; hide rest of inventory."""
+        """Show what is held in each hand when looking at a character; pronoun-aware."""
         left = getattr(self.db, "left_hand_obj", None)
         right = getattr(self.db, "right_hand_obj", None)
-        parts = []
-        if right and right.location == self:
-            parts.append(right.get_display_name(looker, **kwargs) if hasattr(right, "get_display_name") else str(right))
-        if left and left.location == self and left is not right:
-            parts.append(left.get_display_name(looker, **kwargs) if hasattr(left, "get_display_name") else str(left))
-        if parts:
-            return "|wCarrying:|n " + ", ".join(parts)
+        if right and getattr(right, "location", None) != self:
+            right = None
+        if left and getattr(left, "location", None) != self:
+            left = None
+        if left is right and right is None:
+            return ""
+        from world.medical import _pronoun_sub_poss
+        sub_cap, poss = _pronoun_sub_poss(self)
+        verb = "are" if sub_cap.lower() == "they" else "is"
+
+        def _article(name):
+            n = (name or "").strip()
+            if not n:
+                return "a "
+            n_lower = n.lower()
+            # Don't add article for plural-looking names (e.g. bandages, knives)
+            if n_lower.endswith(("es", "ies", "ves")) or (n_lower.endswith("s") and not n_lower.endswith("ss")):
+                return ""
+            return "an " if n_lower[0] in "aeiou" else "a "
+
+        def _name(obj):
+            return obj.get_display_name(looker, **kwargs) if hasattr(obj, "get_display_name") else str(obj)
+
+        if right and left is right:
+            name = _name(right)
+            return "%s %s holding %s in %s hands." % (sub_cap, verb, _article(name) + name, poss)
+        if right and left:
+            rname = _name(right)
+            lname = _name(left)
+            return "%s %s holding %s in %s right hand and %s in %s left." % (
+                sub_cap, verb, _article(rname) + rname, poss, _article(lname) + lname, poss
+            )
+        if right:
+            name = _name(right)
+            return "%s %s holding %s in %s hands." % (sub_cap, verb, _article(name) + name, poss)
+        if left:
+            name = _name(left)
+            return "%s %s holding %s in %s hands." % (sub_cap, verb, _article(name) + name, poss)
         return ""
+
+    def at_say(self, message, msg_self=None, msg_location=None, receivers=None, msg_receivers=None, **kwargs):
+        """
+        Say (and whisper) hook. For room say, optionally show voice to listeners who pass perception check.
+        """
+        from evennia.utils.utils import make_iter
+        from world.voice import get_voice_phrase, get_speaking_tag, voice_perception_check
+
+        # Whisper or explicit receivers: use default behavior (no voice)
+        if kwargs.get("whisper", False) or receivers:
+            return super().at_say(
+                message, msg_self=msg_self, msg_location=msg_location,
+                receivers=receivers, msg_receivers=msg_receivers, **kwargs
+            )
+
+        custom_mapping = kwargs.get("mapping", {})
+        location = self.location
+        msg_type = "say"
+        voice_phrase = get_voice_phrase(self)
+
+        if msg_self:
+            self_mapping = {
+                "self": "You",
+                "object": self.get_display_name(self),
+                "location": location.get_display_name(self) if location else None,
+                "receiver": None,
+                "all_receivers": None,
+                "speech": message,
+            }
+            self_mapping.update(custom_mapping)
+            template = msg_self if isinstance(msg_self, str) else 'You say, "|n{speech}|n"'
+            self.msg(text=(template.format_map(self_mapping), {"type": msg_type}), from_obj=self)
+
+        if not location:
+            return
+
+        # Room say: send to each character in location (except self) with optional voice
+        chars_here = location.contents_get(content_type="character")
+        for viewer in make_iter(chars_here):
+            if viewer == self:
+                continue
+            obj_name = self.get_display_name(viewer)
+            if voice_phrase and voice_perception_check(viewer, self):
+                tag = get_speaking_tag(self)
+                speech_with_tag = tag + message
+                line = '%s says in a %s, "*speaking in a %s* %s"' % (obj_name, voice_phrase, voice_phrase, message)
+            else:
+                line = '%s says, "%s"' % (obj_name, message)
+            viewer.msg(text=(line, {"type": msg_type}), from_obj=self)
+        # Feed cameras in room or held by anyone here (say does not use msg_contents)
+        say_line = '%s says, "%s"' % (self.get_display_name(self), message)
+        try:
+            from typeclasses.broadcast import feed_cameras_in_location
+            feed_cameras_in_location(location, say_line)
+        except Exception:
+            pass
 
     def get_grade_adjective(self, grade_letter):
         """Legacy: use get_stat_grade_adjective or get_skill_grade_adjective. Falls back to skill adjective."""
@@ -164,9 +380,17 @@ class Character(DefaultCharacter):
         return get_skill_grade_adjective(grade_letter)
 
     def get_stat_level(self, stat_key):
-        """Return stored stat level 0-300 (used for letter/formulas; display as //2 for 0-150 scale)."""
+        """Return stored stat level 0-300 (used for XP spending and letter lookup)."""
         from world.xp import _stat_level
         return _stat_level(self, stat_key)
+
+    def get_display_stat(self, stat_name):
+        """
+        Return display level 0-150 for a stat (stored_level // 2). Use for all RPG mechanics and HP.
+        No external code should perform // 2 on stored stats; use this method instead.
+        """
+        stored = self.get_stat_level(stat_name) or 0
+        return min(int(stored) // 2, 150)
 
     def get_skill_level(self, skill_key):
         """Return skill level as int 0-150 (normalizes legacy letter to mid-tier)."""
@@ -192,6 +416,14 @@ class Character(DefaultCharacter):
         """Return cap level for this skill (int 0-150)."""
         from world.xp import _skill_cap_level
         return _skill_cap_level(self, skill_key)
+
+    def msg(self, text=None, from_obj=None, session=None, **kwargs):
+        """Send message to this character; if in multi-puppet set, relay to account with 'P1 Name: ' prefix so feed and slot-command output are visible."""
+        relayed_only = _multi_puppet_relay(self, text, session=session, **kwargs)
+        # When we relayed for a slot puppet (p2 look, p3 attack, etc.), don't also send to session so user sees only the prefixed feed
+        if relayed_only:
+            session = None
+        return super().msg(text=text, from_obj=from_obj, session=session, **kwargs)
 
     def at_post_puppet(self, **kwargs):
         # Only the go shard (clone awakening) pipeline sets this; no other puppet flow should set it.
@@ -252,6 +484,16 @@ class Character(DefaultCharacter):
                 return
             import time
             self.db.last_logout_time = time.time()  # for 30-min rule: get/strip from logged-off only after this
+            try:
+                from world.grapple import release_grapple_forced
+                victim = getattr(self.db, "grappling", None)
+                if victim:
+                    release_grapple_forced(
+                        self,
+                        room_message="As %s falls asleep, their grip releases %s." % (self.name, victim.name),
+                    )
+            except Exception:
+                pass
             if self.location:
                 try:
                     from world.crafting import substitute_clothing_desc
@@ -268,12 +510,18 @@ class Character(DefaultCharacter):
     # DERIVED STATS (Dynamic Calculation)
     # ==========================================
 
+    # Miraculous benchmark: 114 display Endurance + 123 display Strength = 152 HP (str_bonus 11.5; base + end must = 140.5)
+    BASE_HP = 26.5
+    ENDURANCE_MULTIPLIER = 1.0
+
     @property
     def max_hp(self):
-        from world.levels import level_to_effective_grade, MAX_STAT_LEVEL
-        end = level_to_effective_grade(self.get_stat_level("endurance"), MAX_STAT_LEVEL)
-        str_ = level_to_effective_grade(self.get_stat_level("strength"), MAX_STAT_LEVEL)
-        return 50 + (end * 5) + (str_ * 3)
+        """HP = BASE_HP + (endurance_display * ENDURANCE_MULTIPLIER) + str_hp_bonus. All stats via get_display_stat."""
+        end_display = self.get_display_stat("endurance")
+        str_display = self.get_display_stat("strength")
+        str_hp_bonus = max(0, (str_display - 100) * 0.5)  # strength only contributes above 100 display
+        total = self.BASE_HP + (end_display * self.ENDURANCE_MULTIPLIER) + str_hp_bonus
+        return max(1, int(total))
 
     @property
     def hp(self):
@@ -283,10 +531,9 @@ class Character(DefaultCharacter):
 
     @property
     def max_stamina(self):
-        """Stamina pool is directly tied to endurance only."""
-        from world.levels import level_to_effective_grade, MAX_STAT_LEVEL
-        end = level_to_effective_grade(self.get_stat_level("endurance"), MAX_STAT_LEVEL)
-        return 20 + (end * 5)
+        """Stamina pool tied to endurance display level."""
+        end_display = self.get_display_stat("endurance")
+        return 20 + (end_display * 5)
 
     @property
     def stamina(self):
@@ -296,9 +543,9 @@ class Character(DefaultCharacter):
 
     @property
     def carry_capacity(self):
-        from world.levels import level_to_effective_grade, MAX_STAT_LEVEL
-        str_ = level_to_effective_grade(self.get_stat_level("strength"), MAX_STAT_LEVEL)
-        return 10 + (str_ * 10)
+        """Carry capacity from strength display level."""
+        str_display = self.get_display_stat("strength")
+        return 10 + (str_display * 10)
 
     # ==========================================
     # THE SIMULATION ENGINE (The Roll)
@@ -308,14 +555,14 @@ class Character(DefaultCharacter):
         """
         modifier: A hidden raw number added to the final result
                   (from stances, gear, or temporary states).
-        Stats 0-300, skills 0-150; both scaled to 1-17 for formula.
+        Uses display level for stats (get_display_stat); skill level as-is. Both scaled to 1-21 (U–A).
         """
         if isinstance(stat_list, str):
             stat_list = [stat_list]
 
-        from world.levels import level_to_effective_grade, MAX_STAT_LEVEL, MAX_LEVEL
-        total_stat = sum(self.get_stat_level(s) for s in stat_list)
-        stat_val = level_to_effective_grade(int(total_stat / len(stat_list)), MAX_STAT_LEVEL)
+        from world.levels import level_to_effective_grade, MAX_LEVEL
+        total_display = sum(self.get_display_stat(s) for s in stat_list)
+        stat_val = level_to_effective_grade(int(total_display / len(stat_list)), MAX_LEVEL)
 
         skill_level = self.get_skill_level(skill_name)
         skill_val = level_to_effective_grade(skill_level, MAX_LEVEL)
@@ -340,14 +587,14 @@ class Character(DefaultCharacter):
             return "Marginal Success", final_result
         return "Failure", final_result
 
-    def at_damage(self, attacker, damage, body_part=None, weapon_key=None):
+    def at_damage(self, attacker, damage, body_part=None, weapon_key=None, weapon_obj=None):
         """Apply HP loss. At 0 HP enter flatlined state (dying). Records injury for natural regen."""
         self.db.current_hp -= damage
         if self.db.current_hp < 0:
             self.db.current_hp = 0
         try:
             from world.medical import add_injury
-            add_injury(self, damage, body_part=body_part, weapon_key=weapon_key or "fists")
+            add_injury(self, damage, body_part=body_part, weapon_key=weapon_key or "fists", weapon_obj=weapon_obj)
         except Exception:
             pass
 

@@ -137,3 +137,18 @@ class BleedingTickScript(Script):
     def at_repeat(self):
         from world.medical import bleeding_tick_all
         bleeding_tick_all()
+
+
+class StaffPendingScript(Script):
+    """
+    Global storage for staff approval queue (custom sdesc terms, future: name changes, etc.).
+    db.pending = list of job dicts. Created once at server start.
+    """
+
+    def at_script_creation(self):
+        from world.staff_pending import PENDING_SCRIPT_KEY
+        self.key = PENDING_SCRIPT_KEY
+        self.interval = 0
+        self.repeats = 0
+        self.persistent = True
+        self.db.pending = []

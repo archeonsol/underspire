@@ -77,6 +77,25 @@ class Room(ObjectParent, DefaultRoom):
     # In-character, non-descript default when room has no custom desc
     default_description = "A place. Nothing much to note."
 
+    def msg_contents(self, text=None, exclude=None, from_obj=None, mapping=None,
+                     raise_funcparse_errors=False, **kwargs):
+        """Send to room. Cameras in the room (or held by characters here) capture via feed_cameras_in_location."""
+        super().msg_contents(
+            text=text,
+            exclude=exclude,
+            from_obj=from_obj,
+            mapping=mapping,
+            raise_funcparse_errors=raise_funcparse_errors,
+            **kwargs,
+        )
+        raw = text if isinstance(text, str) else (text[0] if isinstance(text, (tuple, list)) and text else "")
+        if raw:
+            try:
+                from typeclasses.broadcast import feed_cameras_in_location
+                feed_cameras_in_location(self, raw)
+            except Exception:
+                pass
+
     # Order: room name (header), desc, blank line, characters+things (you see + poses), exits
     appearance_template = """
 {header}
@@ -259,6 +278,13 @@ class Room(ObjectParent, DefaultRoom):
                     pass
                 if getattr(char.db, "is_npc", False):
                     logged_off = False  # NPCs never show as sleeping when unpuppeted
+                if logged_off:
+                    try:
+                        from world.death import is_character_multi_puppeted
+                        if is_character_multi_puppeted(char):
+                            logged_off = False  # Multi-puppeted = always "present" like NPCs
+                    except Exception:
+                        pass
                 if logged_off:
                     pose = getattr(char.db, "sleep_place", None) or "sleeping here"
                 else:

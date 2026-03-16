@@ -40,6 +40,9 @@ CMDSET_CHARACTER = "commands.default_cmdsets.CharacterCmdSet"
 # One character per account. No auto-puppet: login shows main menu (select character or create).
 # Account stays separate; after "go light" they have no character and must create from the menu.
 AUTO_CREATE_CHARACTER_WITH_ACCOUNT = True
+
+# Room dbref (int) or None. If set, @ooc moves the character here; @ic returns them. Tag "ooc_room" used as fallback.
+OOC_ROOM_ID = None
 AUTO_PUPPET_ON_LOGIN = False
 MULTISESSION_MODE = 2
 MAX_NR_CHARACTERS = 1

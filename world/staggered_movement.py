@@ -24,7 +24,7 @@ def _staggered_walk_callback(obj_id, dest_id):
         # If grappler: bring grappled victim along
         victim = getattr(getattr(obj, "db", None), "grappling", None)
         if victim and hasattr(victim, "move_to"):
-            victim.move_to(dest)
+            victim.move_to(dest, quiet=True)
             dest.msg_contents(
                 "%s is dragged in by %s." % (victim.name, obj.name),
                 exclude=(obj, victim),

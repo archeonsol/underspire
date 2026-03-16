@@ -56,15 +56,21 @@ def first_to_third(text, character):
     if text.lstrip().startswith(","):
         text = text.lstrip()[1:].lstrip()
         skip_first_conjugate = True
+    # Leading ".word" (dot-verb): strip the dot so first-word conjugation runs; handles ".grin" -> "grins"
+    if not skip_first_conjugate and text.lstrip().startswith("."):
+        text = text.lstrip().lstrip(".").lstrip()
     def conjugate_dot_verb(match):
         return " " + _conjugate(match.group(1))
     text = re.sub(r" \.\s*(\w+)", conjugate_dot_verb, text)
-    if text.lstrip().startswith("."):
-        text = re.sub(r"^\.\s*(\w+)", lambda m: _conjugate(m.group(1)), text, count=1)
+    # Mid-string ".word" already handled above; leading was stripped so first word gets conjugated below
     words = text.split()
     pronouns = {sub, poss, obj, "they", "their", "them"}
-    if not skip_first_conjugate and words and words[0].isalpha() and "__Q" not in words[0] and words[0].lower() not in pronouns:
-        words[0] = _conjugate(words[0])
+    if not skip_first_conjugate and words:
+        first = words[0]
+        # First token may have trailing punctuation (e.g. "grin," from ".grin, looking at Bob")
+        alpha_part = first.rstrip(".,;:!?") or first
+        if alpha_part and alpha_part.isalpha() and "__Q" not in alpha_part and alpha_part.lower() not in pronouns:
+            words[0] = _conjugate(alpha_part) + first[len(alpha_part):]
     text = " ".join(words)
 
     # 4. Restore Quotes

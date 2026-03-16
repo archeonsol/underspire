@@ -33,9 +33,9 @@ CONNECTION_SCREEN = """
  |wLog in|n (returning players):
       |wconnect <account name> <password>|n
 
- |wCreate account|n (new players; you will set the password):
+ |wCreate account|n (new players; you set the password):
       |wcreate <account name> <password>|n
- After creating an account, you will go through character creation, then spawn in.
+ After creating an account, you will go through the Rite (character creation), then spawn in.
  Next time you connect, use |wconnect <account name> <password>|n.
 
  If your name has spaces, enclose it in quotes.

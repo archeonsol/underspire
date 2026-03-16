@@ -102,4 +102,96 @@ HELP_ENTRY_DICTS = [
 
         """,
     },
+    # -------------------------------------------------------------------------
+    # Staff-only: Creature system (PvE)
+    # -------------------------------------------------------------------------
+    {
+        "key": "creatures",
+        "aliases": ["creature system", "creature help", "pve", "spawn creature", "creatureset"],
+        "category": "Admin",
+        "locks": "read:perm(Builder)",
+        "text": """
+            # Creature system (PvE) — staff reference
+
+            The creature framework provides PvE monsters and bosses that use raw combat stats
+            (max_hp, armor_rating, base_attack) and a moveset (instant or telegraph attacks)
+            instead of the human stat/skill curves. Only Builder+ can read this help.
+
+            ## Overview
+
+            - |wCreature|n is a typeclass (inherits Character) with |wis_creature|n set. It uses
+              |wdb.max_hp|n, |wdb.armor_rating|n, |wdb.base_attack|n for combat math when players
+              attack it; it does not use the 0–300 stat ladder.
+            - Creatures have a |wmoveset|n: a dict of move keys to move specs. Each move has
+              |wweight|n (chance to pick), |wtype|n (instant or telegraph), |wdamage|n, and
+              message strings. Telegraph moves have a wind-up message, then after a delay they
+              execute (execute_msg + damage).
+            - When a creature has a |wcurrent_target|n, an AI ticker runs every ~8 seconds
+              (CREATURE_AI_INTERVAL). Each tick it picks a move by weight and either executes
+              it (instant) or starts a telegraph (then executes after CREATURE_TICK_INTERVAL
+              seconds per tick).
+            - Creatures do not flatline; at 0 HP they die and the AI ticker stops.
+
+            ## Commands (Builder+)
+
+            ### spawncreature
+
+            |wspawncreature list|n
+                Lists available creature types.
+
+            |wspawncreature <type> [= name]|n
+                Spawns a creature of that type in your room. Optional |w= Custom Name|n
+                overrides the default key.
+
+            Types: |wgutter hulk|n, |wspore runner|n, |wrust stalker|n, |wcreature|n (base Creature
+            with no moves). Aliases: spawncreature, spawn creature, spawnc.
+
+            # generatecreature
+
+            |wgeneratecreature|n (aliases: gencreature, create creature, creature menu)
+                Opens an EvMenu to build a custom creature: name, max_hp, armor_rating,
+                base_attack, room_pose, and a list of moves. Each move has key, weight,
+                type (instant/telegraph), damage, and message(s). Telegraph moves also
+                ask for telegraph_msg and execute_msg. The result is a |wCreature|n with
+                |wdb.creature_moves|n                 set so it uses your moveset.
+
+            ### creatureset
+
+            |wcreatureset <creature> target <player>|n
+                Sets the creature's |wcurrent_target|n to that player and starts its AI
+                ticker. The creature will pick moves and attack that player every ~8 seconds
+                until the target dies, leaves the room, or you clear the target. Aliases:
+                cset, creature target.
+
+            |wcreatureset <creature> notarget|n
+                Clears the creature's target and stops its AI ticker.
+
+            ## Automatic targeting
+
+            When a |wplayer|n uses |wattack <creature>|n, the creature automatically sets
+            |wcurrent_target|n to the attacker and starts its AI ticker, so it fights back
+            without staff having to run creatureset.
+
+            ## Typeclasses and moves
+
+            - |wtypeclasses.creatures.Creature|n — base class. |wget_moves()|n returns
+              |wdb.creature_moves|n (used by generatecreature output).
+            - |wGutterHulk|n, |wSporeRunner|n, |wRustStalker|n — subclasses with fixed
+              key, stats, and |wget_moves()|n returning a class-level moves dict (swipe,
+              rad_beam, crush / bite, spore_burst, lunge / slash, saw_charge, gouge).
+            - Move spec keys: |wweight|n (int), |wtype|n "instant" or "telegraph",
+              |wdamage|n (int), |wmsg|n (instant) or |wtelegraph_msg|n + |wexecute_msg|n
+              (telegraph), |wticks|n (telegraph delay in ticks), optional |wunblockable|n,
+              |wstamina_drain|n. Use |w{name}|n and |w{target}|n in messages.
+
+            ## Implementation
+
+            - |wworld.creature_combat|n: get_creature_moves, pick_creature_move,
+              execute_creature_move, start_telegraph, creature_ai_tick,
+              start_creature_ai_ticker, stop_creature_ai_ticker. CREATURE_AI_INTERVAL = 8s,
+              CREATURE_TICK_INTERVAL = 3s per telegraph tick.
+            - When a creature dies (at_damage, hp <= 0), |wstop_creature_ai_ticker|n is
+              called so the ticker does not keep running.
+        """,
+    },
 ]

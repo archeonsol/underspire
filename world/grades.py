@@ -1,61 +1,68 @@
 """
-Grade adjectives: one per letter Q->A, keyed by grade letter.
+Grade adjectives: one per letter U->A (21 letters), keyed by grade letter.
 Stats have custom adjectives per stat; skills share one set.
 Letter of grade matches the adjective (same letter / starts with that letter).
 """
 
-# Grade order worst (Q) to best (A)
-GRADE_LETTERS = "QPONMLKJIHGFEDCBA"
+# Grade order worst (U) to best (A) — 21 letters, canonical scale
+GRADE_LETTERS = "UTSRQPONMLKJIHGFEDCBA"
 
-# Per-stat adjectives: SPECIAL (Fallout). Every adjective unique across all stats.
-# All dicts here are not mutated so safe as module-level constants.
+# Per-stat adjectives: 21 letters U through A. Every adjective unique across all stats.
 STAT_GRADE_ADJECTIVES = {
     "strength": {
-        "Q": "Quivering", "P": "Puny", "O": "Overmatched", "N": "Negligible",
-        "M": "Meager", "L": "Low", "K": "Knackered", "J": "Jelly-like",
-        "I": "Insubstantial", "H": "Humdrum", "G": "Growing", "F": "Formidable",
-        "E": "Exceptional", "D": "Dominant", "C": "Commanding", "B": "Brutal", "A": "Almighty",
+        "U": "Unsound", "T": "Tender", "S": "Spindly", "R": "Rickety",
+        "Q": "Quivering", "P": "Powerless", "O": "Obsolete", "N": "Negligible",
+        "M": "Meager", "L": "Limp", "K": "Knackered", "J": "Juicer",
+        "I": "Inured", "H": "Hale", "G": "Great", "F": "Formidable",
+        "E": "Exceptional", "D": "Destroyer", "C": "Concentrated", "B": "Booster", "A": "Almighty",
     },
     "perception": {
+        "U": "Unperceiving", "T": "Typhlotic", "S": "Susceptive", "R": "Reckless",
         "Q": "Querying", "P": "Poor", "O": "Oblivious", "N": "Narrow",
-        "M": "Muddled", "L": "Lacking", "K": "Keen-ish", "J": "Judicious",
+        "M": "Muddled", "L": "Lacking", "K": "Keen", "J": "Judicious",
         "I": "Intuitive", "H": "Honed", "G": "Grounded", "F": "Focused",
-        "E": "Exact", "D": "Detecting", "C": "Clear", "B": "Beholding", "A": "All-seeing",
+        "E": "Exacting", "D": "Detective", "C": "Clairvoyant", "B": "Beholder", "A": "Astute",
     },
     "endurance": {
-        "Q": "Quitting", "P": "Pathetic", "O": "Out of steam", "N": "Negated",
-        "M": "Modest", "L": "Limping", "K": "Kaput", "J": "Jaded",
-        "I": "Insufficient", "H": "Holding", "G": "Gritty", "F": "Fortified",
+        "U": "Unfit", "T": "Tired", "S": "Spent", "R": "Ragged",
+        "Q": "Queasy", "P": "Pathetic", "O": "Otiose", "N": "Nonathletic",
+        "M": "Milling", "L": "Lethargic", "K": "Kaput", "J": "Jock",
+        "I": "Invigorated", "H": "Hardy", "G": "Gritty", "F": "Fortified",
         "E": "Enduring", "D": "Durable", "C": "Conditioned", "B": "Bulletproof", "A": "Adamant",
     },
     "charisma": {
-        "Q": "Quiet", "P": "Plain", "O": "Off-putting", "N": "Nothing special",
-        "M": "Mild", "L": "Lackluster", "K": "Kind of there", "J": "Jovial",
-        "I": "Interesting", "H": "Hypnotic", "G": "Genuine", "F": "Fascinating",
-        "E": "Enchanting", "D": "Disarming", "C": "Compelling", "B": "Beguiling", "A": "Alluring",
+        "U": "Ugly", "T": "Terrible", "S": "Sour", "R": "Rancid",
+        "Q": "Quarantined", "P": "Pariah", "O": "Odious", "N": "Nebulous",
+        "M": "Miserable", "L": "Lackluster", "K": "Knave", "J": "Jovial",
+        "I": "Interesting", "H": "Honorable", "G": "Gracious", "F": "Fabulous",
+        "E": "Engaging", "D": "Dignified", "C": "Charming", "B": "Beautiful", "A": "Arresting",
     },
-    "intelligence": {
+        "intelligence": {
+        "U": "Unintelligent", "T": "Thick", "S": "Shallow", "R": "Rote",
         "Q": "Quizzical", "P": "Primitive", "O": "Obtuse", "N": "Naive",
-        "M": "Middling", "L": "Limited", "K": "Know-nothing", "J": "Juvenile",
-        "I": "Incomplete", "H": "Half-baked", "G": "Gifted", "F": "Farsighted",
+        "M": "Middling", "L": "Lummox", "K": "Knowing", "J": "Jaded",
+        "I": "Informed", "H": "Headful", "G": "Gifted", "F": "Foresighted",
         "E": "Erudite", "D": "Discerning", "C": "Cerebral", "B": "Brilliant", "A": "Astute",
     },
     "agility": {
-        "Q": "Quavering", "P": "Plodding", "O": "Obstinate", "N": "Numb",
-        "M": "Moderate", "L": "Leaden", "K": "Klutzy", "J": "Jittery",
-        "I": "Inert", "H": "Hesitant", "G": "Graceful", "F": "Fleet",
-        "E": "Effortless", "D": "Dynamic", "C": "Cat-like", "B": "Boundless", "A": "Acrobatic",
+        "U": "Unsteady", "T": "Tense", "S": "Stiff", "R": "Rigid",
+        "Q": "Quiescent", "P": "Plodding", "O": "Obstinate", "N": "Numb",
+        "M": "Moderate", "L": "Leaden", "K": "Kinetic", "J": "Jittery",
+        "I": "Imminent", "H": "Hasted", "G": "Graceful", "F": "Fleet",
+        "E": "Expedient", "D": "Dizzying", "C": "Celeritous", "B": "Blazing", "A": "Acrobatic",
     },
     "luck": {
-        "Q": "Quirkless", "P": "Penniless", "O": "Out of luck", "N": "Null",
-        "M": "Mercurial", "L": "Lucky", "K": "Karmic", "J": "Jinxed",
+        "U": "Unlucky", "T": "Troubled", "S": "Scorned", "R": "Random",
+        "Q": "Quirkless", "P": "Plagued", "O": "Ominous", "N": "Nullified",
+        "M": "Mercurial", "L": "Level", "K": "Karmic", "J": "Jaunty",
         "I": "Inspired", "H": "Halcyon", "G": "Golden", "F": "Favored",
-        "E": "Elect", "D": "Destined", "C": "Charmed", "B": "Blessed", "A": "Arcane",
+        "E": "Eminent", "D": "Destined", "C": "Charmed", "B": "Blessed", "A": "Arcane",
     },
 }
 
-# Skills share one set (letter-matched). No overlap with any stat adjective.
+# Skills: 21 letters U through A
 SKILL_GRADE_ADJECTIVES = {
+    "U": "Untrained", "T": "Trial", "S": "Shaky", "R": "Rote",
     "Q": "Questionable", "P": "Patchy", "O": "Out of depth", "N": "Novice",
     "M": "Marginal", "L": "Learned", "K": "Knackless", "J": "Junior",
     "I": "Inexperienced", "H": "Half-decent", "G": "Good", "F": "Functional",
@@ -70,7 +77,7 @@ def get_stat_grade_adjective(grade_letter, stat_key):
     Return the adjective for this stat at this grade. Letter matches grade.
     If the stat key is not recognized, uses the 'strength' adjectives as fallback.
     """
-    grade = str(grade_letter).upper() if grade_letter else "Q"
+    grade = str(grade_letter).upper() if grade_letter else "U"
     # Use .get with constant fallback instead of re-evaluating default every call
     by_stat = STAT_GRADE_ADJECTIVES.get(stat_key, _STAT_GRADE_DEFAULT)
     return by_stat.get(grade, "Unknown")
@@ -79,5 +86,5 @@ def get_skill_grade_adjective(grade_letter):
     """
     Return the adjective for any skill at this grade. Letter matches grade.
     """
-    grade = str(grade_letter).upper() if grade_letter else "Q"
+    grade = str(grade_letter).upper() if grade_letter else "U"
     return SKILL_GRADE_ADJECTIVES.get(grade, "Unknown")

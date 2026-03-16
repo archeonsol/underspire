@@ -34,6 +34,8 @@ COMBAT_READY_ATTACKER_MSG = {
 }
 COMBAT_READY_DEFENDER_MSG = "|rYou square up, getting ready to fight.|n"
 COMBAT_READY_ROOM_MSG = "|r{defender} squares up, getting ready to fight.|n"
+# Room sees attacker initiate (so e.g. p3 attack Bob shows "Test readies..." to the room)
+COMBAT_READY_ATTACKER_ROOM_MSG = "|r{attacker} gets ready to fight {target}.|n"
 
 # Parry: melee-only. Defender rolls parry first; if they beat the attack roll (with penalty), attack is parried (no damage). Else evasion runs as normal.
 MELEE_WEAPON_KEYS = ("fists", "knife", "long_blade", "blunt")
@@ -300,7 +302,7 @@ def _ticker_id(attacker, defender):
 
 
 def remove_both_combat_tickers(a, b):
-    """Stop both combat tickers for this pair. Call when someone dies."""
+    """Stop both combat tickers for this pair and end combat for both. Call when someone dies or flees."""
     from evennia import TICKER_HANDLER as ticker
     id_ab = _ticker_id(a, b)
     id_ba = _ticker_id(b, a)
@@ -311,9 +313,11 @@ def remove_both_combat_tickers(a, b):
             except KeyError:
                 pass
     if a and hasattr(a, "db"):
-        a.db.combat_target = None
+        _set_combat_target(a, None)
+        a.db.combat_ended = True
     if b and hasattr(b, "db"):
-        b.db.combat_target = None
+        _set_combat_target(b, None)
+        b.db.combat_ended = True
 
 
 def _get_object_by_id(dbref):
@@ -391,11 +395,24 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
     if getattr(attacker.db, "combat_ended", False) or getattr(defender.db, "combat_ended", False):
         remove_both_combat_tickers(attacker, defender)
         return
+    # Someone fled or combat was ended elsewhere: don't run this turn, just clean up
+    if _get_combat_target(attacker) != defender:
+        remove_both_combat_tickers(attacker, defender)
+        return
+    if not getattr(defender.db, "is_creature", False) and _get_combat_target(defender) != attacker:
+        remove_both_combat_tickers(attacker, defender)
+        return
     # Only treat as dead if current_hp was explicitly set to 0 or below (None = not yet in combat)
     if (attacker.db.current_hp is not None and attacker.db.current_hp <= 0) or (
         defender.db.current_hp is not None and defender.db.current_hp <= 0
     ):
         remove_both_combat_tickers(attacker, defender)
+        return
+
+    # 1a. Grappled characters cannot strike back
+    if getattr(attacker.db, "grappled_by", None):
+        attacker.msg("You're locked in their grasp; you can't strike back.")
+        defender.msg(f"{attacker.name} is too restrained to strike.")
         return
 
     # 1b. Stamina: exhausted characters cannot attack or defend
@@ -498,6 +515,23 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
         if (defender.db.current_hp or 0) <= 0:
             remove_both_combat_tickers(attacker, defender)
             return
+        # Body shield: defender has someone grappled — roll to see if blow hits the shield instead.
+        # Not as reliable as natural dodge: defender must beat attack by a margin (harder to pull off).
+        BODY_SHIELD_PENALTY = 15  # shield intercepts only if defender_roll >= attack_value + this
+        effective_defender = defender
+        hit_shield = False
+        shield = getattr(defender.db, "grappling", None)
+        if shield and getattr(shield, "db", None) and getattr(shield, "at_damage", None):
+            try:
+                def_roll = defender.roll_check(
+                    ["agility", "perception"], "evasion", modifier=0
+                )
+                shield_value = def_roll[1] if isinstance(def_roll, (tuple, list)) else 0
+                if shield_value >= attack_value + BODY_SHIELD_PENALTY:
+                    hit_shield = True
+                    effective_defender = shield
+            except Exception:
+                pass
         body_part, multiplier = _body_part_and_multiplier(attack_value)
         base = attack_move['damage']
         if result == "CRITICAL":
@@ -507,18 +541,52 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
         damage = max(1, damage)
         is_critical = result == "CRITICAL"
 
-        from world.medical import apply_trauma, get_brutal_hit_flavor
-        trauma_result = apply_trauma(defender, body_part, damage, is_critical, weapon_key=weapon_key)
-        # Send hit messages first, then apply HP/death so "collapses" comes after the hit
-        main_atk, main_def = _hit_message(
-            weapon_key, body_part, defender.name, attacker.name, is_critical
+        # Armor: coin-flip reduction per point of protection on this location
+        from world.damage_types import get_damage_type
+        from world.armor import (
+            get_armor_protection_for_location,
+            compute_armor_reduction,
+            degrade_armor,
         )
-        flavor_atk, flavor_def = get_brutal_hit_flavor(
-            weapon_key, body_part, trauma_result, defender.name, attacker.name, is_critical
-        )
-        attacker.msg(f"{main_atk} {flavor_atk}".strip())
-        defender.msg(f"{main_def} {flavor_def}".strip())
-        defender.at_damage(attacker, damage, body_part=body_part, weapon_key=weapon_key)
+        damage_type = get_damage_type(weapon_key, wielded_obj)
+        total_prot, armor_pieces = get_armor_protection_for_location(effective_defender, body_part, damage_type)
+        reduction, absorbed_fully = compute_armor_reduction(total_prot, damage)
+        damage = max(0, damage - reduction)
+        if armor_pieces and reduction > 0:
+            degrade_armor(armor_pieces, damage_type, reduction)
+
+        if absorbed_fully and damage <= 0:
+            # Armor completely absorbed the blow: distinct message, no trauma or HP loss
+            if hit_shield:
+                attacker.msg(f"|cYour blow lands on {effective_defender.name}'s {body_part} — {defender.name} pulled them in the way — but their armor absorbs it.|n")
+                defender.msg(f"|cYou pull {effective_defender.name} in the way. {attacker.name}'s strike hits them but armor takes it.|n")
+                effective_defender.msg(f"|c{defender.name} uses you as a shield. {attacker.name}'s blow hits your {body_part}; your armor takes it.|n")
+            else:
+                attacker.msg(f"|cYour blow lands on {defender.name}'s {body_part} but their armor absorbs it.|n")
+                defender.msg(f"|c{attacker.name}'s strike hits your {body_part}; your armor takes it.|n")
+        else:
+            from world.medical import apply_trauma, get_brutal_hit_flavor
+            trauma_result = apply_trauma(effective_defender, body_part, damage, is_critical, weapon_key=weapon_key, weapon_obj=wielded_obj)
+            if hit_shield:
+                attacker.msg(f"|r{defender.name} pulls {effective_defender.name} in the way! Your blow lands on {effective_defender.name}'s {body_part}.|n")
+                defender.msg(f"|yYou pull {effective_defender.name} in the way. The blow hits them.|n")
+                main_shield, _ = _hit_message(
+                    weapon_key, body_part, effective_defender.name, attacker.name, is_critical
+                )
+                flavor_atk, flavor_shield = get_brutal_hit_flavor(
+                    weapon_key, body_part, trauma_result, effective_defender.name, attacker.name, is_critical, weapon_obj=wielded_obj
+                )
+                effective_defender.msg(f"|r{defender.name} uses you as a shield! {attacker.name}'s blow hits you — {main_shield} {flavor_shield}".strip())
+            else:
+                main_atk, main_def = _hit_message(
+                    weapon_key, body_part, defender.name, attacker.name, is_critical
+                )
+                flavor_atk, flavor_def = get_brutal_hit_flavor(
+                    weapon_key, body_part, trauma_result, defender.name, attacker.name, is_critical, weapon_obj=wielded_obj
+                )
+                attacker.msg(f"{main_atk} {flavor_atk}".strip())
+                defender.msg(f"{main_def} {flavor_def}".strip())
+            effective_defender.at_damage(attacker, damage, body_part=body_part, weapon_key=weapon_key, weapon_obj=wielded_obj)
 
     # 6. Consume one round for ranged weapons (fired whether hit or miss)
     if is_ranged_weapon(weapon_key) and wielded_obj and hasattr(wielded_obj, "db"):
@@ -551,6 +619,8 @@ def _defender_first_attack(defender_id, attacker_id):
     """
     Run defender's first attack (so order is: my attack, their attack, then loop).
     Then add defender's recurring ticker so they keep attacking every COMBAT_INTERVAL.
+    When the defender is a creature (is_creature), skip this: creatures only attack via
+    their AI ticker (creature_combat), so we avoid duplicate/phantom attacks and wrong timing.
     """
     defender = _get_object_by_id(defender_id)
     attacker = _get_object_by_id(attacker_id)
@@ -559,6 +629,9 @@ def _defender_first_attack(defender_id, attacker_id):
     if getattr(defender.db, "combat_ended", False) or getattr(attacker.db, "combat_ended", False):
         return
     if _get_combat_target(defender) != attacker or _get_combat_target(attacker) != defender:
+        return
+    # Creatures attack only via creature AI ticker (~8s), not via PvP combat ticker
+    if getattr(defender.db, "is_creature", False):
         return
     try:
         import traceback
@@ -600,7 +673,10 @@ def _start_first_round(attacker_id, target_id):
         return
     if getattr(attacker.db, "combat_ended", False) or getattr(target.db, "combat_ended", False):
         return
-    if _get_combat_target(attacker) != target or _get_combat_target(target) != attacker:
+    if _get_combat_target(attacker) != target:
+        return
+    # When target is a creature we don't set their combat_target; only require mutual target for PvP
+    if not getattr(target.db, "is_creature", False) and _get_combat_target(target) != attacker:
         return
     try:
         import traceback
@@ -633,11 +709,14 @@ def start_combat_ticker(attacker, target):
     """
     Start combat: show "ready" messages immediately, then run first round after 5-6s and add tickers.
     Attacker sees weapon-class "You ready your X, eyeing <target>"; defender sees "You square up..."; attacker and room see "<defender> squares up...".
+    When the target is a creature (is_creature), do not set the creature's combat_target — creatures
+    attack only via their AI ticker (current_target), not the PvP combat ticker, so they are never in "normal" combat.
     """
     if not attacker or not target:
         return
     _set_combat_target(attacker, target)
-    _set_combat_target(target, attacker)
+    if not getattr(target.db, "is_creature", False):
+        _set_combat_target(target, attacker)
     if getattr(attacker.db, "current_hp", None) is None or (attacker.db.current_hp or 0) <= 0:
         attacker.db.current_hp = getattr(attacker, "max_hp", 100)
     if getattr(target.db, "current_hp", None) is None or (target.db.current_hp or 0) <= 0:
@@ -653,6 +732,10 @@ def start_combat_ticker(attacker, target):
         target.location.msg_contents(
             COMBAT_READY_ROOM_MSG.format(defender=target.name),
             exclude=(target,),
+        )
+        target.location.msg_contents(
+            COMBAT_READY_ATTACKER_ROOM_MSG.format(attacker=attacker.name, target=target.name),
+            exclude=(attacker,),
         )
 
     sec = random.uniform(COMBAT_START_DELAY_MIN, COMBAT_START_DELAY_MAX)

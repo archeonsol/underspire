@@ -4,7 +4,8 @@ Weapon typeclasses for combat. Each template maps to a weapon skill and a key in
 world.combat.WEAPON_DATA. Use these as typeclasses when creating custom weapons
 (e.g. create a knife, then set key/desc to "combat knife"; create from LongBladeWeapon
 for a sword). weapon_key determines which skill is rolled and which moves/damage table apply.
-Ranged weapons (sidearm, longarm, automatic) use world.ammo and require loading to fire.
+Damage type (slashing/impact/penetrating/magical) drives trauma and injury; set db.damage_type
+to override the default for this weapon class. Ranged weapons use world.ammo and require loading.
 """
 from evennia import DefaultObject
 
@@ -44,6 +45,17 @@ def get_weapon_key(obj):
     return TYPECLASS_WEAPON_KEYS.get(typeclass_path)
 
 
+def get_damage_type_for_weapon(weapon_obj):
+    """Return damage type for this weapon; use db.damage_type if set, else from weapon_key via world.damage_types."""
+    if weapon_obj is None:
+        return "impact"
+    try:
+        from world.damage_types import get_damage_type
+        return get_damage_type(get_weapon_key(weapon_obj), weapon_obj)
+    except Exception:
+        return "impact"
+
+
 def _is_ranged_weapon_key(weapon_key):
     try:
         from world.ammo import is_ranged_weapon
@@ -62,6 +74,7 @@ class CombatWeapon(DefaultObject):
     """
     def at_object_creation(self):
         self.db.weapon_key = WEAPON_KEY_UNARMED
+        self.db.damage_type = "impact"  # slashing, impact, penetrating, magical
         self.db.damage_mod = 0  # Future: quality modifier applied to move damage
 
     def has_ammo(self):
@@ -87,6 +100,7 @@ class UnarmedWeapon(CombatWeapon):
     def at_object_creation(self):
         super().at_object_creation()
         self.db.weapon_key = WEAPON_KEY_UNARMED
+        self.db.damage_type = "impact"
         if not self.db.desc:
             self.db.desc = "A weapon that augments or counts as unarmed combat."
 
@@ -99,6 +113,7 @@ class ShortBladeWeapon(CombatWeapon):
     def at_object_creation(self):
         super().at_object_creation()
         self.db.weapon_key = WEAPON_KEY_SHORT_BLADE
+        self.db.damage_type = "slashing"
         if not self.db.desc:
             self.db.desc = "A short blade: knife, dagger, or similar."
 
@@ -111,6 +126,7 @@ class LongBladeWeapon(CombatWeapon):
     def at_object_creation(self):
         super().at_object_creation()
         self.db.weapon_key = WEAPON_KEY_LONG_BLADE
+        self.db.damage_type = "slashing"
         if not self.db.desc:
             self.db.desc = "A long blade: sword or similar."
 
@@ -123,6 +139,7 @@ class BluntWeapon(CombatWeapon):
     def at_object_creation(self):
         super().at_object_creation()
         self.db.weapon_key = WEAPON_KEY_BLUNT
+        self.db.damage_type = "impact"
         if not self.db.desc:
             self.db.desc = "A blunt weapon: club, bat, hammer, or similar."
 
@@ -143,6 +160,7 @@ class SidearmWeapon(CombatWeapon, _RangedWeaponMixin):
     def at_object_creation(self):
         super().at_object_creation()
         self.db.weapon_key = WEAPON_KEY_SIDEARM
+        self.db.damage_type = "penetrating"
         from world.ammo import AMMO_TYPE_SIDEARM, DEFAULT_AMMO_CAPACITY
         self.at_object_creation_ranged(AMMO_TYPE_SIDEARM, DEFAULT_AMMO_CAPACITY["sidearm"])
         if not self.db.desc:
@@ -157,6 +175,7 @@ class LongarmWeapon(CombatWeapon, _RangedWeaponMixin):
     def at_object_creation(self):
         super().at_object_creation()
         self.db.weapon_key = WEAPON_KEY_LONGARM
+        self.db.damage_type = "penetrating"
         from world.ammo import AMMO_TYPE_LONGARM, DEFAULT_AMMO_CAPACITY
         self.at_object_creation_ranged(AMMO_TYPE_LONGARM, DEFAULT_AMMO_CAPACITY["longarm"])
         if not self.db.desc:
@@ -171,6 +190,7 @@ class AutomaticWeapon(CombatWeapon, _RangedWeaponMixin):
     def at_object_creation(self):
         super().at_object_creation()
         self.db.weapon_key = WEAPON_KEY_AUTOMATIC
+        self.db.damage_type = "penetrating"
         from world.ammo import AMMO_TYPE_AUTOMATIC, DEFAULT_AMMO_CAPACITY
         self.at_object_creation_ranged(AMMO_TYPE_AUTOMATIC, DEFAULT_AMMO_CAPACITY["automatic"])
         if not self.db.desc:

@@ -1,8 +1,11 @@
 """
 Medical treatment procedures: bleeding control, splinting, organ stabilization.
-IRL-inspired but streamlined. Uses medicine skill; tools improve success or unlock procedures.
+Tools have distinct roles: bandage (minor/moderate only), hemostatic (severe/critical, temporary),
+suture/surgical (definitive closure), medkit (generalist), tourniquet (fast stop, limb at risk).
+Splint: dedicated splint for limbs only; medkit/surgical for axial (spine, skull, pelvis).
 """
 import random
+import time
 from world.medical import (
     _ensure_medical_db,
     BLEEDING_LEVELS,
@@ -54,12 +57,21 @@ TOOL_SUTURE_KIT = "suture_kit"
 TOOL_SPLINT = "splint"
 TOOL_HEMOSTATIC = "hemostatic"
 TOOL_SURGICAL_KIT = "surgical_kit"
+TOOL_TOURNIQUET = "tourniquet"
 
 # What each tool can do
-TOOL_CAN_STOP_BLEEDING = (TOOL_BANDAGES, TOOL_MEDKIT, TOOL_SUTURE_KIT, TOOL_HEMOSTATIC, TOOL_SURGICAL_KIT)
+TOOL_CAN_STOP_BLEEDING = (TOOL_BANDAGES, TOOL_MEDKIT, TOOL_SUTURE_KIT, TOOL_HEMOSTATIC, TOOL_SURGICAL_KIT, TOOL_TOURNIQUET)
 TOOL_CAN_SPLINT = (TOOL_SPLINT, TOOL_MEDKIT, TOOL_SURGICAL_KIT)
 TOOL_CAN_STABILIZE_ORGAN = (TOOL_MEDKIT, TOOL_SURGICAL_KIT)
 TOOL_IS_SCANNER = (TOOL_SCANNER,)
+
+# Bleeding: bandage only effective on minor/moderate (1-2); severe/critical need hemostatic or suture/surgical
+BLEEDING_LEVEL_MINOR_MODERATE = (1, 2)
+BLEEDING_LEVEL_SEVERE_CRITICAL = (3, 4)
+
+# Splint: dedicated splint can only do limb bones; axial (spine, skull, pelvis, c-spine) need medkit or surgical
+BONES_SPLINT_ONLY_LIMBS = frozenset({"humerus", "metacarpals", "femur", "ankle", "metatarsals", "clavicle", "scapula", "jaw", "nose", "ribs"})
+BONES_AXIAL_NEED_MEDKIT = frozenset({"spine", "cervical_spine", "skull", "pelvis"})
 
 # Aliases for "apply splint to X arm" / "apply medkit to X throat" (body part -> bone_key or organ_key)
 BONE_ALIASES = {
@@ -131,6 +143,10 @@ _BLEED_FAIL = {
         "Even with the surgical kit you're fighting the bleed. You can't get control. They're still losing.",
         "You work as best you can. The damage is beyond what you can close here. The bleed is not controlled.",
     ],
+    TOOL_TOURNIQUET: [
+        "You cinch the tourniquet. The flow doesn't stop — wrong limb or too many sources. You need direct pressure or hemostatic.",
+        "The tourniquet won't isolate the bleed. Too much damage, or not a limb. They need a different approach.",
+    ],
 }
 # Bleeding: success by outcome (marginal = slow, full = good, critical = stopped)
 _BLEED_SUCCESS_MARGINAL = {
@@ -159,6 +175,7 @@ _BLEED_SUCCESS_MARGINAL = {
         "Proper tools, quick work. You get control. Not perfect — but the bleed is no longer the main problem.",
         "You close and pack. The surgical kit makes the difference. The wound weeps. The crisis eases.",
     ],
+    TOOL_TOURNIQUET: [],  # tourniquet always stops to 0; no marginal
 }
 _BLEED_SUCCESS_FULL = {
     TOOL_BANDAGES: [
@@ -186,6 +203,10 @@ _BLEED_SUCCESS_FULL = {
         "Proper technique, proper tools. You get the bleed under control. The wound is closed. They'll live.",
         "You work through the kit. The bleed is controlled. They're not out of danger — but they're out of the worst of it.",
     ],
+    TOOL_TOURNIQUET: [
+        "You cinch the tourniquet high and tight. The flow stops. The limb is pale. Get proper closure soon or the limb is at risk.",
+        "Tourniquet applied. Bleeding stopped. They have time — but the limb needs blood flow again. Suture or surgery when you can.",
+    ],
 }
 _BLEED_SUCCESS_CRITICAL = {
     TOOL_BANDAGES: [
@@ -212,6 +233,10 @@ _BLEED_SUCCESS_CRITICAL = {
         "You isolate the source: clamp, pack, or suture. The pump stops. Blood no longer leaves the vessel. Bleeding controlled.",
         "The surgical kit lets you do it right. You get control. The bleed stops. They're stable. Definitive care can wait.",
         "You work with precision. The source is closed. The flow stops. Bleeding controlled. They'll live.",
+    ],
+    TOOL_TOURNIQUET: [
+        "You cinch the tourniquet high and tight. The flow stops. The limb is pale. Get proper closure soon or the limb is at risk.",
+        "Tourniquet applied. Bleeding stopped. They have time — but the limb needs blood flow again. Suture or surgery when you can.",
     ],
 }
 
@@ -252,22 +277,47 @@ def _medicine_roll(operator, difficulty=0, modifier=0):
 
 def attempt_stop_bleeding(operator, target, tool_type=None):
     """
-    Attempt to reduce or stop bleeding. Requires bandages, medkit, suture kit, hemostatic, or surgical kit.
-    Returns (success: bool, message: str). Success reduces bleeding_level by 1–2 (or to 0 on critical).
+    Attempt to reduce or stop bleeding. Tool roles:
+    - Bandage: minor/moderate (1-2) only; severe/critical need hemostatic or suture/surgical.
+    - Hemostatic: best for severe/critical; fast but temporary (may reopen if not followed by suture/rest).
+    - Suture / surgical: definitive closure; clears hemostatic temporary.
+    - Medkit: generalist; works on all levels.
+    - Tourniquet: stops bleed to 0 immediately but limb at risk; may reopen after delay.
+    Returns (success: bool, message: str). Success reduces bleeding_level (and may set/clear temporary flags).
     """
     _ensure_medical_db(target)
     if tool_type not in TOOL_CAN_STOP_BLEEDING:
-        return False, "You need haemostatic capability: bandages, medkit, suture kit, hemostatic agent, or surgical kit."
+        return False, "You need bandages, medkit, suture kit, hemostatic agent, tourniquet, or surgical kit."
 
     level = target.db.bleeding_level or 0
-    if level <= 0:
+    if level <= 0 and not getattr(target.db, "tourniquet_applied", False):
         return False, "No significant haemorrhage to control."
 
-    # Tool modifier: hemostatic/surgical make it easier
+    # Tourniquet: always stops bleeding to 0 (no roll); limb at risk until proper closure
+    if tool_type == TOOL_TOURNIQUET:
+        if level <= 0:
+            return False, "They are not bleeding. A tourniquet is for severe limb haemorrhage."
+        target.db.bleeding_level = 0
+        target.db.tourniquet_applied = True
+        target.db.tourniquet_at = time.time()
+        if getattr(target.db, "bleeding_hemostatic_stabilized", False):
+            target.db.bleeding_hemostatic_stabilized = False
+        pool = _BLEED_SUCCESS_CRITICAL.get(TOOL_TOURNIQUET, [])
+        msg = random.choice(pool) if pool else "Tourniquet applied. Bleeding stopped. Get proper closure soon."
+        _mark_bleeding_treated(target)
+        return True, msg
+
+    # Bandage: only effective on minor (1) or moderate (2)
+    if tool_type == TOOL_BANDAGES and level in BLEEDING_LEVEL_SEVERE_CRITICAL:
+        return False, "The bleed is too heavy for gauze alone. Use hemostatic agent to get control first, or suture or a surgical kit."
+
+    # Tool modifier by role: hemostatic/surgical best for severe/critical; suture good; medkit generalist
     tool_mod = 0
     if tool_type == TOOL_HEMOSTATIC:
         tool_mod = 15
-    elif tool_type in (TOOL_SUTURE_KIT, TOOL_SURGICAL_KIT):
+    elif tool_type == TOOL_SURGICAL_KIT:
+        tool_mod = 12
+    elif tool_type == TOOL_SUTURE_KIT:
         tool_mod = 10
     elif tool_type == TOOL_MEDKIT:
         tool_mod = 5
@@ -279,7 +329,7 @@ def attempt_stop_bleeding(operator, target, tool_type=None):
         pool = _BLEED_FAIL.get(tool_type, _BLEED_FAIL[TOOL_BANDAGES])
         return False, random.choice(pool)
 
-    # Marginal: reduce by 1. Full: reduce by 2. Critical: reduce to 0 (or by 2 if already low)
+    # Marginal: reduce by 1. Full: reduce by 2. Critical: reduce to 0
     if success_level >= 3:
         new_level = 0
         pool = _BLEED_SUCCESS_CRITICAL.get(tool_type, _BLEED_SUCCESS_CRITICAL[TOOL_BANDAGES])
@@ -291,10 +341,25 @@ def attempt_stop_bleeding(operator, target, tool_type=None):
     else:
         new_level = max(0, level - 1)
         pool = _BLEED_SUCCESS_MARGINAL.get(tool_type, _BLEED_SUCCESS_MARGINAL[TOOL_BANDAGES])
-        msg = random.choice(pool)
+        msg = random.choice(pool) if pool else "You slow the flow. They need more care."
 
     target.db.bleeding_level = new_level
-    # Mark one severe injury as treated and record bandaged body part for look text
+
+    # Hemostatic: mark as temporary so it can reopen later unless suture/surgical used
+    if tool_type == TOOL_HEMOSTATIC and new_level < level:
+        target.db.bleeding_hemostatic_stabilized = True
+        target.db.bleeding_hemostatic_at = time.time()
+    # Suture or surgical: definitive closure; clear hemostatic temporary
+    elif tool_type in (TOOL_SUTURE_KIT, TOOL_SURGICAL_KIT):
+        if getattr(target.db, "bleeding_hemostatic_stabilized", False):
+            target.db.bleeding_hemostatic_stabilized = False
+
+    _mark_bleeding_treated(target)
+    return True, msg
+
+
+def _mark_bleeding_treated(target):
+    """Mark one severe injury as treated and add to bandaged_body_parts for look text."""
     injuries = getattr(target.db, "injuries", None) or []
     bandaged = list(getattr(target.db, "bandaged_body_parts", None) or [])
     for i in injuries:
@@ -306,17 +371,20 @@ def attempt_stop_bleeding(operator, target, tool_type=None):
                 bandaged.append(part)
                 target.db.bandaged_body_parts = bandaged
             break
-    return True, msg
 
 
 def attempt_splint(operator, target, bone_key, tool_type=None):
     """
     Splint a fracture. Reduces combat penalty from that bone; does not remove the fracture.
-    Requires splint, medkit, or surgical kit.
+    Dedicated splint: limbs only (arm, leg, hand, foot, ribs, clavicle, etc.). Spine, skull, pelvis need medkit or surgical kit.
     """
     _ensure_medical_db(target)
     if tool_type not in TOOL_CAN_SPLINT:
         return False, "You need a splint, medkit, or surgical kit to reduce and immobilize the fracture."
+
+    # Dedicated splint cannot do axial fractures; need medkit or surgical kit
+    if tool_type == TOOL_SPLINT and bone_key in BONES_AXIAL_NEED_MEDKIT:
+        return False, "A basic splint won't hold for spine, skull, or pelvis. Use a medkit or surgical kit for that."
 
     fractures = target.db.fractures or []
     if bone_key not in fractures:

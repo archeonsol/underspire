@@ -90,7 +90,8 @@ def apply_clone_snapshot(character, snapshot):
     if hasattr(character, "max_stamina"):
         character.db.current_stamina = character.max_stamina
     for attr in ("organ_damage", "fractures", "bleeding_level", "injuries",
-                 "stabilized_organs", "splinted_bones", "bandaged_body_parts"):
+                 "stabilized_organs", "splinted_bones", "bandaged_body_parts",
+                 "tourniquet_applied", "tourniquet_ticks", "bleeding_hemostatic_stabilized"):
         if hasattr(character.db, attr):
             try:
                 del character.db[attr]

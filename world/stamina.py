@@ -11,6 +11,7 @@ STAMINA_COST_CRAWL = 0   # Crawling is slow; no extra drain (you're already exha
 STAMINA_COST_ATTACK = 8
 STAMINA_COST_DEFEND = 5
 STAMINA_COST_RESIST_GRAPPLE = 12
+STAMINA_COST_GRAPPLE_STRIKE = 5   # grappler spends this per strike while holding someone
 
 # Regen: interval (seconds) and points per tick
 STAMINA_REGEN_INTERVAL = 25
@@ -70,6 +71,55 @@ def get_regen_rate(character):
         if last_meal and (time.time() - last_meal) < (NUTRITION_BUFF_MINUTES * 60):
             rate = int(rate * NUTRITION_REGEN_MULTIPLIER)
     return max(1, rate)
+
+
+# Recovery condition tiers: 0 = very slowly .. 4 = very well. Default is 2 (moderately).
+STAMINA_RECOVERY_LABELS = (
+    "recovering very slowly",
+    "recovering slowly",
+    "recovering moderately",
+    "recovering well",
+    "recovering very well",
+)
+
+
+def get_stamina_recovery_label(character):
+    """
+    Stamina recovery as a condition: base is moderately. Goes down when fighting,
+    bleeding, or injured; goes up when sitting or lying. Does not change with every
+    action—derived from current state (combat_target, bleeding_level, trauma, posture).
+    """
+    if not character or not getattr(character, "db", None):
+        return STAMINA_RECOVERY_LABELS[2]
+    score = 2  # default: recovering moderately
+
+    # In combat: recovery drops
+    if getattr(character.db, "combat_target", None) is not None:
+        score -= 2
+
+    # Bleeding: worse bleeding pulls recovery down
+    bleeding = getattr(character.db, "bleeding_level", 0) or 0
+    if bleeding >= 4:
+        score -= 2
+    elif bleeding >= 2:
+        score -= 1
+
+    # Trauma: fractures, organ damage, or multiple untreated injuries pull down
+    fractures = getattr(character.db, "fractures", None) or []
+    organ_damage = getattr(character.db, "organ_damage", None) or {}
+    injuries = getattr(character.db, "injuries", None) or []
+    untreated = sum(1 for i in injuries if not i.get("treated") and (i.get("hp_occupied") or 0) > 0)
+    if fractures or organ_damage or untreated >= 2:
+        score -= 1
+
+    # Posture: sitting or lying improves recovery (can partially offset penalties)
+    if getattr(character.db, "lying_on", None) is not None or getattr(character.db, "lying_on_table", None) is not None:
+        score += 2
+    elif getattr(character.db, "sitting_on", None) is not None:
+        score += 1
+
+    score = max(0, min(4, score))
+    return STAMINA_RECOVERY_LABELS[score]
 
 
 def tick_stamina_regen(character):
