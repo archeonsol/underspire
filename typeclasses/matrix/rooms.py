@@ -1,16 +1,14 @@
 """
-Matrix Rooms
+Matrix Nodes
 
-Virtual locations within the Matrix. These rooms exist in virtual space and can only
+Virtual locations within the Matrix. These nodes exist in virtual space and can only
 be accessed by diving (via avatar objects). They form the navigable geography
 of the city's cyberspace.
 
-All Matrix locations are persistent - device nodes exist as long as the device exists,
-hub nodes exist as long as the physical space exists, and spine nodes are permanent
-infrastructure.
+All Matrix nodes are persistent - device nodes exist as long as the device exists,
+and spine nodes are permanent infrastructure.
 
-MatrixRoom - Base class for all virtual Matrix locations
-MatrixNode - All Matrix locations (spines, hubs, devices, etc.)
+MatrixNode - All virtual Matrix locations (spines, hubs, devices, public spaces)
 MatrixExit - Connections between Matrix locations
 """
 
@@ -18,39 +16,48 @@ from typeclasses.rooms import Room
 from typeclasses.exits import Exit
 
 
-class MatrixRoom(Room):
+class MatrixNode(Room):
     """
-    Base class for virtual Matrix locations.
+    Virtual location in the Matrix.
 
-    These rooms exist in the Matrix's virtual space and can only be accessed
-    by avatars (characters who are diving). The physical character remains
-    in meatspace while their avatar navigates these virtual locations.
+    These represent all types of Matrix locations:
+    - Spine nodes (relay rooms along the network backbone)
+    - Hub nodes (private network spaces created by hub devices)
+    - Device nodes (interface spaces for cameras, terminals, etc.)
+    - Public spaces (the Cortex, shops, clubs)
+
+    All nodes are persistent. Device nodes exist as long as their parent device
+    exists. Spine nodes and public spaces are permanent infrastructure.
 
     Attributes:
         security_level (int): Security clearance required (0-10, 0=public, 10=maximum)
-        parent_object (obj): The physical object/device this node represents (if any)
+        parent_object (obj): The physical device/object this node represents (if any)
+        node_type (str): Type of node (spine, hub, device, public, etc.)
+        relay_key (str): Key of the relay this node is associated with (if any)
     """
 
-    default_description = "A featureless virtual space, devoid of detail."
+    default_description = "A vast data space, humming with virtual activity."
 
-    # Matrix rooms have a different color scheme to distinguish from meatspace
+    # Matrix nodes have a different color scheme to distinguish from meatspace
     matrix_name_color = "|c"  # cyan for matrix locations
 
     def at_object_creation(self):
-        """Called when the room is first created."""
+        """Called when the node is first created."""
         super().at_object_creation()
         self.db.security_level = 0
         self.db.parent_object = None
+        self.db.node_type = "standard"
+        self.db.relay_key = None
 
     def get_display_header(self, looker, **kwargs):
-        """Matrix room names use different coloring to distinguish from meatspace."""
+        """Matrix node names use different coloring to distinguish from meatspace."""
         name = self.get_display_name(looker, **kwargs)
         extra = self.get_extra_display_name_info(looker, **kwargs) or ""
         return f"{self.matrix_name_color}{name}{extra}|n"
 
     def at_object_receive(self, moved_obj, source_location, **kwargs):
         """
-        Called when an object enters this room.
+        Called when an object enters this node.
 
         Future implementation will add:
         - Security clearance checks
@@ -65,82 +72,34 @@ class MatrixRoom(Room):
         #     # Alert ICE if unauthorized
         #     pass
 
-
-class MatrixNode(MatrixRoom):
-    """
-    Virtual location in the Matrix.
-
-    These represent all types of Matrix locations:
-    - Spine nodes (relay rooms along the network backbone)
-    - Hub nodes (private network spaces for homes/offices)
-    - Device nodes (interface spaces for cameras, terminals, etc.)
-    - Public spaces (the Cortex, shops, clubs)
-
-    All nodes are persistent. Device nodes exist as long as their parent device
-    exists. Hub nodes exist as long as their physical space exists. Spine nodes
-    are permanent infrastructure.
-
-    Attributes:
-        node_type (str): Type of node (spine, hub, device, public, etc.)
-        relay_key (str): Key of the relay this node is associated with (if any)
-    """
-
-    default_description = "A vast data space, humming with virtual activity."
-
-    def at_object_creation(self):
-        """Called when the node is first created."""
-        super().at_object_creation()
-        self.db.node_type = "standard"
-        self.db.relay_key = None
-
     @classmethod
     def create_for_device(cls, device, **kwargs):
         """
-        Factory method to create a node for a physical device.
+        Factory method to create a Matrix node for a physical device.
+
+        Works for any Matrix-connected device: hubs, cameras, terminals, handsets, etc.
+        The node type and description are determined by the device's properties.
 
         Args:
             device: The physical device object this node represents
-            **kwargs: Additional room creation parameters
+            **kwargs: Additional node creation parameters
 
         Returns:
             MatrixNode: The created node
         """
-        device_type = device.typename if hasattr(device, 'typename') else "device"
-        room_name = f"Interface: {device.get_display_name(device)}"
+        device_type = getattr(device.db, 'device_type', 'device')
+        node_name = f"Node: {device.get_display_name(device)}"
 
         # Create the node
-        node = cls.create(room_name, **kwargs)
+        node = cls.create(node_name, **kwargs)
         node.db.parent_object = device
-        node.db.node_type = "device"
+        node.db.node_type = device_type
 
         # Set description based on device type
-        node.db.desc = f"A sterile virtual space. {device_type.capitalize()} controls shimmer in the void."
-
-        return node
-
-    @classmethod
-    def create_for_hub(cls, location, owner=None, **kwargs):
-        """
-        Factory method to create a hub node for a physical location.
-
-        Args:
-            location: The physical room this hub serves
-            owner: Optional owner of the hub
-            **kwargs: Additional room creation parameters
-
-        Returns:
-            MatrixNode: The created hub node
-        """
-        room_name = f"Node: {location.get_display_name(location)}"
-
-        # Create the node
-        node = cls.create(room_name, **kwargs)
-        node.db.parent_object = location
-        node.db.node_type = "hub"
-        node.db.owner = owner
-
-        # Basic hub description
-        node.db.desc = "A private network space. Basic security daemons patrol the perimeter."
+        if device_type == "hub":
+            node.db.desc = "A private network space. Basic security daemons patrol the perimeter."
+        else:
+            node.db.desc = f"A sterile virtual space. {device_type.capitalize()} controls shimmer in the void."
 
         return node
 
@@ -149,7 +108,7 @@ class MatrixExit(Exit):
     """
     Exit between Matrix virtual locations.
 
-    These exits connect virtual rooms in the Matrix. They can have different
+    These exits connect virtual nodes in the Matrix. They can have different
     behavior than physical exits, including security checks, routing through
     the network, and access logging.
 

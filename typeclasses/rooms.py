@@ -363,4 +363,4 @@ class Room(ObjectParent, DefaultRoom):
 
 
 # Re-export matrix room types for convenience
-from .matrix.rooms import MatrixRoom, MatrixNode, MatrixDevice, MatrixExit
+from .matrix.rooms import MatrixNode, MatrixExit
