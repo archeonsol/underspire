@@ -12,3 +12,7 @@ class Item(DefaultObject):
     """
     def at_object_creation(self):
         pass
+
+
+# Re-export matrix item types for convenience
+from .matrix.items import MatrixItem
