@@ -1792,34 +1792,6 @@ class CmdCreatureSet(Command):
         caller.msg("Use |wtarget <player>|n or |wnotarget|n.")
 
 
-class CmdGenerateCreature(Command):
-    """
-    Open a menu to generate a custom creature with your own stats and moves. Builder+.
-    Usage: generatecreature
-    """
-    key = "generatecreature"
-    aliases = ["gencreature", "create creature", "creature menu"]
-    locks = "cmd:perm(Builder)"
-    help_category = "Admin"
-
-    def func(self):
-        caller = self.caller
-        if not caller.location:
-            caller.msg("You need to be in a room to create a creature.")
-            return
-        from evennia.utils.evmenu import EvMenu
-        # Initialize builder state
-        caller.ndb.creature_gen = {
-            "key": "Custom Creature",
-            "max_hp": 100,
-            "armor_rating": 10,
-            "base_attack": 50,
-            "room_pose": "standing here",
-            "moves": {},
-        }
-        EvMenu(caller, "world.creature_gen_menu", startnode="node_start")
-
-
 def _get_pod_from_caller(caller):
     """If caller is inside a splinter pod interior, return the pod object; else None."""
     loc = getattr(caller, "location", None)

@@ -100,7 +100,7 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
             CmdStats, CmdAttack, CmdStance, CmdStop, CmdFlee, CmdExecute, CmdGrapple, CmdLetGo, CmdResist, CmdHt, CmdUse, CmdApply, CmdStabilize, CmdEat, CmdDrink, CmdWield, CmdUnwield, CmdFreehands, CmdInventory, CmdReload, CmdUnload, CmdCheckAmmo,
             CmdWear, CmdRemove, CmdStrip, CmdSurvey, CmdRepairArmor, CmdLoot, CmdFrisk, CmdGet, CmdPut, CmdCamera, CmdTuneTelevision, CmdTailor, CmdTease, CmdXp,
             CmdDescribeBodypart, CmdDescribeMeAs, CmdBody, CmdVoice, CmdSdesc, CmdPending, CmdLookPlace, CmdSleepPlace, CmdWakeMsg, CmdFlatlineMsg, CmdSetPlace, CmdPose, CmdPronoun, CmdEmote, CmdNoMatch,
-            CmdEmoteDebug, CmdNpc, CmdGiveXp, CmdCreateItem, CmdTypeclasses, CmdSpawnItem, CmdSpawnArmor, CmdSpawnVehicle, CmdSpawnMedical, CmdSpawnOR, CmdDefib, CmdSpawnCreature, CmdGenerateCreature, CmdCreatureSet,
+            CmdEmoteDebug, CmdNpc, CmdGiveXp, CmdCreateItem, CmdTypeclasses, CmdSpawnItem, CmdSpawnArmor, CmdSpawnVehicle, CmdSpawnMedical, CmdSpawnOR, CmdDefib, CmdSpawnCreature, CmdCreatureSet,
             CmdSit, CmdLieOnTable, CmdGetOffTable, CmdSurgery,
             CmdStaffSheet, CmdStaffSetStat, CmdStaffSetSkill, CmdMakeNpc, CmdNpcSet, CmdGoto, CmdSummon,
             CmdSetVoid, CmdVoid, CmdRelease, CmdGoOOC, CmdReturnIC, CmdBoot, CmdFind, CmdAnnounce, CmdRestore, CmdDebugKill,
@@ -237,7 +237,6 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdSpawnCamera())
         self.add(CmdSpawnTelevision())
         self.add(CmdSpawnCreature())
-        self.add(CmdGenerateCreature())
         self.add(CmdCreatureSet())
 
 class StaffOnlyPuppet(CmdIC):
