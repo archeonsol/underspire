@@ -136,6 +136,7 @@ class Relay:
 
     def __repr__(self):
         return f"<Relay '{self.key}' covering {len(self.coverage_rooms)} rooms>"
+        """
 
 
 class RelayManager:
