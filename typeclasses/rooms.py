@@ -302,6 +302,15 @@ class Room(ObjectParent, DefaultRoom):
                     pose = substitute_clothing_desc(pose, char)
                 except Exception:
                     pass
+                # Resolve simple name mentions in pose for viewer: if pose contains the looker's
+                # key, show "you/your" for that viewer instead of their name.
+                try:
+                    viewer_name = (getattr(looker, "key", None) or "").strip()
+                    if viewer_name:
+                        pose = re.sub(rf"\b{re.escape(viewer_name)}'s\b", "your", pose)
+                        pose = re.sub(rf"\b{re.escape(viewer_name)}\b", "you", pose)
+                except Exception:
+                    pass
             name = char.get_display_name(looker, **kwargs)
             if logged_off:
                 # Name in character color; "is sleeping here" in bold white

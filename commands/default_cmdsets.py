@@ -103,7 +103,7 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
             CmdDescribeBodypart, CmdDescribeMeAs, CmdBody, CmdVoice, CmdSdesc, CmdPending, CmdLookPlace, CmdSleepPlace, CmdWakeMsg, CmdFlatlineMsg, CmdSetPlace, CmdPose, CmdPronoun, CmdEmote, CmdNoMatch,
             CmdEmoteDebug, CmdNpc, CmdGiveXp, CmdCreateItem, CmdTypeclasses, CmdSpawnItem, CmdSpawnArmor, CmdSpawnVehicle, CmdSpawnMedical, CmdSpawnOR, CmdDefib, CmdSpawnCreature, CmdCreatureSet,
             CmdSit, CmdLieOnTable, CmdGetOffTable, CmdSurgery,
-            CmdStaffSheet, CmdStaffSetStat, CmdStaffSetSkill, CmdMakeNpc, CmdNpcSet, CmdGoto, CmdSummon,
+            CmdStaffSheet, CmdStaffSetStat, CmdStaffSetSkill, CmdMakeNpc, CmdNpcSet, CmdGoto, CmdGotoRoom, CmdSummon,
             CmdSetVoid, CmdVoid, CmdRelease, CmdGoOOC, CmdReturnIC, CmdBoot, CmdFind, CmdAnnounce, CmdRestore, CmdDebugKill,
             CmdSpawnSeat, CmdSpawnBed, CmdSpawnPod, CmdSpawnCamera, CmdSpawnTelevision,
             CmdEnterPod, CmdSplinterMe,

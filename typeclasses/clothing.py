@@ -27,6 +27,12 @@ class Clothing(Item):
             self.db.quality_adjective = ""
         if not hasattr(self.db, "quality_score"):
             self.db.quality_score = None
+        # Tailored clothing layering (0-5); default 1 unless tailoring sets otherwise.
+        if not hasattr(self.db, "clothing_layer"):
+            self.db.clothing_layer = 1
+        # See-through clothing (jewelry, mesh, etc.): when True, does not replace body-part text.
+        if not hasattr(self.db, "see_thru"):
+            self.db.see_thru = False
 
     def get_display_desc(self, looker, **kwargs):
         """Main description plus quality line when set (from tailoring finalize)."""
@@ -44,3 +50,27 @@ class Clothing(Item):
                 dropper.db.worn = [o for o in worn if o != self]
         except Exception:
             pass
+
+    def at_give(self, giver, receiver):
+        """
+        When given to someone else, require that it is not worn.
+
+        If the giver is still wearing this item, cancel the transfer and keep it
+        in the giver's inventory so state stays consistent.
+        """
+        try:
+            worn = giver.db.worn or []
+            if self in worn:
+                # Move back to giver if Evennia already moved it.
+                if self.location is not giver:
+                    self.location = giver
+                giver.msg(f"You must |wremove|n {self.get_display_name(giver)} before you can give it to someone.")
+                if receiver and hasattr(receiver, "msg"):
+                    receiver.msg(f"{giver.get_display_name(receiver)} is still wearing {self.get_display_name(receiver)} and cannot give it yet.")
+        except Exception:
+            # If anything goes wrong, better to leave the item with the giver than to allow a half-worn state.
+            try:
+                if self.location is not giver:
+                    self.location = giver
+            except Exception:
+                pass

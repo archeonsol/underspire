@@ -171,6 +171,12 @@ class Character(DefaultCharacter):
         self.db.xp_cap = int(getattr(self.db, "xp_cap", XP_CAP) or XP_CAP)
         # PC vs NPC: NPCs do not show as "sleeping" when unpuppeted; set True for staff-created NPCs
         self.db.is_npc = False
+        # Survival: hunger/thirst (0-100, higher = better) and intoxication state
+        self.db.hunger = 100
+        self.db.thirst = 100
+        # Drunk level: 0 = sober, 1 = tipsy, 2 = drunk, 3 = wasted
+        self.db.drunk_level = 0
+        self.db.blood_alcohol = 0.0
         # Amputations / severed limbs (body part keys from world.medical.BODY_PARTS)
         self.db.missing_body_parts = []
 
@@ -231,8 +237,17 @@ class Character(DefaultCharacter):
             super().announce_move_from(destination, msg=msg, mapping=mapping, move_type=move_type, **kwargs)
             return
         direction = exits[0].key.strip()
-        name = self.get_display_name(self)
-        string = "%s leaves %s." % (name, direction)
+        # Use sdesc plus actual name in parentheses: "sdesc (Name) goes west."
+        try:
+            from world.sdesc import get_short_desc
+            sdesc = get_short_desc(self, location)
+        except Exception:
+            sdesc = self.get_display_name(location)
+        # Capitalize first letter of the sdesc for sentence start.
+        if sdesc:
+            sdesc = sdesc[0].upper() + sdesc[1:]
+        name = getattr(self, "name", self.key)
+        string = f"{sdesc} ({name}) goes {direction}."
         location.msg_contents(string, exclude=(self,), from_obj=self)
 
     def announce_move_to(self, source_location, msg=None, mapping=None, move_type="move", **kwargs):
@@ -251,8 +266,15 @@ class Character(DefaultCharacter):
             super().announce_move_to(source_location, msg=msg, mapping=mapping, move_type=move_type, **kwargs)
             return
         direction = exits[0].key.strip()
-        name = self.get_display_name(self)
-        string = "%s walks in from the %s." % (name, direction)
+        try:
+            from world.sdesc import get_short_desc
+            sdesc = get_short_desc(self, self.location)
+        except Exception:
+            sdesc = self.get_display_name(self.location)
+        if sdesc:
+            sdesc = sdesc[0].upper() + sdesc[1:]
+        name = getattr(self, "name", self.key)
+        string = f"{sdesc} ({name}) arrives from the {direction}."
         self.location.msg_contents(string, exclude=(self,), from_obj=self)
 
     def get_body_descriptions(self):

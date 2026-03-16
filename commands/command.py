@@ -110,11 +110,22 @@ class CmdLook(DefaultCmdLook):
                         break
                 if target_exit and target_exit.destination:
                     dest = target_exit.destination
-                    # Collect visible characters in the destination room
-                    chars = [
-                        obj for obj in getattr(dest, "contents", [])
-                        if getattr(obj, "has_account", False)
-                    ]
+                    # Collect visible characters in the destination room (players and NPCs, but not corpses).
+                    contents = getattr(dest, "contents", [])
+                    try:
+                        from typeclasses.corpse import Corpse
+                        def _is_char(o):
+                            if isinstance(o, Corpse):
+                                return False
+                            if getattr(o, "has_account", False):
+                                return True
+                            return bool(getattr(getattr(o, "db", None), "is_npc", False))
+                        chars = [o for o in contents if _is_char(o)]
+                    except Exception:
+                        chars = [
+                            o for o in contents
+                            if getattr(o, "has_account", False) or bool(getattr(getattr(o, "db", None), "is_npc", False))
+                        ]
                     if not chars:
                         caller.msg(f"To the {direction} you see |wnothing of note|n.")
                         return
@@ -3186,6 +3197,56 @@ class CmdGoto(Command):
         caller.msg("|gYou go to {}.|n".format(target.name))
 
 
+class CmdGotoRoom(Command):
+    """
+    Teleport yourself directly to a room by dbref or exact room name. Builder+.
+
+    Usage:
+      gotoroom #123
+      gotoroom The Harshlands Entry
+    """
+
+    key = "gotoroom"
+    locks = "cmd:perm(Builder)"
+    help_category = "Staff"
+
+    def func(self):
+        from evennia.objects.objects import DefaultRoom
+        from evennia.utils.search import search_object
+
+        caller = self.caller
+        args = (self.args or "").strip()
+        if not args:
+            caller.msg("Usage: gotoroom <#dbref> or <exact room name>")
+            return
+
+        targets = []
+
+        # Try dbref first (#N or plain integer)
+        raw = args.lstrip()
+        if raw.startswith("#"):
+            raw = raw[1:]
+        if raw.isdigit():
+            dbid = int(raw)
+            targets = search_object(dbid)
+        else:
+            # Exact key match on rooms
+            all_matches = search_object(args)
+            for obj in all_matches:
+                if isinstance(obj, DefaultRoom) and (obj.key or "").strip().lower() == args.strip().lower():
+                    targets.append(obj)
+
+        if not targets:
+            caller.msg(f"No room found for '{args}'. Use a #dbref or exact room name.")
+            return
+        if len(targets) > 1:
+            caller.msg(f"Multiple rooms matched '{args}'. Please use a #dbref.")
+            return
+
+        dest = targets[0]
+        caller.move_to(dest)
+        caller.msg(f"|gYou teleport to room: {dest.get_display_name(caller)}|n")
+
 class CmdSummon(Command):
     """
     Bring a character to your location. Builder+.
@@ -4162,10 +4223,9 @@ class CmdEat(Command):
         name = obj.get_display_name(caller) if hasattr(obj, "get_display_name") else obj.name
         caller.msg("You eat |w%s|n." % name)
         caller.location.msg_contents("%s eats %s." % (caller.name, name), exclude=caller)
-        # Nutritious food boosts stamina regen for a while (all food counts unless obj has db.nutritious = False)
-        if getattr(obj.db, "nutritious", True):
-            import time
-            caller.db.last_nutritious_meal = time.time()
+        # Apply survival effects: hunger and nutrition.
+        from world.survival import apply_food_effects
+        apply_food_effects(caller, obj)
         # Consume: delete single-use or decrement uses
         if getattr(obj.db, "uses_remaining", None) is not None:
             u = (obj.db.uses_remaining or 0) - 1
@@ -4216,6 +4276,9 @@ class CmdDrink(Command):
         name = obj.get_display_name(caller) if hasattr(obj, "get_display_name") else obj.name
         caller.msg("You drink |w%s|n." % name)
         caller.location.msg_contents("%s drinks %s." % (caller.name, name), exclude=caller)
+        # Apply survival effects: thirst and/or alcohol.
+        from world.survival import apply_drink_effects
+        apply_drink_effects(caller, obj)
         if getattr(obj.db, "uses_remaining", None) is not None:
             u = (obj.db.uses_remaining or 0) - 1
             obj.db.uses_remaining = u
@@ -4675,14 +4738,19 @@ class CmdWear(Command):
             caller.msg(f"You're already wearing {target.get_display_name(caller)}.")
             return
 
-        # Armor stacking: enforce max total stacking_score
+        # Armor stacking and layering; clothing vs armor conflicts
         from world.armor import (
             MAX_ARMOR_STACKING_SCORE,
             get_worn_armor_stack_total,
             check_layer_warning,
             _is_armor,
         )
-        if _is_armor(target):
+        from world.clothing import get_worn_items, infer_clothing_layer
+        from typeclasses.armor import Armor
+        from typeclasses.clothing import Clothing
+
+        is_armor = _is_armor(target)
+        if is_armor:
             current_stack = get_worn_armor_stack_total(caller)
             add_score = target.get_stacking_score()
             if current_stack >= MAX_ARMOR_STACKING_SCORE:
@@ -4694,7 +4762,54 @@ class CmdWear(Command):
                 )
                 return
 
-        # Layering warning: lower layer under higher on same part (don't block)
+        # Existing worn items (clothing + armor)
+        worn_items = get_worn_items(caller)
+
+        # Assign clothing_layer for tailored clothing if not already set
+        if isinstance(target, Clothing) and not isinstance(target, Armor):
+            layer = getattr(target.db, "clothing_layer", None)
+            if layer is None:
+                target.db.clothing_layer = infer_clothing_layer(target.key or target.get_display_name(caller))
+
+            # Enforce that inner layers (e.g. bra) cannot be worn over outer layers on same parts
+            layer = int(getattr(target.db, "clothing_layer", 1) or 1)
+            target_parts = set(getattr(target.db, "covered_parts", None) or [])
+            for item in worn_items:
+                if not isinstance(item, Clothing):
+                    continue
+                other_parts = set(getattr(item.db, "covered_parts", None) or [])
+                if not (target_parts and other_parts and target_parts.intersection(other_parts)):
+                    continue
+                other_layer = int(getattr(item.db, "clothing_layer", 1) or 1)
+                # If trying to wear a lower-layer item over a higher-layer garment, block.
+                if layer < other_layer:
+                    caller.msg(
+                        "That belongs under %s. You can't wear it on top." % item.get_display_name(caller)
+                    )
+                    return
+                # Prevent multiple garments on the same layer for overlapping parts (mutual exclusivity).
+                if layer == other_layer:
+                    caller.msg(
+                        "You're already wearing %s on that part of your body." % item.get_display_name(caller)
+                    )
+                    return
+
+            # Prevent tailored boots/jackets that conflict directly with armor on same parts.
+            for item in worn_items:
+                if not isinstance(item, Armor):
+                    continue
+                armor_parts = set(getattr(item.db, "covered_parts", None) or [])
+                if not (target_parts and armor_parts and target_parts.intersection(armor_parts)):
+                    continue
+                armor_layer = int(getattr(item.db, "armor_layer", 0) or 0)
+                # Rough mapping: armor layer 3 ~ jackets; 5 ~ boots/outer extremities.
+                if (layer >= 3 and armor_layer >= 3) or (layer == 5 and armor_layer == 5):
+                    caller.msg(
+                        "You can't layer that over or under your %s. Pick one." % item.get_display_name(caller)
+                    )
+                    return
+
+        # Armor layering warning (armor vs armor); keep as non-blocking guidance.
         warn, higher = check_layer_warning(caller, target)
         if warn and higher:
             caller.msg("The item must be worn under %s." % higher.get_display_name(caller))
@@ -5897,17 +6012,41 @@ class CmdLoot(Command):
 
 class CmdTailor(Command):
     """
-    Customize a bolt of cloth (name, aliases, desc, tease, coverage) then finalize into clothing.
+    Tailor clothing from a bolt of material: set name, coverage, descriptions, tease, then finalize into a wearable garment.
 
     Usage:
-      @tailor [bolt]                    - show draft status
-      @tailor [bolt] name <name>
-      @tailor [bolt] aliases <a1> [a2 ...]
-      @tailor [bolt] desc <text>         - main desc (when item is looked at)
-      @tailor [bolt] worndesc <text>     - worn desc (replaces body parts on look; $N, $P, $S)
-      @tailor [bolt] tease <text>        - wearer $N $P $S; target $T $R $U; item $I (see help tease)
-      @tailor [bolt] coverage <part> [part ...]  - body parts (lfoot, rshoulder, torso, etc.)
-      @tailor [bolt] finalize            - turn bolt into wearable clothing
+      @tailor [bolt]                        - show draft status
+      @tailor [bolt] name <name>           - set clothing name (used in %t, sdesc)
+      @tailor [bolt] aliases <a1> [a2...]  - set aliases for targeting
+      @tailor [bolt] desc <text>           - item description (when you look at it)
+      @tailor [bolt] worndesc <text>       - worn description (used on body; supports $N, $P, $S)
+      @tailor [bolt] tease <text>          - tease message ($N/$P/$S, $T/$R/$U, $I; see help tease)
+      @tailor [bolt] coverage <part...>    - body parts covered (head, larm, torso, lthigh, etc.)
+      @tailor [bolt] seethru               - toggle see-through (body/clothes show through this layer)
+      @tailor [bolt] finalize              - roll tailoring and turn bolt into wearable clothing
+
+    Layering:
+      Tailored clothing is automatically assigned a clothing layer (0-5) based on its name:
+        Layer 0 (underwear):
+          bikini, panties, underwear, bra, thong, boxers, g-string, gstring, sock, stockings
+        Layer 1 (default):
+          everything not matching another layer word
+        Layer 2:
+          blindfold, glasses, vest
+        Layer 3:
+          jacket, waistcoat
+        Layer 4 (coats/robes):
+          tailcoat, coat, labcoat, topcoat, overcoat, longcoat, greatcoat, browncoat,
+          trenchcoat, watchcoat, trench, robe, habit, muumuu, hawaiian, bolero,
+          apron, scrubs, bathrobe, armband, obi, duster
+        Layer 5 (outer accessories/boots):
+          tie, boots, cane, umbrella, blindfold, habit, shawl, scarf, armband, necktie,
+          cummerbund, belt, veil, parka, balaclava, bandana, bandanna, sticker, badge
+
+      You cannot wear lower-layer items over higher-layer ones on the same body parts
+      (e.g. a bra over a trenchcoat), and you cannot stack multiple outer jackets/boots
+      on the same layer covering the same body part. Tailored jackets/boots also conflict
+      with armored jackets/boots on the same coverage.
     """
     key = "@tailor"
     aliases = []
@@ -5922,7 +6061,7 @@ class CmdTailor(Command):
         bolt_spec, subcmd, value = tailor_parse_args(self.args)
 
         if not bolt_spec and not subcmd:
-            caller.msg("Usage: @tailor [bolt] [name|aliases|desc|worndesc|tease|coverage|finalize] ...")
+            caller.msg("Usage: @tailor [bolt] [name|aliases|desc|worndesc|tease|coverage|seethru|finalize] ...")
             return
 
         if bolt_spec:
@@ -5955,6 +6094,8 @@ class CmdTailor(Command):
             caller.msg("  Worn: %s" % (st["worn_desc"] or "(none)"))
             caller.msg("  Tease: %s" % (st["tease"] or "(none)"))
             caller.msg("  Coverage: %s" % (st["covered_parts"] or "(none)"))
+            see = getattr(bolt.db, "draft_see_thru", False)
+            caller.msg("  See-thru: %s" % ("yes" if see else "no"))
             return
 
         if subcmd == "name":
@@ -5982,6 +6123,9 @@ class CmdTailor(Command):
             return
 
         if subcmd == "tease":
+            if any(q in (value or "") for q in ('"', "'")):
+                caller.msg("Tease messages cannot contain quotes. Avoid using \" or ' in the text.")
+                return
             bolt.db.draft_tease = value or ""
             caller.msg("Draft tease message set.")
             return
@@ -5998,19 +6142,44 @@ class CmdTailor(Command):
             caller.msg("Coverage set to: %s" % canonical)
             return
 
+        if subcmd in ("seethru", "see-thru"):
+            current = bool(getattr(bolt.db, "draft_see_thru", False))
+            bolt.db.draft_see_thru = not current
+            caller.msg("See-thru set to: %s" % ("yes" if bolt.db.draft_see_thru else "no"))
+            return
+
         if subcmd == "finalize":
             from world.tailoring import finalize_bolt_to_clothing
             clothing, msg = finalize_bolt_to_clothing(bolt, caller)
             caller.msg(msg)
             return
 
-        caller.msg("Unknown subcommand. Use: name, aliases, desc, worndesc, tease, coverage, finalize.")
+        caller.msg("Unknown subcommand. Use: name, aliases, desc, worndesc, tease, coverage, seethru, finalize.")
 
 
 class CmdTease(Command):
     """
-    Use a clothing item's tease message. Tokens: wearer $N $P $S, target $T $R $U, item $I/$i.
-    Use .verb so it conjugates. E.g. '$N .lift $p $I and .flash $p tits at $T'.
+    Use a clothing item's tease message.
+
+    Two styles are supported:
+
+      1) Token mode (legacy):
+         - Wearer/doer: $N/$n name, $P/$p possessive, $S/$s subject.
+         - Target (tease at): $T/$t name, $R/$r possessive, $U/$u subject.
+         - Item (garment): $I/$i = item's display name (e.g. 't-shirt').
+         Use .verb so it conjugates, e.g.:
+           '$N .lift $p $I and .flash $p chest at $T.'
+
+      2) Pose-style mode (simpler):
+         - Write a normal first-person emote and use just $T for the target
+           (and optionally $I/$i for the item), with no $N/$P/$S/$R/$U tokens.
+         - Example template on the clothing:
+             'I lift my shirt and show my chest to $T.'
+         - When you run |wtease shirt at Bob|n:
+             You see:   'I lift my shirt and show my chest to Bob.'
+             Bob sees:  'He lifts his shirt and shows his chest to you.'
+             Others:    'He lifts his shirt and shows his chest to Bob.'
+
     Same tokens work in describe_bodypart, lp/pose, and worndesc. See |whelp tokens|n.
 
     Usage:
@@ -6746,6 +6915,12 @@ def _run_emote(caller, text):
                 else:
                     body = (full_echo[0].lower() + full_echo[1:]) if full_echo and full_echo[0].isupper() else full_echo
                 msg = f"|cYou|n {body}" if body else "|cYou|n"
+            # Slur for drunk callers (level 2+).
+            try:
+                from world.survival import slur_text_if_drunk
+                msg = slur_text_if_drunk(caller, msg)
+            except Exception:
+                pass
             if debug_lines is not None:
                 debug_lines.append(("you", msg))
             caller.msg(msg)
@@ -6774,6 +6949,12 @@ def _run_emote(caller, text):
                 msg = full_body
             else:
                 msg = format_emote_message(emitter_name, full_body)
+            # Slur emote output for drunk callers (level 2+) for other viewers as well.
+            try:
+                from world.survival import slur_text_if_drunk
+                msg = slur_text_if_drunk(caller, msg)
+            except Exception:
+                pass
             if debug_lines is not None:
                 debug_lines.append((viewer.get_display_name(viewer), msg))
             viewer.msg(msg)

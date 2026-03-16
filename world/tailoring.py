@@ -8,6 +8,7 @@ Quality is stored on the clothing and shown when looking at a character:
 "Their outfit is fancy." (averaged over all worn items).
 """
 from world.skills import SKILL_STATS
+from world.clothing import infer_clothing_layer
 
 # Bolt material types: key = material_type on bolt, display name, min skill, roll difficulty, quality_bonus (added to roll for adjective)
 BOLT_MATERIALS = {
@@ -117,10 +118,23 @@ def finalize_bolt_to_clothing(bolt, caller):
     bolt.db.worn_desc = getattr(bolt.db, "draft_worn_desc", None) or ""
     bolt.db.tease_message = getattr(bolt.db, "draft_tease", None) or ""
     bolt.db.covered_parts = list(getattr(bolt.db, "draft_covered_parts", None) or [])
+    # Set clothing_layer based on name keywords (bra, jacket, coat, boots, etc.)
+    bolt.db.clothing_layer = infer_clothing_layer(name)
+    # See-through garments (jewelry, mesh, etc.) let underlying body/clothing show through.
+    bolt.db.see_thru = bool(getattr(bolt.db, "draft_see_thru", False))
     bolt.db.quality_adjective = adjective
     bolt.db.quality_score = quality_score
 
-    for k in ("draft_name", "draft_aliases", "draft_desc", "draft_worn_desc", "draft_tease", "draft_covered_parts", "material_type"):
+    for k in (
+        "draft_name",
+        "draft_aliases",
+        "draft_desc",
+        "draft_worn_desc",
+        "draft_tease",
+        "draft_covered_parts",
+        "draft_see_thru",
+        "material_type",
+    ):
         if bolt.attributes.has(k):
             bolt.attributes.remove(k)
 
@@ -163,7 +177,18 @@ def get_outfit_quality_line(character, looker=None):
 
 
 # Parse args for tailor command (migrated from command.py for one place to edit)
-TAILOR_SUBCMDS = ["name", "aliases", "worn", "worndesc", "desc", "tease", "coverage", "finalize"]
+TAILOR_SUBCMDS = [
+    "name",
+    "aliases",
+    "worn",
+    "worndesc",
+    "desc",
+    "tease",
+    "coverage",
+    "seethru",
+    "see-thru",
+    "finalize",
+]
 
 
 def tailor_parse_args(args):

@@ -199,23 +199,49 @@ def _wielded_carry_phrase(character):
 
 
 def _worn_phrase(character, looker=None):
-    """'wearing a silk shirt' or 'wearing a silk shirt and a leather jacket'."""
+    """
+    Return a single, most-striking worn item for sdesc, rather than a full list.
+
+    Priority:
+      - Any worn Armor piece (outermost armor_layer, highest quality_score).
+      - Otherwise, the highest-quality tailored Clothing (by quality_score).
+      - Fallback to the last worn item if no quality scores are set.
+    """
     from world.clothing import get_worn_items
+    from typeclasses.armor import Armor
+    from typeclasses.clothing import Clothing
+
     worn = get_worn_items(character)
     if not worn:
         return ""
-    names = []
-    for item in worn:
-        name = item.get_display_name(looker) if hasattr(item, "get_display_name") else getattr(item, "key", str(item))
-        if name:
-            names.append(name)
-    if not names:
+
+    armor_items = [w for w in worn if isinstance(w, Armor)]
+    clothing_items = [w for w in worn if isinstance(w, Clothing) and not isinstance(w, Armor)]
+
+    best = None
+    if armor_items:
+        # Pick armor with highest layer, then highest quality_score.
+        def _armor_key(it):
+            layer = int(getattr(getattr(it, "db", None), "armor_layer", 0) or 0)
+            qs = getattr(getattr(it, "db", None), "quality_score", None)
+            qs_val = int(qs) if qs is not None else 0
+            return (layer, qs_val)
+        best = sorted(armor_items, key=_armor_key)[-1]
+    elif clothing_items:
+        # Pick clothing with highest quality_score.
+        def _cloth_key(it):
+            qs = getattr(getattr(it, "db", None), "quality_score", None)
+            return int(qs) if qs is not None else 0
+        best = sorted(clothing_items, key=_cloth_key)[-1]
+    else:
+        best = worn[-1]
+
+    if not best:
         return ""
-    if len(names) == 1:
-        return "wearing a " + names[0]
-    if len(names) == 2:
-        return "wearing a " + names[0] + " and a " + names[1]
-    return "wearing " + ", a ".join(names[:-1]) + ", and a " + names[-1]
+    name = best.get_display_name(looker) if hasattr(best, "get_display_name") else getattr(best, "key", str(best))
+    if not name:
+        return ""
+    return "wearing a " + name
 
 
 def get_short_desc(character, looker=None):

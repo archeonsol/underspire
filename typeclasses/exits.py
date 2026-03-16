@@ -69,16 +69,39 @@ class Exit(ObjectParent, DefaultExit):
         leg_lost = bool(missing.intersection({"left thigh", "right thigh", "left foot", "right foot"}))
         if leg_lost:
             exhausted = True
+        # High intoxication: occasionally stagger into a random exit instead of intended one.
+        stagger_direction = None
+        try:
+            drunk_level = int(getattr(getattr(traversing_object, "db", None), "drunk_level", 0) or 0)
+        except Exception:
+            drunk_level = 0
+        if drunk_level >= 3:
+            import random
+            # 25% chance to misstep on each move.
+            if random.random() < 0.25:
+                exits_here = [o for o in (getattr(traversing_object.location, "contents", None) or []) if getattr(o, "destination", None)]
+                if exits_here:
+                    stagger_exit = random.choice(exits_here)
+                    if getattr(stagger_exit, "destination", None):
+                        destination = stagger_exit.destination
+                        stagger_direction = (stagger_exit.key or "away").strip()
+        # Drain hunger/thirst only when traversing scavenging tiles (wilderness/urban).
+        try:
+            from world.survival import apply_move_hunger_thirst
+            apply_move_hunger_thirst(traversing_object, traversing_object.location, destination)
+        except Exception:
+            pass
+
         if exhausted:
             spend_stamina(traversing_object, STAMINA_COST_CRAWL)
             delay_secs = CRAWL_DELAY
-            direction = (self.key or "away").strip()
+            direction = stagger_direction or (self.key or "away").strip()
             traversing_object.msg(f"You crawl slowly {direction}.")
             room_msg = f"{traversing_object.get_display_name(traversing_object)} crawls slowly {direction}."
         else:
             spend_stamina(traversing_object, STAMINA_COST_WALK)
             delay_secs = WALK_DELAY
-            direction = (self.key or "away").strip()
+            direction = stagger_direction or (self.key or "away").strip()
             traversing_object.msg(f"You begin walking {direction}.")
             room_msg = f"{traversing_object.get_display_name(traversing_object)} begins walking {direction}."
         loc = traversing_object.location

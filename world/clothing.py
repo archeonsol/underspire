@@ -39,6 +39,46 @@ _BODY_PART_GROUPS = (_HEAD_FACE, _UPPER_BODY, _LOWER_BODY)
 # For sdesc clothing state: upper body = shirt/torso coverage; if none covered → "topless"
 UPPER_BODY_PARTS = _UPPER_BODY
 
+# ---------------------------------------------------------------------------
+# Tailored clothing layering keywords
+# ---------------------------------------------------------------------------
+
+_LAYER_KEYWORDS = {
+    0: [
+        "bikini", "panties", "underwear", "bra", "thong", "boxers", "g-string", "gstring",
+        "sock", "stockings",
+    ],
+    # 1: default layer (everything else)
+    2: ["blindfold", "glasses", "vest"],
+    3: ["jacket", "waistcoat"],
+    4: [
+        "tailcoat", "coat", "labcoat", "topcoat", "overcoat", "longcoat", "greatcoat",
+        "browncoat", "trenchcoat", "watchcoat", "trench", "robe", "habit", "muumuu",
+        "hawaiian", "bolero", "apron", "scrubs", "bathrobe", "armband", "obi", "duster",
+    ],
+    5: [
+        "tie", "boots", "cane", "umbrella", "blindfold", "habit", "shawl", "scarf",
+        "armband", "necktie", "cummerbund", "belt", "veil", "parka", "balaclava",
+        "bandana", "bandanna", "sticker", "badge",
+    ],
+}
+
+
+def infer_clothing_layer(name: str) -> int:
+    """
+    Infer clothing layer (0-5) from the garment name using configured keywords.
+
+    Default is layer 1 if no keyword matches.
+    """
+    if not name:
+        return 1
+    lower = str(name).lower()
+    for layer, words in _LAYER_KEYWORDS.items():
+        for w in words:
+            if w in lower:
+                return layer
+    return 1
+
 
 def get_covered_parts_set(character):
     """
@@ -178,7 +218,8 @@ def get_effective_body_descriptions(character):
         result[part] = text
 
     worn = get_worn_items(character)
-    # Topmost item for each part should win, so iterate in reversed order
+    # Topmost item for each part should win, so iterate in reversed order.
+    # Items marked see_thru do not replace underlying body/clothing text.
     for item in reversed(worn):
         covered = getattr(item.db, "covered_parts", None) or []
         # Use worn_desc for body parts; fall back to main desc if worn_desc not set
@@ -187,7 +228,7 @@ def get_effective_body_descriptions(character):
             continue
         desc = substitute_clothing_desc(raw_desc, character)
         for part in covered:
-            if part in result:
+            if part in result and not getattr(item.db, "see_thru", False):
                 result[part] = desc
     return result
 

@@ -40,13 +40,49 @@ def substitute_clothing_desc(text, wearer):
 def substitute_tease_for_viewer(template, doer, target, viewer, item=None):
     """
     Replace tease tokens for a specific viewer (doer, target, or room).
-    Wearer/doer: $N/$n name, $P/$p possessive, $S/$s subject.
-    Target (tease at): $T/$t name, $R/$r possessive, $U/$u subject.
-    Item (garment): $I/$i = item's display name (e.g. 't-shirt'). Pass item= when teasing.
-    When no target, $T/$t/$R/$r/$U/$u are empty. When no item, $I/$i are empty.
+
+    Modes:
+      - Token mode (legacy):
+        Wearer/doer: $N/$n name, $P/$p possessive, $S/$s subject.
+        Target (tease at): $T/$t name, $R/$r possessive, $U/$u subject.
+        Item (garment): $I/$i = item's display name (e.g. 't-shirt'). Pass item= when teasing.
+        When no target, $T/$t/$R/$r/$U/$u are empty. When no item, $I/$i are empty.
+
+      - Pose-style mode:
+        If the template uses only first-person text plus $T (no $N/$P/$S/$R/$U/$I tokens),
+        we treat it as a first-person emote and auto-convert per viewer. Example:
+          "I lift my shirt and show my chest to $T."
+        Doer sees first person with $T resolved; others see third person via emote helpers.
     """
     if not template:
         return ""
+    # Detect pose-style mode: allow $T (and $I/$i for item) but no other legacy tokens.
+    legacy_tokens = ["$N", "$n", "$P", "$p", "$S", "$s", "$R", "$r", "$U", "$u", "$t"]
+    has_legacy = any(tok in template for tok in legacy_tokens)
+    pose_mode = ("$T" in template) and not has_legacy
+
+    if pose_mode:
+        # Resolve $T for this viewer first
+        if target:
+            if viewer == target:
+                t_str = "you"
+            else:
+                t_str = target.get_display_name(viewer)
+        else:
+            t_str = ""
+        base = template.replace("$T", t_str)
+        # Resolve item tokens for this viewer as well
+        if item:
+            item_display = item.get_display_name(viewer)
+            item_display_lower = (item_display or "").lower()
+            base = base.replace("$I", item_display or "")
+            base = base.replace("$i", item_display_lower)
+        # Doer sees their own first-person wording
+        if viewer == doer:
+            return base
+        # Others see third-person form of the doer's emote
+        from world.emote import first_to_third
+        return first_to_third(base, doer)
     if item:
         item_display = item.get_display_name(viewer)
         item_display_lower = (item_display or "").lower()
