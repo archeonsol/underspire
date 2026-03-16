@@ -1,13 +1,39 @@
 """
 Matrix Items
 
-Portable data objects within Matrix virtual space. These items can be picked up,
-carried, and manipulated by avatars diving in the Matrix.
+Portable objects related to the Matrix system, both physical and virtual.
 
-MatrixItem - Base class for all portable Matrix data objects (files, credentials, keys, etc.)
+NetworkedItem - Portable physical devices with Matrix interfaces (handsets, tablets, etc.)
+MatrixItem - Portable data objects in Matrix virtual space (files, credentials, keys, etc.)
 """
 
 from typeclasses.items import Item
+from .mixins import NetworkedMixin
+
+
+class NetworkedItem(NetworkedMixin, Item):
+    """
+    Portable physical device with a Matrix interface.
+
+    These items exist in meatspace and can be carried by characters.
+    Examples: handsets, tablets, portable consoles, data chips (physical).
+
+    Like NetworkedObject, each has an associated MatrixNode in cyberspace.
+    Unlike NetworkedObject, these are portable items rather than fixed objects.
+
+    Attributes:
+        connection_type (str): "wireless" or "hardwired"
+        device_type (str): Type of device (handset, tablet, console, etc.)
+        matrix_node (MatrixNode): The virtual room representing this device in the Matrix
+        security_level (int): Security clearance required to access (0-10)
+        has_storage (bool): Whether this device has file storage
+        has_controls (bool): Whether this device has controllable functions
+    """
+
+    def at_object_creation(self):
+        """Called when the device is first created."""
+        super().at_object_creation()
+        self.setup_networked_attrs()
 
 
 class MatrixItem(Item):

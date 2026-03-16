@@ -76,7 +76,7 @@ class Relay:
         Get all Matrix-connected devices accessible through this relay.
 
         Returns:
-            list: All MatrixConnected objects in coverage or hardwired to this relay
+            list: All NetworkedObject instances in coverage or hardwired to this relay
         """
         devices = []
 
@@ -104,7 +104,7 @@ class Relay:
             list: All hub objects connected through this relay
         """
         # TODO: Implement hub tracking
-        # Hubs will be special MatrixConnected objects
+        # Hubs will be special NetworkedObject instances
         return []
 
     def is_room_in_coverage(self, room):
