@@ -50,7 +50,7 @@ class MatrixItem(Item):
     Attributes:
         data_type (str): Type of data (file, credential, key, program, etc.)
         data_size (int): Size of data in arbitrary units (affects carry capacity?)
-        encrypted (bool): Whether this data is encrypted
+        encryption_key (str): Encryption key ID/hash, or None if unencrypted
         value (int): Black market value or importance level
     """
 
@@ -59,7 +59,7 @@ class MatrixItem(Item):
         super().at_object_creation()
         self.db.data_type = "file"
         self.db.data_size = 1
-        self.db.encrypted = False
+        self.db.encryption_key = None
         self.db.value = 0
 
     def at_get(self, getter, **kwargs):
