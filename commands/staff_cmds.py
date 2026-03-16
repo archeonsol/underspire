@@ -1,5 +1,5 @@
 """
-Staff commands: stats, xp, givexp, charsheet, setstat, setskill, create, typeclasses, spawn (item/armor/vehicle/medical/or/seat/bed/pod/camera/tv/creature), creatureset, despawn, npc, makenpc, npcset, goto, gotoroom, summon, setvoid, void, release, boot, find, announce, restore, debugkill, emotedebug, damagevehicle. CmdPending imported from roleplay_cmds.
+Staff commands: stats, xp, givexp, charsheet, setstat, setskill, create, typeclasses, spawn (item/armor/vehicle/medical/or/seat/bed/pod/camera/tv/creature), creatureset, despawn, npc, makenpc, npcset, goto, @gotoroom, summon, setvoid, void, release, boot, find, announce, restore, debugkill, emotedebug, damagevehicle. CmdPending imported from roleplay_cmds.
 """
 
 from commands.base_cmds import Command, ADMIN_LOCK
@@ -591,11 +591,11 @@ class CmdGotoRoom(Command):
     Teleport yourself directly to a room by dbref or exact room name. Builder+.
 
     Usage:
-      gotoroom #123
-      gotoroom The Harshlands Entry
+      @gotoroom #123
+      @gotoroom Room Name
     """
 
-    key = "gotoroom"
+    key = "@gotoroom"
     locks = "cmd:perm(Builder)"
     help_category = "Staff"
 
@@ -606,7 +606,7 @@ class CmdGotoRoom(Command):
         caller = self.caller
         args = (self.args or "").strip()
         if not args:
-            caller.msg("Usage: gotoroom <#dbref> or <exact room name>")
+            caller.msg("Usage: @gotoroom <#dbref> or <exact room name>")
             return
 
         targets = []

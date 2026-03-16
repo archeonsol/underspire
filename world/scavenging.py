@@ -1,11 +1,13 @@
 """
-Scavenging system: skill-based loot from tagged rooms (wildscavenge, urbanscavenge).
+Scavenging system: skill-based loot from tagged rooms (wildscavenge, urbanscavenge, or biome tags).
 
 Roll flow:
 - Uses the 'scavenging' skill (stats: intelligence + perception) with a luck bonus modifier.
 - Only works in rooms tagged with one or more scavenging tags:
-  - 'wildscavenge'  -> wild/outdoors-style loot
+  - 'wildscavenge'  -> wild/outdoors-style loot (fallback)
   - 'urbanscavenge' -> urban/industrial loot
+  - Biome-specific (wilderness_map): scavenge_grasslands, scavenge_harshlands, scavenge_hills,
+    scavenge_ruined_settlement, scavenge_volcanic -> each has its own loot table.
 
 Loot tiers (Escape-from-Tarkov style):
 - grey   (tier 0): common junk
@@ -19,12 +21,52 @@ but upper tiers require both luck and skill.
 """
 
 import random
+import time
 
 from evennia.utils.create import create_object
 
 
+# Max scavenges per 24h by scavenging skill level (0-150). Server date resets at midnight UTC.
+# (level_min_inclusive, max_per_day); first matching tier wins (order low to high).
+SCAVENGE_DAILY_LIMIT_TIERS = [
+    (0, 5),
+    (20, 10),
+    (40, 15),
+    (60, 20),
+    (80, 25),
+    (100, 30),
+    (120, 40),
+    (150, 50),
+]
+
+
+def get_scavenge_daily_limit(skill_level):
+    """Return max number of scavenges allowed per server day for this skill level (0-150)."""
+    if skill_level is None or skill_level < 0:
+        skill_level = 0
+    limit = 3
+    for level_min, max_per_day in SCAVENGE_DAILY_LIMIT_TIERS:
+        if skill_level >= level_min:
+            limit = max_per_day
+    return limit
+
+
+def get_server_date_key():
+    """Return (year, month, day) for current server time (UTC) so 24h limit resets same for everyone."""
+    t = time.gmtime()
+    return (t.tm_year, t.tm_mon, t.tm_mday)
+
+
 SCAVENGE_TAGS_WILD = {"wildscavenge"}
 SCAVENGE_TAGS_URBAN = {"urbanscavenge"}
+# Biome tags from wilderness_map (scavenge_<biome>) get their own loot tables
+BIOME_SCAVENGE_TAGS = {
+    "scavenge_grasslands",
+    "scavenge_harshlands",
+    "scavenge_hills",
+    "scavenge_ruined_settlement",
+    "scavenge_volcanic",
+}
 
 
 LOOT_BY_TIER_WILD = {
@@ -83,16 +125,183 @@ LOOT_BY_TIER_URBAN = {
 }
 
 
+# Wilderness biome loot tables (used when room has scavenge_<biome> tag)
+LOOT_BY_TIER_GRASSLANDS = {
+    "grey": [
+        "|xCracked Filter Mask|n",
+        "|xRust-Flaked Machete Blade|n",
+        "|xBundle of Moldy Rations|n",
+    ],
+    "green": [
+        "|gField-Dressed Medkit Shell|n",
+        "|gPurified Water Cartridge|n",
+        "|gReinforced Canvas Satchel|n",
+    ],
+    "blue": [
+        "|cStabilized Mutagen Sample|n",
+        "|cRefined Herb Distillate|n",
+        "|cHardened Survival Harness|n",
+    ],
+    "purple": [
+        "|mAncient Root Idol|n",
+        "|mLiving Spore Phial|n",
+        "|mWitcher's Bone Charm|n",
+    ],
+    "yellow": [
+        "|yRelic of the First Expedition|n",
+        "|yHeart of the Pale Tree|n",
+    ],
+}
+
+LOOT_BY_TIER_HARSHLANDS = {
+    "grey": [
+        "|xCharred Rebar Stub|n",
+        "|xAsh-Caked Boot|n",
+        "|xMelted Plastic Shard|n",
+    ],
+    "green": [
+        "|gScorched Filter Housing|n",
+        "|gSlag-Encased Wire Coil|n",
+        "|gHeat-Warped Canteen|n",
+    ],
+    "blue": [
+        "|cCondensed Ash Sample|n",
+        "|cTempered Ceramic Plate|n",
+        "|cSalvaged Burn Unit|n",
+    ],
+    "purple": [
+        "|mFused Authority Badge|n",
+        "|mStill-Warm Reactor Shard|n",
+        "|mBlackened Data Crystal|n",
+    ],
+    "yellow": [
+        "|yEmber of the Fall|n",
+        "|yCore Fragment from the Breach|n",
+    ],
+}
+
+LOOT_BY_TIER_HILLS = {
+    "grey": [
+        "|xCracked Stone Chunk|n",
+        "|xRusted Girder Scrap|n",
+        "|xBent Reinforcement Rod|n",
+    ],
+    "green": [
+        "|gSturdy Cable Spool|n",
+        "|gConcrete-Dusted Rations|n",
+        "|gHeavy-Duty Clamp|n",
+    ],
+    "blue": [
+        "|cPre-Collapse Bearing|n",
+        "|cStable Alloy Strip|n",
+        "|cRidge Survey Map|n",
+    ],
+    "purple": [
+        "|mOld Watchtower Lens|n",
+        "|mMiner's Luck Charm|n",
+        "|mEncrypted Relay Chip|n",
+    ],
+    "yellow": [
+        "|ySurveyor's Final Report|n",
+        "|yVoid-Touched Ore Sample|n",
+    ],
+}
+
+LOOT_BY_TIER_RUINED_SETTLEMENT = {
+    "grey": [
+        "|xBent Door Handle|n",
+        "|xShattered Window Pane|n",
+        "|xFrayed Curtain Scrap|n",
+    ],
+    "green": [
+        "|gIntact Medicine Cabinet|n",
+        "|gStash of Canned Goods|n",
+        "|gSalvaged Lock Mechanism|n",
+    ],
+    "blue": [
+        "|cHousehold Power Cell|n",
+        "|cFamily Data Slate|n",
+        "|cReinforced Strongbox|n",
+    ],
+    "purple": [
+        "|mSettlement Ledger|n",
+        "|mEmergency Beacon|n",
+        "|mPreserved Ration Stock|n",
+    ],
+    "yellow": [
+        "|yMayor's Seal|n",
+        "|yLast Evacuation Order|n",
+    ],
+}
+
+LOOT_BY_TIER_VOLCANIC = {
+    "grey": [
+        "|xGlassy Slag Chunk|n",
+        "|xSulfur-Crusted Rock|n",
+        "|xBurned-Out Wiring|n",
+    ],
+    "green": [
+        "|gHeat-Resistant Glove|n",
+        "|gCondensation Trap|n",
+        "|gStable Sulfur Cake|n",
+    ],
+    "blue": [
+        "|cCrystallized Vent Sample|n",
+        "|cRare Earth Concentrate|n",
+        "|cHardened Obsidian Shard|n",
+    ],
+    "purple": [
+        "|mMagma-Forged Alloy|n",
+        "|mDeep Vent Crystal|n",
+        "|mThermal Regulator|n",
+    ],
+    "yellow": [
+        "|yHeart of the Caldera|n",
+        "|yPrimordial Crystal|n",
+    ],
+}
+
+BIOME_LOOT_TABLES = {
+    "grasslands": LOOT_BY_TIER_GRASSLANDS,
+    "harshlands": LOOT_BY_TIER_HARSHLANDS,
+    "hills": LOOT_BY_TIER_HILLS,
+    "ruined_settlement": LOOT_BY_TIER_RUINED_SETTLEMENT,
+    "volcanic": LOOT_BY_TIER_VOLCANIC,
+}
+
 RARITY_ORDER = ["grey", "green", "blue", "purple", "yellow"]
+
+# Chance (0.0-1.0) that a successful scavenge roll produces a T1 weapon or T1 armor instead of generic loot.
+# When this triggers, we try weapon 50% / armor 50%. Only tier-1 (scavenger) weapons/armor from
+# world.weapon_tiers and world.armor_levels.
+SCAVENGE_WEAPON_ARMOR_CHANCE = 0.08
+
+# weapon_key -> typeclass path for spawning T1 weapons (from world.weapon_tiers tier 1).
+WEAPON_KEY_TYPECLASS = {
+    "knife": "typeclasses.weapons.ShortBladeWeapon",
+    "blunt": "typeclasses.weapons.BluntWeapon",
+    "long_blade": "typeclasses.weapons.LongBladeWeapon",
+    "sidearm": "typeclasses.weapons.SidearmWeapon",
+    "longarm": "typeclasses.weapons.LongarmWeapon",
+    "automatic": "typeclasses.weapons.AutomaticWeapon",
+}
 
 
 def _pick_loot_table(room):
     """
     Choose which loot table to use based on room tags.
 
-    Prefers wildscavenge over urbanscavenge if both are present.
+    Biome-specific tags (scavenge_grasslands, scavenge_harshlands, etc.) take precedence
+    so wilderness tiles get the right table. Then wildscavenge, then urbanscavenge.
     """
-    tags = set(room.tags.all()) if hasattr(room, "tags") else set()
+    tags = set(str(t).lower() for t in (room.tags.all() if hasattr(room, "tags") else []))
+    # Biome tags from wilderness_map: one table per biome
+    for tag in tags:
+        if tag in BIOME_SCAVENGE_TAGS:
+            biome = tag.replace("scavenge_", "")
+            table = BIOME_LOOT_TABLES.get(biome)
+            if table:
+                return table, biome
     if SCAVENGE_TAGS_WILD & tags:
         return LOOT_BY_TIER_WILD, "wild"
     if SCAVENGE_TAGS_URBAN & tags:
@@ -118,8 +327,8 @@ def _determine_rarity(env, final_roll):
     effective = final_roll
     if env == "urban":
         effective += 5  # urban clutter = more odds of finding something
-    elif env == "wild":
-        effective -= 5  # wilderness is harsher for salvage
+    else:
+        effective -= 5  # wild and all wilderness biomes are harsher for salvage
 
     # Make sure we don't go negative
     if effective < 0:
@@ -157,31 +366,39 @@ def _determine_rarity(env, final_roll):
     return "blue"
 
 
-def _pick_weapon_template(env, rarity):
+def _pick_t1_weapon():
     """
-    Placeholder for scavenged weapon templates.
-
-    Once weapon tiers are defined, this should return a tuple
-    (typeclass_path, key) for a low-grade weapon appropriate to the
-    environment and rarity band (usually grey/green/blue only).
-
-    For now it always returns (None, None) so scavenging only produces
-    generic loot Items. This is a framework hook to plug real weapon
-    templates into later.
+    Return (typeclass_path, template_name) for a random T1 weapon from world.weapon_tiers, or (None, None).
+    Only tier-1 (scavenger) weapons; no fists.
     """
-    # Example future structure (not yet populated):
-    # WEAPON_TEMPLATES = {
-    #     "urban": {
-    #         "grey": [("typeclasses.weapons.Sidearm", "Rusty Sidearm"), ...],
-    #         "green": [...],
-    #         "blue": [...],
-    #     },
-    #     "wild": {
-    #         "grey": [("typeclasses.weapons.Machete", "Chipped Machete"), ...],
-    #     },
-    # }
-    # For now, no weapon templates are available.
-    return None, None
+    try:
+        from world.weapon_tiers import WEAPON_TIERS, get_weapon_tier
+    except ImportError:
+        return None, None
+    candidates = []
+    for weapon_key, typeclass_path in WEAPON_KEY_TYPECLASS.items():
+        entry = get_weapon_tier(weapon_key, 1)
+        if entry and entry.get("name"):
+            candidates.append((typeclass_path, entry["name"]))
+    if not candidates:
+        return None, None
+    return random.choice(candidates)
+
+
+def _pick_t1_armor_template_key():
+    """
+    Return a random T1 (level 1 / scavenger) armor template key from world.armor_levels, or None.
+    """
+    try:
+        from world.armor_levels import get_templates_by_level
+        # ARMOR_LEVEL_SCAVENGER = 1 typically
+        templates = get_templates_by_level(1)
+        if not templates:
+            return None
+        t = random.choice(templates)
+        return t.get("key")
+    except ImportError:
+        return None
 
 
 def _pick_loot_item(room, final_roll):
@@ -223,21 +440,30 @@ def perform_scavenge(caller, room, final_roll):
     if not name:
         return None
 
-    # Decide if this roll should produce a (future) weapon template or a generic loot item.
-    # Weapons will generally be low-grade when we start tiering them; for now this hook
-    # always falls back to generic loot until weapon templates are defined.
-    table, env = _pick_loot_table(room)
-    weapon_typeclass, weapon_key = _pick_weapon_template(env, rarity)
-
-    try:
-        if weapon_typeclass:
-            # Future path: low-grade weapon from a scavenging tier.
-            obj = create_object(weapon_typeclass, key=weapon_key or name, location=caller)
+    obj = None
+    # Rarely: try for a T1 weapon or T1 armor (green/blue only; grey stays generic loot).
+    if rarity in ("green", "blue") and random.random() < SCAVENGE_WEAPON_ARMOR_CHANCE:
+        if random.random() < 0.5:
+            typeclass_path, template_name = _pick_t1_weapon()
+            if typeclass_path and template_name:
+                try:
+                    obj = create_object(typeclass_path, key=template_name, location=caller)
+                except Exception:
+                    obj = None
         else:
-            # Current path: generic scavenged item.
+            armor_key = _pick_t1_armor_template_key()
+            if armor_key:
+                try:
+                    from world.armor_levels import create_armor_from_template
+                    obj = create_armor_from_template(armor_key, location=caller)
+                except Exception:
+                    obj = None
+
+    if obj is None:
+        try:
             obj = create_object("typeclasses.items.Item", key=name, location=caller)
-    except Exception:
-        return None
+        except Exception:
+            return None
 
     try:
         obj.db.rarity = rarity
