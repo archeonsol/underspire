@@ -148,6 +148,34 @@ def is_permanently_dead(obj):
     return getattr(obj.db, "death_state", None) == DEATH_STATE_PERMANENT
 
 
+def character_can_act(character, allow_builders=True):
+    """
+    Central check for whether a character can act (not flatlined, not permanently dead).
+    Returns (can_act: bool, block_message: str or None). If can_act is False, block_message
+    is the message to show the caller. Used by Command.at_pre_cmd and CmdLook.
+    If allow_builders is True and character's account has Builder/Admin, returns (True, None).
+    """
+    if not character:
+        return True, None
+    try:
+        if allow_builders and getattr(character, "account", None):
+            if character.account.permissions.check("Builder") or character.account.permissions.check("Admin"):
+                return True, None
+    except Exception:
+        pass
+    try:
+        if is_flatlined(character):
+            return False, "|rYou are dying. There is nothing you can do.|n"
+        if is_permanently_dead(character):
+            return False, "|rYou are dead. Only an administrator can help you now.|n"
+    except Exception:
+        pass
+    hp = getattr(character, "hp", None)
+    if hp is not None and hp <= 0:
+        return False, "|rYou are dying. There is nothing you can do.|n"
+    return True, None
+
+
 def can_be_defibbed(obj):
     """True if target has hp <= 0 and is not permanently dead (so they can be revived)."""
     if not obj or not hasattr(obj, "db"):

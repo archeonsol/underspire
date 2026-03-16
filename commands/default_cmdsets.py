@@ -5,8 +5,9 @@ All commands in the game must be grouped in a cmdset.  A given command
 can be part of any number of cmdsets and cmdsets can be added/removed
 and merged onto entities at runtime.
 
-To create new commands to populate the cmdset, see
-`commands/command.py`.
+To add or change commands, edit the appropriate module under commands/
+(e.g. commands/base_cmds.py, commands/combat_cmds.py) and ensure the
+command is imported and added here or in command.py for re-export.
 
 This module wraps the default command sets of Evennia; overloads them
 to add/remove commands from the default lineup. You can create your
@@ -33,7 +34,7 @@ class SplinterPodCmdSet(CmdSet):
     priority = 110
 
     def at_cmdset_creation(self):
-        from commands.command import CmdLeavePod
+        from commands.death_cmds import CmdLeavePod
         self.add(CmdLeavePod())
 
 
@@ -47,7 +48,7 @@ class CombatGrappleCmdSet(CmdSet):
     priority = 120
 
     def at_cmdset_creation(self):
-        from commands.command import CmdGrapple, CmdLetGo, CmdResist
+        from commands.combat_cmds import CmdGrapple, CmdLetGo, CmdResist
         self.add(CmdGrapple())
         self.add(CmdLetGo())
         self.add(CmdResist())
@@ -62,7 +63,7 @@ class UnconsciousCmdSet(CmdSet):
     priority = 200
 
     def at_cmdset_creation(self):
-        from commands.command import CmdLookUnconscious, CmdNoMatchUnconscious
+        from commands.death_cmds import CmdLookUnconscious, CmdNoMatchUnconscious
         self.add(CmdLookUnconscious())
         self.add(CmdNoMatchUnconscious())
 
@@ -77,7 +78,7 @@ class FlatlinedCmdSet(CmdSet):
     priority = 200
 
     def at_cmdset_creation(self):
-        from commands.command import CmdLookFlatlined, CmdNoMatchFlatlined
+        from commands.death_cmds import CmdLookFlatlined, CmdNoMatchFlatlined
         self.add(CmdLookFlatlined())
         self.add(CmdNoMatchFlatlined())
 
@@ -96,20 +97,25 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         """
         super().at_cmdset_creation()
 
-        from commands.command import (
-            CmdLook, CmdScavenge, CmdSkin, CmdButcher, CmdSever,
-            CmdStats, CmdAttack, CmdStance, CmdStop, CmdFlee, CmdExecute, CmdGrapple, CmdLetGo, CmdResist, CmdHt, CmdUse, CmdApply, CmdStabilize, CmdEat, CmdDrink, CmdWield, CmdUnwield, CmdFreehands, CmdInventory, CmdReload, CmdUnload, CmdCheckAmmo,
-            CmdWear, CmdRemove, CmdStrip, CmdSurvey, CmdRepairArmor, CmdLoot, CmdFrisk, CmdGet, CmdPut, CmdCamera, CmdTuneTelevision, CmdTailor, CmdTease, CmdXp,
-            CmdDescribeBodypart, CmdDescribeMeAs, CmdBody, CmdVoice, CmdSdesc, CmdPending, CmdLookPlace, CmdSleepPlace, CmdWakeMsg, CmdFlatlineMsg, CmdSetPlace, CmdPose, CmdPronoun, CmdEmote, CmdNoMatch,
-            CmdEmoteDebug, CmdNpc, CmdGiveXp, CmdCreateItem, CmdTypeclasses, CmdSpawnItem, CmdSpawnArmor, CmdSpawnVehicle, CmdSpawnMedical, CmdSpawnOR, CmdDefib, CmdSpawnCreature, CmdCreatureSet,
-            CmdSit, CmdLieOnTable, CmdGetOffTable, CmdSurgery,
-            CmdStaffSheet, CmdStaffSetStat, CmdStaffSetSkill, CmdMakeNpc, CmdNpcSet, CmdGoto, CmdGotoRoom, CmdSummon,
-            CmdSetVoid, CmdVoid, CmdRelease, CmdGoOOC, CmdReturnIC, CmdBoot, CmdFind, CmdAnnounce, CmdRestore, CmdDebugKill,
+        from commands.base_cmds import CmdLook, CmdExamine, CmdGet, CmdPut
+        from commands.combat_cmds import CmdAttack, CmdStop, CmdFlee, CmdStance, CmdExecute, CmdGrapple, CmdLetGo, CmdResist
+        from commands.scavenge_cmds import CmdScavenge, CmdSkin, CmdButcher, CmdSever, CmdLoot
+        from commands.medical_cmds import CmdHt, CmdUse, CmdApply, CmdStabilize, CmdSurgery, CmdDefib
+        from commands.survival_cmds import CmdEat, CmdDrink
+        from commands.inventory_cmds import CmdWield, CmdUnwield, CmdFreehands, CmdInventory, CmdReload, CmdUnload, CmdCheckAmmo, CmdWear, CmdRemove, CmdStrip, CmdFrisk
+        from commands.crafting_cmds import CmdSurvey, CmdRepairArmor, CmdTailor
+        from commands.media_cmds import CmdCamera, CmdTuneTelevision, CmdLabel
+        from commands.roleplay_cmds import CmdTease, CmdDescribeBodypart, CmdDescribeMeAs, CmdBody, CmdVoice, CmdSdesc, CmdPending, CmdLookPlace, CmdSleepPlace, CmdWakeMsg, CmdFlatlineMsg, CmdSetPlace, CmdPose, CmdPronoun, CmdEmote, CmdNoMatch
+        from commands.roleplay_cmds import CmdSit, CmdLieOnTable, CmdGetOffTable
+        from commands.death_cmds import CmdGoOOC, CmdReturnIC, CmdEnterPod, CmdLeavePod, CmdSplinterMe
+        from commands.vehicle_cmds import CmdEnterVehicle, CmdExitVehicle, CmdStartEngine, CmdStopEngine, CmdShutoffEngine, CmdDrive, CmdVehicleStatus, CmdRepairPart
+        from commands.staff_cmds import (
+            CmdStats, CmdXp, CmdGiveXp, CmdStaffSheet, CmdStaffSetStat, CmdStaffSetSkill,
+            CmdCreateItem, CmdTypeclasses, CmdSpawnItem, CmdSpawnArmor, CmdSpawnVehicle, CmdSpawnMedical, CmdSpawnOR,
+            CmdSpawnCreature, CmdCreatureSet, CmdDespawn, CmdNpc, CmdMakeNpc, CmdNpcSet,
+            CmdGoto, CmdGotoRoom, CmdSummon, CmdSetVoid, CmdVoid, CmdRelease, CmdBoot, CmdFind, CmdAnnounce, CmdRestore, CmdDebugKill,
             CmdSpawnSeat, CmdSpawnBed, CmdSpawnPod, CmdSpawnCamera, CmdSpawnTelevision,
-            CmdEnterPod, CmdSplinterMe,
-            CmdEnterVehicle, CmdExitVehicle, CmdStartEngine, CmdStopEngine, CmdShutoffEngine, CmdDrive, CmdStartEngine, CmdStopEngine, CmdShutoffEngine, CmdDrive,
-            CmdVehicleStatus, CmdRepairPart,             CmdDamageVehicle,
-            CmdExamine,
+            CmdEmoteDebug, CmdDamageVehicle,
         )
         from commands.builder_commands import (
             CmdTag, CmdHere, CmdListCmds, CmdCloneSpawn, CmdDig, CmdDesc,
@@ -232,7 +238,9 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdMakeNpc())
         self.add(CmdNpcSet())
         self.add(CmdGoto())
+        self.add(CmdGotoRoom())
         self.add(CmdSummon())
+        self.add(CmdDespawn())
         self.add(CmdSetVoid())
         self.add(CmdVoid())
         self.add(CmdRelease())
@@ -256,7 +264,8 @@ class StaffOnlyPuppet(CmdIC):
     locks = "cmd:perm(Builder)"
 
     def func(self):
-        from commands.command import _get_object_by_id, _clear_multi_puppet_links_for_account, _set_multi_puppet_link
+        from commands.media_cmds import _get_object_by_id
+        from commands.multipuppet_cmds import _clear_multi_puppet_links_for_account, _set_multi_puppet_link
         old_ids = list(getattr(self.account.db, "multi_puppets", None) or [])
         super().func()
         for oid in old_ids:
@@ -285,11 +294,8 @@ class StaffOnlyUnpuppet(CmdOOC):
           - No args: unpuppet completely (current behaviour).
           - Args like 'p2 p3 p4': drop those multi-puppet slots only, keeping p1 puppeted.
         """
-        from commands.command import (
-            _clear_multi_puppet_links_for_account,
-            _multi_puppet_list,
-            _get_object_by_id,
-        )
+        from commands.media_cmds import _get_object_by_id
+        from commands.multipuppet_cmds import _clear_multi_puppet_links_for_account, _multi_puppet_list
 
         args = (self.args or "").strip()
 
@@ -351,7 +357,7 @@ class StaffOnlyUnpuppet(CmdOOC):
         for slot, oid in enumerate(ids, start=1):
             obj = _get_object_by_id(oid)
             if obj:
-                from commands.command import _set_multi_puppet_link
+                from commands.multipuppet_cmds import _set_multi_puppet_link
                 _set_multi_puppet_link(obj, self.account.id, slot)
         if removed_names:
             self.caller.msg("Unpuppeted: %s" % ", ".join(removed_names))
@@ -394,12 +400,12 @@ class AccountCmdSet(default_cmds.AccountCmdSet):
         self.add(StaffCharCreate())
         self.remove(CmdCharDelete)
         self.add(StaffCharDelete())
-        from commands.command import (
-            CmdStats, CmdGoLight, CmdGoShard,
-            CmdAddPuppet, CmdPuppetList, CmdPuppetSlot,
-            CmdChannelSub, CmdChannelUnsub, CmdTuneTelevision, CmdTelevisionApp, CmdLabel,
-            CmdXooc, CmdXgame, CmdXstaff, CmdHelpReply, CmdHelp, CmdOocName,
-        )
+        from commands.staff_cmds import CmdStats
+        from commands.death_cmds import CmdGoLight, CmdGoShard
+        from commands.multipuppet_cmds import CmdAddPuppet, CmdPuppetList, CmdPuppetSlot
+        from commands.channel_cmds import CmdChannelSub, CmdChannelUnsub, CmdHelpReply, CmdHelp, CmdOocName
+        from commands.media_cmds import CmdTuneTelevision, CmdTelevisionApp, CmdLabel
+        from commands.channel_cmds import CmdXooc, CmdXgame, CmdXstaff
         self.add(CmdStats())
         self.add(CmdGoLight())
         self.add(CmdGoShard())
