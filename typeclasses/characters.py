@@ -222,13 +222,18 @@ class Character(DefaultCharacter):
         return cur, stack
 
     def announce_move_from(self, destination, msg=None, mapping=None, move_type="move", **kwargs):
-        """Announce departure as 'X leaves (direction).' for normal movement."""
+        """Announce departure as 'X leaves (direction).' for normal movement, or 'X enters the splinter pod.' for pod."""
         if not self.location:
             return
         if move_type not in ("move", "traverse") or not destination:
             super().announce_move_from(destination, msg=msg, mapping=mapping, move_type=move_type, **kwargs)
             return
         location = self.location
+        # Splinter pod interior: no exit object, so we announce a custom message instead of default "heading for..."
+        if getattr(destination, "db", None) and getattr(destination.db, "pod", None):
+            name = getattr(self, "name", self.key)
+            location.msg_contents("%s enters the splinter pod." % name, exclude=(self,), from_obj=self)
+            return
         exits = [
             o for o in (getattr(location, "contents", None) or [])
             if getattr(o, "destination", None) is destination

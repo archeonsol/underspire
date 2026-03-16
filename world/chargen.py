@@ -253,8 +253,8 @@ def node_priority_intro(caller, raw_string, **kwargs):
         "The Rite is not reading words. It is reading |rinstinct|n. The things that kept you alive when the Below tried to break you.\n\n"
         "You will give, in order, the traits that defined you — from most defining to least. The |Rorder|n matters.\n\n"
         "Stats (long → short): strength (str), perception (per), endurance (end), charisma (cha), intelligence (int), agility (agi), luck (lck).\n\n"
-        "|R\"Speak them in order. Greatest to least.\"|n\n"
-        "|xExample:|n str end agi per cha int luck"
+        "|R\"Speak them in order. Greatest to least. All seven.\"|n\n"
+        "|xExample:|n str end agi per cha int lck"
     )
     options = [{"key": "_default", "goto": "node_apply_priority_order"}]
     return text, options
@@ -262,14 +262,13 @@ def node_priority_intro(caller, raw_string, **kwargs):
 
 def node_apply_priority_order(caller, raw_string, **kwargs):
     """
-    Free-input stat priority: user enters e.g. 'str end agi per cha int luck'.
-    We map abbrevs/long names to STAT_KEYS, preserve order, and append any missing
-    stats at the end.
+    Free-input stat priority: user must enter all seven stats in order, e.g. 'str end agi per cha int lck'.
+    We map abbrevs/long names to STAT_KEYS and preserve order. All seven must be given; no partial input.
     """
     raw = (raw_string or "").lower().replace(",", " ")
     tokens = [tok for tok in raw.split() if tok]
     if not tokens:
-        caller.msg("|rEnter stats from most important to least, e.g.: str end agi per cha int luck.|n")
+        caller.msg("|rEnter all seven stats from most important to least, e.g.: str end agi per cha int lck.|n")
         return node_priority_intro(caller, "", **kwargs)
     order = []
     for tok in tokens:
@@ -279,10 +278,11 @@ def node_apply_priority_order(caller, raw_string, **kwargs):
     if not order:
         caller.msg("|rNo valid stats found. Use stat names or abbrevs: str, per, end, cha, int, agi, lck.|n")
         return node_priority_intro(caller, "", **kwargs)
-    # Append any missing stats in default order so all 7 get a slot.
-    for stat in STAT_KEYS:
-        if stat not in order:
-            order.append(stat)
+    if len(order) != len(STAT_KEYS) or set(order) != set(STAT_KEYS):
+        missing = [s for s in STAT_KEYS if s not in order]
+        abbrevs = [k for k, v in STAT_ABBREVS.items() if v in missing]
+        caller.msg("|rYou must list all seven stats in order, greatest to least. Missing: %s. Example: str end agi per cha int lck|n" % ", ".join(abbrevs))
+        return node_priority_intro(caller, "", **kwargs)
     caller.db.stat_caps = _compute_stat_caps(order)
     caller.db.stats = _randomize_stats_from_priority(order)
     text = "|r'SIGIL SEQUENCE COMPLETE.'|n\n\nProceeding to readout — then the |Rladder of marks|n."

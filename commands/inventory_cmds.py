@@ -35,7 +35,8 @@ def _update_primary_wielded(caller):
     try:
         from typeclasses.weapons import get_weapon_key
         caller.db.wielded = get_weapon_key(primary) or getattr(primary.db, "weapon_key", None)
-    except Exception:
+    except Exception as e:
+        logger.log_trace("inventory_cmds._update_primary_wielded: %s" % e)
         caller.db.wielded = getattr(primary.db, "weapon_key", None)
 
 
@@ -626,8 +627,8 @@ class CmdStrip(Command):
                         if not character_logged_off_long_enough(target):
                             caller.msg("They haven't been asleep long enough.")
                             return
-                except ImportError:
-                    pass
+                except ImportError as e:
+                    logger.log_trace("inventory_cmds.CmdStrip is_character_logged_off: %s" % e)
         else:
             item_spec = args
             target = caller

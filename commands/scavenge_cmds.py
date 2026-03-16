@@ -289,7 +289,8 @@ class CmdButcher(Command):
         try:
             from typeclasses.corpse import Corpse
             is_corpse = isinstance(target, Corpse)
-        except Exception:
+        except Exception as e:
+            logger.log_trace("scavenge_cmds.CmdButcher Corpse check: %s" % e)
             is_corpse = False
         if not is_corpse:
             caller.msg("You can only butcher a corpse.")
@@ -344,8 +345,8 @@ class CmdButcher(Command):
                 # Character moved or corpse gone; stop the sequence.
                 try:
                     caller.ndb.is_butchering = False
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.log_trace("scavenge_cmds.CmdButcher _process_next clear is_butchering (early): %s" % e)
                 return
 
             if index >= len(organs):
@@ -353,8 +354,8 @@ class CmdButcher(Command):
                 target.db.butchered = True
                 try:
                     caller.ndb.is_butchering = False
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.log_trace("scavenge_cmds.CmdButcher _process_next clear is_butchering: %s" % e)
                 if not made_any["value"]:
                     caller.msg("|rYour cuts are clumsy; by the time you are done, the insides are just shredded meat.|n")
                     room.msg_contents(
@@ -388,20 +389,22 @@ class CmdButcher(Command):
                     organ.tags.add("butchered_organ")
                     made_any["value"] = True
                     caller.msg(f"|gYou ease out {name_for_msg}, cradling it in both hands before setting it aside.|n")
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.log_trace("scavenge_cmds.CmdButcher create_object organ %s: %s" % (organ_key, e))
 
             # Schedule next organ 4–5 seconds later, from easiest to hardest.
             processed["count"] += 1
             try:
                 delay(random.randint(4, 5), _process_next, index + 1)
-            except Exception:
+            except Exception as e:
+                logger.log_trace("scavenge_cmds.CmdButcher delay _process_next: %s" % e)
                 _process_next(index + 1)
 
         # Initial delay for opening the body: 10–15 seconds, then start organs one by one.
         try:
             delay(random.randint(10, 15), _process_next, 0)
-        except Exception:
+        except Exception as e:
+            logger.log_trace("scavenge_cmds.CmdButcher initial delay: %s" % e)
             _process_next(0)
 
 
@@ -483,7 +486,8 @@ class CmdSever(Command):
         try:
             from typeclasses.corpse import Corpse
             is_corpse = isinstance(target, Corpse)
-        except Exception:
+        except Exception as e:
+            logger.log_trace("scavenge_cmds.CmdSever Corpse check: %s" % e)
             is_corpse = False
 
         if is_corpse:
