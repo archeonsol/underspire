@@ -118,10 +118,14 @@ class Camera(ObjectParent, DefaultObject):
             offset = time.time() - start
             buf.append({"t": round(offset, 2), "text": text})
 
-    def stop_recording_and_make_cassette(self, location=None):
+    def stop_recording_and_make_cassette(self, holder=None):
         """
         Stop recording and create a Cassette with the current buffer.
-        Cassette is created in location (default: camera's location).
+
+        Cassette is created in `holder` if given (for example, the character
+        operating the camera, so it appears in their inventory). If no holder
+        is given, it is created in the camera's own location.
+
         Returns the new Cassette or None.
         """
         self.db.mode = "off"
@@ -130,7 +134,9 @@ class Camera(ObjectParent, DefaultObject):
         self.db.record_start_time = None
         if not buf:
             return None
-        loc = location or self.location
+        # holder is preferred (so e.g. camera stop puts cassette into their inventory);
+        # otherwise fall back to the camera's room/location.
+        loc = holder or self.location
         if not loc:
             return None
         try:
@@ -144,6 +150,37 @@ class Camera(ObjectParent, DefaultObject):
             return cassette
         except Exception:
             return None
+
+    def take_photograph(self, caller):
+        """
+        Capture a still of the caller's current room and hand them a Photograph object.
+        The snapshot preserves the room's full colored look output.
+        """
+        if not caller or not getattr(caller, "location", None):
+            return None
+        room = caller.location
+        # Use the room's appearance as seen by the caller so colors and formatting match 'look'.
+        try:
+            text = room.return_appearance(caller)
+        except Exception:
+            text = str(room)
+        room_name = getattr(room, "key", "somewhere")
+        try:
+            photo = create_object(
+                "typeclasses.broadcast.Photograph",
+                key=f"photograph of {room_name}",
+                location=caller,
+            )
+        except Exception:
+            return None
+        photo.db.snapshot_text = text
+        photo.db.room_name = room_name
+        if not getattr(photo.db, "desc", None):
+            photo.db.desc = (
+                f"A glossy photograph of {room_name}. "
+                "You can |wlook|n at it to see a frozen moment from that place."
+            )
+        return photo
 
 
 # --- Television ---
@@ -166,23 +203,29 @@ class Television(ObjectParent, DefaultObject):
         # Bold white header, lighter gray for the content so it stands out from regular text
         loc.msg_contents("|wOn the television you see:|n |250%s|n" % text, exclude=(self,))
 
-    def get_cassette(self):
-        """Return a Cassette in this TV's contents, if any."""
+    def get_cassettes(self):
+        """Return all Cassettes in this TV's contents."""
+        objs = []
         try:
             from typeclasses.broadcast import Cassette
             for obj in self.contents:
                 if isinstance(obj, Cassette):
-                    return obj
+                    objs.append(obj)
         except ImportError:
-            pass
-        return None
+            return []
+        return objs
 
-    def play_recording(self, callback=None):
+    def get_cassette(self):
+        """Return the first Cassette in this TV's contents, if any."""
+        cassettes = self.get_cassettes()
+        return cassettes[0] if cassettes else None
+
+    def play_recording(self, cassette=None, callback=None):
         """
         Play the cassette's recording in this room, with delays between lines.
         callback() is called when playback finishes (optional).
         """
-        cassette = self.get_cassette()
+        cassette = cassette or self.get_cassette()
         if not cassette:
             if callback:
                 callback()
@@ -243,4 +286,55 @@ class Cassette(ObjectParent, DefaultObject):
     """
     def at_object_creation(self):
         self.db.recording = []  # list of {"t": offset_secs, "text": "..."}
+        self.db.label = None
         self.db.desc = "A cassette. Put it in a television and tune in to play."
+
+    def set_label(self, label):
+        """Assign a label to this cassette and update its name."""
+        label = (label or "").strip()
+        self.db.label = label or None
+        base = "recording cassette"
+        if self.db.label:
+            self.key = f"{base} labelled as {self.db.label}"
+        else:
+            self.key = base
+
+
+class Photograph(ObjectParent, DefaultObject):
+    """
+    A still image captured by a Camera. Stores a snapshot of a room's appearance
+    (full colored look output) at the time of capture.
+    """
+
+    def at_object_creation(self):
+        self.db.snapshot_text = ""
+        self.db.room_name = ""
+        self.db.label = None
+        if not getattr(self.db, "desc", None):
+            self.db.desc = "A glossy photograph. You can look at it to see what it captured."
+
+    def set_label(self, label):
+        """Assign a label to this photograph and update its name."""
+        label = (label or "").strip()
+        self.db.label = label or None
+        room_name = getattr(self.db, "room_name", "somewhere")
+        base = f"photograph of {room_name}"
+        if self.db.label:
+            self.key = f"{base} labelled as {self.db.label}"
+        else:
+            self.key = base
+
+    def return_appearance(self, looker, **kwargs):
+        """
+        When looked at, show the stored snapshot as though the viewer were
+        standing in that room, preserving colors and formatting.
+        """
+        snap = getattr(self.db, "snapshot_text", None)
+        room_name = getattr(self.db, "room_name", "somewhere")
+        label = getattr(self.db, "label", None)
+        if not snap:
+            return super().return_appearance(looker, **kwargs)
+        header = f"|wPhotograph of {room_name}|n"
+        if label:
+            header += f" (labelled as {label})"
+        return f"{header}\n{snap}"

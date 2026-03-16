@@ -442,8 +442,14 @@ def attempt_resist(victim):
 
 
 def is_unconscious(character):
-    """True if character is in the knocked-out state (0 stamina from grapple strikes)."""
-    return bool(getattr(character.db, "unconscious", False))
+    """
+    True if character is in the knocked-out state (0 stamina from grapple strikes).
+
+    This is a thin wrapper around the global medical.is_unconscious helper so
+    other systems (drugs, injuries, commands) can share the same definition.
+    """
+    from world.medical import is_unconscious as _is_unconscious
+    return _is_unconscious(character)
 
 
 def get_unconscious_wake_seconds(character):

@@ -26,6 +26,7 @@ SKILL_KEYS = [
     "tailoring",
     "performance",
     "diplomacy",
+    "scavenging",
 ]
 
 # Two stats per skill (equal weight for roll strength). Must be valid SPECIAL keys.
@@ -52,6 +53,7 @@ SKILL_STATS = {
     "tailoring": ["intelligence", "charisma"],
     "performance": ["charisma", "agility"],
     "diplomacy": ["charisma", "intelligence"],
+    "scavenging": ["intelligence", "perception"],
 }
 
 # Weapon key (combat) -> skill key for attack roll
@@ -94,4 +96,5 @@ SKILL_DISPLAY_NAMES = {
     "tailoring": "Tailoring",
     "performance": "Performance",
     "diplomacy": "Diplomacy",
+    "scavenging": "Scavenging",
 }

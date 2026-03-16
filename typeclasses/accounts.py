@@ -26,10 +26,10 @@ from evennia.accounts.accounts import DefaultAccount, DefaultGuest
 
 
 def _auto_subscribe_help_channel(account):
-    """Subscribe account to Help (xhelp) only. Mandatory so staff can reach them; players only see their own messages and staff's private replies (xhelp/Name)."""
+    """Subscribe account to Assist (xassist) only. Mandatory so staff can reach them; players only see their own messages and staff's private replies."""
     try:
         from evennia import search_channel
-        channels = search_channel("xhelp")
+        channels = search_channel("xassist")
         if not channels:
             return
         channel = channels[0] if isinstance(channels, list) else channels
@@ -228,8 +228,8 @@ class Account(DefaultAccount):
         - OOC-Chat: use account's ooc_display_name (set with @oocname) instead of character/key.
         """
         chan_key = getattr(channel, "key", None) or ""
-        # Help: one-way to staff — players only see messages they sent
-        if chan_key == "Help" and senders:
+        # Assist: one-way to staff — players only see messages they sent
+        if chan_key == "Assist" and senders:
             if self not in senders and not self.permissions.check("Builder"):
                 return None  # abort receive for this recipient
         # OOC-Chat: show account OOC display name, not character name

@@ -68,6 +68,7 @@ def _body_part_and_multiplier(attack_value):
 
 
 WEAPON_DATA = {
+    # Kept as a safe fallback if weapon tiers are missing or misconfigured.
     "fists": {
         1: {"name": "Jab", "damage": 5},
         2: {"name": "Cross", "damage": 8},
@@ -141,6 +142,66 @@ def _allowed_attack_indices(skill_level):
     if skill_level >= SKILL_LEVEL_TIER_1:
         return _ATTACK_INDICES_TIER_1
     return _ATTACK_INDICES_DEFAULT
+
+
+def _weapon_attack_table(weapon_key, weapon_obj, skill_level):
+    """
+    Build a 1–6 attack table for this weapon_key using world.weapon_tiers if available.
+    Falls back to static WEAPON_DATA on any error.
+
+    Tier selection:
+      - weapon_obj.db.weapon_tier (1–10) if set
+      - else 1
+
+    Damage:
+      - uses the midpoint of (damage_min, damage_max) for each attack, then
+        the existing body-part multiplier and critical scaling.
+    """
+    # Fallback to old static table if we can't import or look up tiers
+    try:
+        from world.weapon_tiers import get_weapon_tier, find_weapon_template
+    except Exception:
+        return WEAPON_DATA.get(weapon_key, WEAPON_DATA["fists"])
+
+    entry = None
+    tier = None
+    if weapon_obj is not None and getattr(weapon_obj, "db", None):
+        template_name = getattr(weapon_obj.db, "weapon_template", None)
+        if template_name:
+            entry, tier = find_weapon_template(weapon_key, template_name)
+        if not entry:
+            tier = getattr(weapon_obj.db, "weapon_tier", None)
+
+    if not isinstance(tier, int) or tier < 1:
+        tier = 1
+    tier = max(1, min(10, tier))
+
+    if not entry:
+        entry = get_weapon_tier(weapon_key, tier)
+    if not entry:
+        return WEAPON_DATA.get(weapon_key, WEAPON_DATA["fists"])
+
+    attacks = list(entry.get("attacks") or [])
+    if not attacks:
+        return WEAPON_DATA.get(weapon_key, WEAPON_DATA["fists"])
+
+    table = {}
+    max_index = 6
+    # Respect skill gating (1–3 / 1–5 / 1–6) but clamp to number of defined attacks.
+    allowed = _allowed_attack_indices(skill_level)
+    max_allowed = min(max(allowed), len(attacks), max_index)
+
+    for idx in range(1, max_allowed + 1):
+        atk = attacks[(idx - 1) % len(attacks)]
+        dmg_min = int(atk.get("damage_min", 0))
+        dmg_max = int(atk.get("damage_max", dmg_min))
+        mid = max(1, int((dmg_min + dmg_max) / 2))
+        table[idx] = {"name": atk.get("name", f"Attack {idx}"), "damage": mid}
+
+    # Ensure we always have something to roll on
+    if not table:
+        return WEAPON_DATA.get(weapon_key, WEAPON_DATA["fists"])
+    return table
 
 
 def _hit_message(weapon_key, body_part, defender_name, attacker_name, is_critical):
@@ -444,10 +505,10 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
         return
 
     # 3. THE MOVE SELECTION (tiered by skill: default 1–3, tier 1 +4–5, C +6)
-    weapon = WEAPON_DATA.get(weapon_key, WEAPON_DATA["fists"])
     attack_skill = WEAPON_KEY_TO_SKILL.get(weapon_key, "unarmed")
     skill_level = getattr(attacker, "get_skill_level", lambda s: 0)(attack_skill)
-    allowed = _allowed_attack_indices(skill_level)
+    weapon = _weapon_attack_table(weapon_key, wielded_obj, skill_level)
+    allowed = tuple(i for i in _allowed_attack_indices(skill_level) if i in weapon)
     roll_1d6 = random.choice(allowed)
     attack_move = weapon[roll_1d6]
 

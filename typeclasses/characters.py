@@ -21,7 +21,30 @@ def _multi_puppet_relay(self, text, session=None, **kwargs):
         account = AccountDB.objects.get(id=int(account_id))
     except Exception:
         # Catches AccountDB.DoesNotExist, ValueError if ID is invalid, etc.
+        # Stale link: clear local markers so we don't keep trying.
+        try:
+            if hasattr(self.db, "_multi_puppet_account_id"):
+                del self.db["_multi_puppet_account_id"]
+            if hasattr(self.db, "_multi_puppet_slot"):
+                del self.db["_multi_puppet_slot"]
+        except Exception:
+            pass
         return False
+
+    # If this character is no longer in the account's multi_puppets list, treat link as stale.
+    try:
+        mp_ids = list(getattr(account.db, "multi_puppets", None) or [])
+        if getattr(self, "id", None) not in mp_ids:
+            try:
+                if hasattr(self.db, "_multi_puppet_account_id"):
+                    del self.db["_multi_puppet_account_id"]
+                if hasattr(self.db, "_multi_puppet_slot"):
+                    del self.db["_multi_puppet_slot"]
+            except Exception:
+                pass
+            return False
+    except Exception:
+        pass
 
     if not hasattr(account, "sessions"):
         return False
@@ -148,6 +171,25 @@ class Character(DefaultCharacter):
         self.db.xp_cap = int(getattr(self.db, "xp_cap", XP_CAP) or XP_CAP)
         # PC vs NPC: NPCs do not show as "sleeping" when unpuppeted; set True for staff-created NPCs
         self.db.is_npc = False
+        # Amputations / severed limbs (body part keys from world.medical.BODY_PARTS)
+        self.db.missing_body_parts = []
+
+    def at_server_reload(self):
+        """
+        After a @reload, re-apply transient command locks.
+
+        Flatlined characters lose their non-persistent FlatlinedCmdSet on reload;
+        re-add it so they remain fully locked in the dying state.
+        """
+        try:
+            from world.death import is_flatlined
+            if is_flatlined(self):
+                try:
+                    self.cmdset.add("commands.default_cmdsets.FlatlinedCmdSet", persistent=False)
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     def at_init(self):
         """Ensure character uses the game's CharacterCmdSet (stats, heal, etc.). Fixes old chars with wrong path.

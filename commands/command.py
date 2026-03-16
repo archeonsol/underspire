@@ -6,6 +6,7 @@ Commands describe the input the account can do to the game.
 
 import re
 from evennia.commands.command import Command as BaseCommand
+from evennia.commands.default.general import CmdLook as DefaultCmdLook
 from evennia.commands.cmdhandler import CMD_NOMATCH
 from evennia.utils.evtable import EvTable
 from world.combat import execute_combat_turn
@@ -58,6 +59,78 @@ class Command(BaseCommand):
 # -------------------------------------------------------------
 # CUSTOM COMMANDS
 # -------------------------------------------------------------
+
+
+class CmdLook(DefaultCmdLook):
+    """
+    Look at location, object, or a directional exit.
+
+    Usage:
+      look
+      look <obj>
+      look <direction>   (e.g. look north, look n)
+    """
+
+    def func(self):
+        caller = self.caller
+        args = (self.args or "").strip()
+
+        # Directional look: look north / look n, etc.
+        if args:
+            lower = args.lower()
+            dir_map = {
+                "n": "north",
+                "s": "south",
+                "e": "east",
+                "w": "west",
+                "ne": "northeast",
+                "nw": "northwest",
+                "se": "southeast",
+                "sw": "southwest",
+                "u": "up",
+                "d": "down",
+            }
+            direction = dir_map.get(lower, lower)
+            loc = getattr(caller, "location", None)
+            if loc:
+                # Find an exit in this room whose key or alias matches the direction
+                exits = [obj for obj in loc.contents if getattr(obj, "destination", None)]
+                target_exit = None
+                for ex in exits:
+                    key = (getattr(ex, "key", "") or "").lower()
+                    # ex.aliases is an AliasHandler; use .all() to get strings
+                    aliases = []
+                    if hasattr(ex, "aliases"):
+                        try:
+                            aliases = [a.lower() for a in ex.aliases.all()]
+                        except Exception:
+                            aliases = []
+                    if direction == key or direction in aliases:
+                        target_exit = ex
+                        break
+                if target_exit and target_exit.destination:
+                    dest = target_exit.destination
+                    # Collect visible characters in the destination room
+                    chars = [
+                        obj for obj in getattr(dest, "contents", [])
+                        if getattr(obj, "has_account", False)
+                    ]
+                    if not chars:
+                        caller.msg(f"To the {direction} you see |wnothing of note|n.")
+                        return
+                    # Build a natural-language list: John, Bob and James
+                    names = [obj.get_display_name(caller) for obj in chars]
+                    if len(names) == 1:
+                        who = names[0]
+                    elif len(names) == 2:
+                        who = f"{names[0]} and {names[1]}"
+                    else:
+                        who = ", ".join(names[:-1]) + f" and {names[-1]}"
+                    caller.msg(f"To the {direction} you see {who}.")
+                    return
+
+        # Fallback to default look behavior (objects, room, etc.)
+        super().func()
 
 class CmdStats(Command):
     """
@@ -219,7 +292,7 @@ class CmdXp(Command):
                 attr_key = pending["attr_key"]
                 levels_gained = pending["levels_gained"]
                 total_spent = pending["total_spent"]
-                new_val = pending["new_val"]
+                new_val = pending["new_val"]  # stored level for stats (0-300) or skill level (0-150)
                 cur = pending["cur"]
                 cap = pending["cap"]
                 label = pending["label"]
@@ -233,11 +306,18 @@ class CmdXp(Command):
                     get_adj_fn = (lambda letter: caller.get_stat_grade_adjective(letter, attr_key)) if sub == "stat" else caller.get_skill_grade_adjective
                     if not getattr(caller.db, db_key, None):
                         setattr(caller.db, db_key, {})
-                    getattr(caller.db, db_key)[attr_key] = new_val
+                    # For stats, store display levels (0-150); pending.new_val is stored (0-300).
+                    if sub == "stat":
+                        stored_new = int(new_val)
+                        display_new = stored_new // 2
+                        getattr(caller.db, db_key)[attr_key] = display_new
+                    else:
+                        stored_new = int(new_val)
+                        getattr(caller.db, db_key)[attr_key] = new_val
                     caller.db.xp = xp_now - total_spent
                     remainder = caller.db.xp
                     old_letter = get_grade_fn(cur)
-                    new_letter = get_grade_fn(new_val)
+                    new_letter = get_grade_fn(stored_new)
                     letter_changed = old_letter != new_letter
                     spent_str = str(int(total_spent)) if total_spent == int(total_spent) else str(round(total_spent, 2))
                     if levels_gained == 1:
@@ -248,7 +328,7 @@ class CmdXp(Command):
                         adj = get_adj_fn(new_letter)
                         msg += " {} is now [{}] {}.".format(label, new_letter, adj)
                     rem_str = str(int(remainder)) if remainder == int(remainder) else str(round(remainder, 2))
-                    if new_val >= cap and remainder > 0:
+                    if stored_new >= cap and remainder > 0:
                         msg += " You reached your cap; {} XP remains.".format(rem_str)
                     caller.msg(msg)
                     del caller.db.pending_xp_advance
@@ -284,30 +364,57 @@ class CmdXp(Command):
             return
 
         def advance_loop(cur, cap, bulk_n, xp_available, get_cost_fn):
-            """Bulk-buy loop: sum cost step-by-step until cap or XP runs out. Returns (levels_gained, total_spent, new_val)."""
+            """
+            Bulk-buy loop: sum cost step-by-step until cap or XP runs out.
+
+            Returns (levels_gained, total_spent, new_val).
+
+            Important behavior:
+            - If we hit the stat/skill cap before reaching bulk_n, we allow a
+              partial raise up to the cap.
+            - If we run out of XP *before* reaching bulk_n (and are not at cap),
+              we treat this as "insufficient XP for that many raises" and
+              return (0, 0.0, cur) so the caller can show an error instead of
+              revealing how many raises you *could* afford.
+            """
             total_spent = 0.0
             levels_gained = 0
+            xp_limited = False
             while levels_gained < bulk_n and cur + levels_gained < cap:
                 cost = get_cost_fn(cur + levels_gained)
-                if cost is None or xp_available - total_spent < cost:
+                if cost is None:
+                    break
+                if xp_available - total_spent < cost:
+                    xp_limited = True
                     break
                 total_spent += cost
                 levels_gained += 1
             new_val = min(cap, cur + levels_gained)
+            # If this was a bulk request and we stopped early *due to XP* (not cap),
+            # treat it as "not enough XP for that many raises".
+            if bulk_n > 1 and xp_limited and levels_gained < bulk_n and new_val < cap:
+                return 0, 0.0, cur
             return levels_gained, total_spent, new_val
 
         def format_insufficient_xp(get_cost_fn, cur, xp_available):
-            cost_one = get_cost_fn(cur)
-            cost_str = str(int(cost_one)) if cost_one is not None and cost_one == int(cost_one) else str(round(cost_one, 2)) if cost_one is not None else "?"
-            xp_str = int(xp_available) if xp_available == int(xp_available) else round(xp_available, 2)
-            caller.msg("You need {} XP for the next raise. You have {} XP.".format(cost_str, xp_str))
+            """
+            Inform the player that they don't have enough XP to perform the requested
+            advance, without revealing the exact XP cost or how close they are.
+            """
+            caller.msg("You lack the XP required to raise that much right now.")
 
         def apply_and_msg(levels_gained, total_spent, new_val, cur, cap, get_grade_fn, label, db_key, attr_key, get_adj_fn):
             if levels_gained == 0:
                 return
             if not getattr(caller.db, db_key, None):
                 setattr(caller.db, db_key, {})
-            getattr(caller.db, db_key)[attr_key] = new_val
+            # For stats, store display levels (0-150); new_val is stored (0-300).
+            if db_key == "stats":
+                stored_new = int(new_val)
+                display_new = stored_new // 2
+                getattr(caller.db, db_key)[attr_key] = display_new
+            else:
+                getattr(caller.db, db_key)[attr_key] = new_val
             caller.db.xp = xp - total_spent
             remainder = xp - total_spent
             old_letter = get_grade_fn(cur)
@@ -603,6 +710,100 @@ def _combat_caller(cmd_self):
     return caller
 
 
+class CmdScavenge(Command):
+    """
+    Search a tagged area for salvage using your Scavenging skill (int + per with a luck bonus).
+
+    Usage:
+      scavenge
+
+    Only works in rooms tagged for scavenging, such as:
+      - wildscavenge
+      - urbanscavenge
+    """
+
+    key = "scavenge"
+    locks = "cmd:all()"
+    help_category = "General"
+
+    def func(self):
+        from evennia.utils import delay
+        from world.skills import SKILL_STATS
+        from world.scavenging import perform_scavenge, _pick_loot_table
+
+        caller = _command_character(self)
+        if not caller or not getattr(caller, "db", None) or not hasattr(caller.db, "stats"):
+            self.caller.msg("You must be in character to scavenge.")
+            return
+
+        loc = getattr(caller, "location", None)
+        if not loc or not hasattr(loc, "tags"):
+            caller.msg("There is nothing here to scavenge.")
+            return
+
+        loot_table, env = _pick_loot_table(loc)
+        if not loot_table:
+            caller.msg("There is nothing here to scavenge.")
+            return
+
+        # Prevent spamming: simple per-character cooldown
+        try:
+            last = getattr(caller.db, "last_scavenge_at", None)
+            import time
+            now = time.time()
+            if last and now - float(last) < 10:
+                caller.msg("You just finished searching — give it a moment before you rummage again.")
+                return
+            caller.db.last_scavenge_at = now
+        except Exception:
+            pass
+
+        if getattr(caller.ndb, "is_scavenging", False):
+            caller.msg("You are already picking through this place.")
+            return
+
+        caller.ndb.is_scavenging = True
+
+        # Roll: scavenging skill uses intelligence + perception, plus luck display as a bonus modifier.
+        stats = SKILL_STATS.get("scavenging", ["intelligence", "perception"])
+        luck_bonus = int(caller.get_display_stat("luck")) if hasattr(caller, "get_display_stat") else 0
+        level, final_roll = caller.roll_check(stats, "scavenging", modifier=luck_bonus)
+
+        # Narrative: 10–15s of searching flavor, then resolve.
+        import random
+
+        env_text = "the concrete and rust" if env == "urban" else "the scrub and twisted growth"
+        caller.msg(f"You start picking through {env_text}, eyes and hands working for anything useful...")
+        if loc:
+            loc.msg_contents(f"{caller.get_display_name(loc)} starts rummaging through the area for salvage.", exclude=caller)
+
+        def _finish_scavenge():
+            try:
+                caller.ndb.is_scavenging = False
+            except Exception:
+                pass
+
+            room = getattr(caller, "location", None)
+            if not room:
+                return
+
+            obj = perform_scavenge(caller, room, final_roll)
+            if not obj:
+                caller.msg("You come up empty-handed this time.")
+                return
+
+            name = obj.get_display_name(caller) if hasattr(obj, "get_display_name") else obj.key
+            caller.msg(f"|gYou find|n {name}|g while scavenging.|n")
+            room.msg_contents(f"{caller.get_display_name(room)} straightens up, holding {name}|g.|n", exclude=caller)
+
+        try:
+            delay_time = random.randint(10, 15)
+            delay(delay_time, _finish_scavenge)
+        except Exception:
+            # If delay fails, resolve immediately.
+            _finish_scavenge()
+
+
 class CmdGrapple(Command):
     """
     Grapple a character: agility vs perception (see it coming), then agility vs agility (land the grab).
@@ -619,6 +820,13 @@ class CmdGrapple(Command):
         if not getattr(caller, "db", None) or not hasattr(caller.db, "stats"):
             self.caller.msg("You must be in character to grapple.")
             return
+        # Require a short blade (knife-tier 1-3) wielded in hand.
+        weapon = getattr(caller.db, "wielded_obj", None)
+        weapon_key = getattr(caller.db, "wielded", None)
+        if not weapon or getattr(weapon, "location", None) is not caller or weapon_key != "knife":
+            caller.msg("You need a basic short blade in hand — one of the gutter knives, not some esoteric tool — before you can butcher a body.")
+            return
+
         args = (self.args or "").strip()
         if not args:
             caller.msg("Grapple who? Usage: grapple <target>")
@@ -737,6 +945,511 @@ class CmdExecute(Command):
         make_permanent_death(target, attacker=caller, reason="executed")
 
 
+class CmdSkin(Command):
+    """
+    Skin a corpse using your Scavenging skill to strip away hide or flesh.
+
+    Usage:
+      skin <corpse>
+    """
+
+    key = "skin"
+    locks = "cmd:all()"
+    help_category = "General"
+
+    def func(self):
+        from evennia.utils import delay
+        from world.skills import SKILL_STATS
+
+        caller = _command_character(self)
+        if not caller or not getattr(caller, "db", None) or not hasattr(caller.db, "stats"):
+            self.caller.msg("You must be in character to do that.")
+            return
+
+        # Require a short blade (knife-tier 1-3) wielded in hand.
+        weapon = getattr(caller.db, "wielded_obj", None)
+        weapon_key = getattr(caller.db, "wielded", None)
+        if not weapon or getattr(weapon, "location", None) is not caller or weapon_key != "knife":
+            caller.msg("You need a basic short blade in hand — one of the gutter knives, not some esoteric tool — before you can skin a body.")
+            return
+
+        args = (self.args or "").strip()
+        target = caller.search(args or "corpse", location=caller.location)
+        if not target:
+            return
+
+        try:
+            from typeclasses.corpse import Corpse
+            is_corpse = isinstance(target, Corpse)
+        except Exception:
+            is_corpse = False
+        if not is_corpse:
+            caller.msg("You can only skin a corpse.")
+            return
+
+        if getattr(target.db, "skinned", False):
+            caller.msg("This body has already been skinned.")
+            return
+
+        if getattr(caller.ndb, "is_skinning", False):
+            caller.msg("You are already elbows-deep in another body.")
+            return
+        caller.ndb.is_skinning = True
+
+        # Scavenging roll: intelligence + perception, with luck bonus.
+        from world.skills import SKILL_STATS
+        stats = SKILL_STATS.get("scavenging", ["intelligence", "perception"])
+        luck_bonus = int(caller.get_display_stat("luck")) if hasattr(caller, "get_display_stat") else 0
+        level, final_roll = caller.roll_check(stats, "scavenging", modifier=luck_bonus)
+
+        is_creature = bool(getattr(target.db, "is_creature", False))
+        corpse_name = target.get_display_name(caller) if hasattr(target, "get_display_name") else target.key
+
+        caller.msg("|rYou kneel by {} and begin to work the blade under skin and cloth, peeling it back in long, wet strips...|n".format(corpse_name))
+        if caller.location:
+            caller.location.msg_contents(
+                f"{caller.get_display_name(caller.location)} kneels by {corpse_name}, knife working in slow, deliberate strokes.",
+                exclude=caller,
+            )
+
+        import random
+
+        def _finish_skin():
+            try:
+                caller.ndb.is_skinning = False
+            except Exception:
+                pass
+
+            room = getattr(caller, "location", None)
+            if not room or target.location != room:
+                return
+
+            # Simple difficulty: decent scavengers get reliable skins; bad ones slip and tear.
+            difficulty = 55 if is_creature else 65
+            if final_roll < difficulty:
+                caller.msg("|rThe hide comes away in ragged, useless chunks. Whatever was here is ruined.|n")
+                target.db.skinned = True
+                return
+
+            from evennia.utils.create import create_object
+
+            key = "mutated hide" if is_creature else "human skin"
+            desc = (
+                "A broad, reeking sheet of warped flesh and hair, slick with strange growths and lesions."
+                if is_creature
+                else "A flensed sheet of human skin, pale and clammy, with faint impressions of where muscle once clung beneath."
+            )
+            try:
+                hide = create_object("typeclasses.items.Item", key=key, location=caller)
+                hide.db.desc = desc
+                hide.tags.add("scavenged_hide")
+            except Exception:
+                hide = None
+
+            target.db.skinned = True
+
+            caller.msg("|gYou work the blade free and lift away {}.|n".format("a sheet of warped hide" if is_creature else "a full, glistening layer of skin"))
+            if room:
+                room.msg_contents(
+                    f"{caller.get_display_name(room)} peels the last of the flesh free, leaving the body skinned and slick.",
+                    exclude=caller,
+                )
+
+        try:
+            delay_time = random.randint(10, 15)
+            delay(delay_time, _finish_skin)
+        except Exception:
+            _finish_skin()
+
+
+class CmdButcher(Command):
+    """
+    Butcher a skinned corpse for organs using your Scavenging skill.
+
+    Usage:
+      butcher <corpse>
+    """
+
+    key = "butcher"
+    locks = "cmd:all()"
+    help_category = "General"
+
+    def func(self):
+        from evennia.utils import delay
+        from world.skills import SKILL_STATS
+
+        caller = _command_character(self)
+        if not caller or not getattr(caller, "db", None) or not hasattr(caller.db, "stats"):
+            self.caller.msg("You must be in character to do that.")
+            return
+
+        args = (self.args or "").strip()
+        target = caller.search(args or "corpse", location=caller.location)
+        if not target:
+            return
+
+        try:
+            from typeclasses.corpse import Corpse
+            is_corpse = isinstance(target, Corpse)
+        except Exception:
+            is_corpse = False
+        if not is_corpse:
+            caller.msg("You can only butcher a corpse.")
+            return
+
+        if not getattr(target.db, "skinned", False):
+            caller.msg("You need to skin the body before you can properly butcher it.")
+            return
+
+        if getattr(target.db, "butchered", False):
+            caller.msg("There is nothing left inside this body worth taking.")
+            return
+
+        if getattr(caller.ndb, "is_butchering", False):
+            caller.msg("You are already wrist-deep in another carcass.")
+            return
+        caller.ndb.is_butchering = True
+
+        stats = SKILL_STATS.get("scavenging", ["intelligence", "perception"])
+        luck_bonus = int(caller.get_display_stat("luck")) if hasattr(caller, "get_display_stat") else 0
+        level, base_roll = caller.roll_check(stats, "scavenging", modifier=luck_bonus)
+
+        is_creature = bool(getattr(target.db, "is_creature", False))
+        corpse_name = target.get_display_name(caller) if hasattr(target, "get_display_name") else target.key
+
+        caller.msg("|rYou open {} up with slow, practiced cuts, ribs creaking as you spread the cage and reach inside.|n".format(corpse_name))
+        if caller.location:
+            caller.location.msg_contents(
+                f"{caller.get_display_name(caller.location)} leans over {corpse_name}, cutting it open and working both hands deep into the cavity.",
+                exclude=caller,
+            )
+
+        import random
+
+        # Organ difficulties (relative to base_roll). Some are harder to take clean.
+        organs = [
+            ("lungs", 50),
+            ("heart", 55),
+            ("liver", 60),
+            ("spleen", 65),
+            ("brain", 70),
+        ]
+
+        made_any = {"value": False}
+        processed = {"count": 0}
+
+        from evennia.utils.create import create_object
+
+        def _process_next(index):
+            room = getattr(caller, "location", None)
+            if not room or target.location != room:
+                # Character moved or corpse gone; stop the sequence.
+                try:
+                    caller.ndb.is_butchering = False
+                except Exception:
+                    pass
+                return
+
+            if index >= len(organs):
+                # Finished all organs; finalize.
+                target.db.butchered = True
+                try:
+                    caller.ndb.is_butchering = False
+                except Exception:
+                    pass
+                if not made_any["value"]:
+                    caller.msg("|rYour cuts are clumsy; by the time you are done, the insides are just shredded meat.|n")
+                    room.msg_contents(
+                        f"{caller.get_display_name(room)} pulls back empty-handed, the corpse's insides a ruin.",
+                        exclude=caller,
+                    )
+                    return
+                room.msg_contents(
+                    f"{caller.get_display_name(room)} withdraws handfuls of glistening organs from the opened body.",
+                    exclude=caller,
+                )
+                return
+
+            organ_key, diff = organs[index]
+            roll = base_roll + random.randint(-10, 10)
+            if roll < diff:
+                caller.msg(f"|rYou tear through where the {organ_key} should be, leaving nothing usable.|n")
+            else:
+                if is_creature:
+                    key = f"mutated {organ_key}"
+                    desc = f"A twisted, unnatural {organ_key}: knotted tissue, wrong colors, and pulsing growths that should not be alive."
+                    name_for_msg = f"the mutated {organ_key.replace('_', ' ')}"
+                else:
+                    key = organ_key
+                    pretty = organ_key.replace("_", " ")
+                    desc = f"A freshly taken {pretty}, still warm and slick, with clamps of torn tissue hanging where it was cut free."
+                    name_for_msg = f"the {pretty}"
+                try:
+                    organ = create_object("typeclasses.items.Item", key=key, location=caller)
+                    organ.db.desc = desc
+                    organ.tags.add("butchered_organ")
+                    made_any["value"] = True
+                    caller.msg(f"|gYou ease out {name_for_msg}, cradling it in both hands before setting it aside.|n")
+                except Exception:
+                    pass
+
+            # Schedule next organ 4–5 seconds later, from easiest to hardest.
+            processed["count"] += 1
+            try:
+                delay(random.randint(4, 5), _process_next, index + 1)
+            except Exception:
+                _process_next(index + 1)
+
+        # Initial delay for opening the body: 10–15 seconds, then start organs one by one.
+        try:
+            delay(random.randint(10, 15), _process_next, 0)
+        except Exception:
+            _process_next(0)
+
+
+class CmdSever(Command):
+    """
+    Sever a limb or head from a corpse or an unconscious character, producing a severed part.
+
+    Usage:
+      sever <target> <body part>
+
+    Body parts: head, left/right arm, left/right hand, left/right thigh, left/right foot.
+    """
+
+    key = "sever"
+    locks = "cmd:all()"
+    help_category = "Combat"
+
+    def func(self):
+        from world.skills import SKILL_STATS
+        from world.medical import (
+            BODY_PARTS,
+            BODY_PART_ALIASES,
+            BODY_PART_ORGANS,
+            BONE_TO_BODY_PARTS,
+            is_unconscious,
+        )
+        from world.death import is_flatlined, is_permanently_dead, make_permanent_death
+        from evennia.utils.create import create_object
+
+        caller = _command_character(self)
+        if not caller or not getattr(caller, "db", None) or not hasattr(caller.db, "stats"):
+            self.caller.msg("You must be in character to do that.")
+            return
+
+        # Require a basic short blade (knife) wielded.
+        weapon = getattr(caller.db, "wielded_obj", None)
+        weapon_key = getattr(caller.db, "wielded", None)
+        if not weapon or getattr(weapon, "location", None) is not caller or weapon_key != "knife":
+            caller.msg("You need a basic short blade in hand before you can sever anything.")
+            return
+
+        args = (self.args or "").strip()
+        if not args:
+            caller.msg("Usage: sever <target> <body part>")
+            return
+        parts = args.split(None, 1)
+        if len(parts) < 2:
+            caller.msg("Usage: sever <target> <body part>")
+            return
+        target_name, part_raw = parts[0], parts[1]
+
+        target = caller.search(target_name, location=caller.location)
+        if not target:
+            return
+
+        # Resolve body part (reuse same rules as describe_bodypart).
+        raw = part_raw.strip().lower()
+        full = raw
+        if full not in BODY_PARTS:
+            full = BODY_PART_ALIASES.get(full)
+        if not full:
+            caller.msg("Unknown body part. Try one of: head, larm, rarm, lhand, rhand, lthigh, rthigh, lfoot, rfoot.")
+            return
+
+        # Allowed parts: head (special), limbs. No torso/back/abdomen/groin/neck/shoulder.
+        allowed_parts = {
+            "head",
+            "left arm", "right arm",
+            "left hand", "right hand",
+            "left thigh", "right thigh",
+            "left foot", "right foot",
+        }
+        if full not in allowed_parts:
+            caller.msg("You can only sever a head or limb: head, left/right arm/hand/thigh/foot.")
+            return
+
+        # Determine if target is a corpse or a living/unconscious character.
+        is_corpse = False
+        try:
+            from typeclasses.corpse import Corpse
+            is_corpse = isinstance(target, Corpse)
+        except Exception:
+            is_corpse = False
+
+        if is_corpse:
+            living_target = None
+        else:
+            living_target = target
+            # Only unconscious, not flatlined or permanently dead.
+            if is_flatlined(living_target) or is_permanently_dead(living_target):
+                caller.msg("They are beyond this kind of work.")
+                return
+            if not is_unconscious(living_target):
+                caller.msg("They are not unconscious. You cannot do this while they are awake.")
+                return
+
+        # Scavenging roll to control finesse.
+        stats = SKILL_STATS.get("scavenging", ["intelligence", "perception"])
+        luck_bonus = int(caller.get_display_stat("luck")) if hasattr(caller, "get_display_stat") else 0
+        level, final_roll = caller.roll_check(stats, "scavenging", modifier=luck_bonus)
+
+        is_creature = bool(getattr(target.db, "is_creature", False))
+
+        # Cascading loss: head -> face; arm -> hand; thigh -> foot.
+        cascade = {
+            "head": ["face"],
+            "left arm": ["left hand"],
+            "right arm": ["right hand"],
+            "left thigh": ["left foot"],
+            "right thigh": ["right foot"],
+        }
+        removed_parts = [full] + cascade.get(full, [])
+
+        # Do not allow severing an already-missing limb/part.
+        existing_missing = set(getattr(target.db, "missing_body_parts", []) or [])
+        if existing_missing.intersection(removed_parts):
+            caller.msg("That part has already been severed.")
+            return
+
+        # Pull appearance description for this part (if available), to imprint on the severed item.
+        body_descs = getattr(target.db, "body_descriptions", None) or {}
+        if full == "head":
+            # For heads, also include the face description since the face comes with it.
+            head_txt = (body_descs.get("head") or "").strip()
+            face_txt = (body_descs.get("face") or "").strip()
+            desc_bits = [t for t in (head_txt, face_txt) if t]
+            desc_source = " ".join(desc_bits)
+        else:
+            desc_source = (body_descs.get(full) or "").strip()
+
+        # Build severed item key and description.
+        pretty_part = full.replace("_", " ")
+        base_key = f"severed {pretty_part}"
+        if is_creature:
+            item_key = f"mutated {base_key}"
+        else:
+            item_key = base_key
+
+        # Build flavor line about origin: show "a corpse" for corpses, "a human" for the living.
+        if is_corpse:
+            origin_line = f"A {base_key} from a corpse."
+        else:
+            origin_line = f"A {base_key} from a human."
+
+        if desc_source:
+            item_desc = f"{origin_line} {desc_source}"
+        else:
+            item_desc = f"{origin_line} It is still slick and heavy."
+
+        # Create the severed part in caller's inventory.
+        severed = None
+        try:
+            severed = create_object("typeclasses.items.Item", key=item_key, location=caller)
+            severed.db.desc = item_desc
+            severed.tags.add("severed_limb")
+        except Exception:
+            severed = None
+
+        # Mark missing parts on living target; corpses are static but we still update their
+        # body_descriptions and medical state so look/medical summaries reflect the loss.
+        if living_target:
+            missing = list(getattr(living_target.db, "missing_body_parts", []) or [])
+            for p in removed_parts:
+                if p not in missing:
+                    missing.append(p)
+            living_target.db.missing_body_parts = missing
+            # Clear any held items in lost hands.
+            if "left arm" in removed_parts or "left hand" in removed_parts:
+                held = getattr(living_target.db, "left_hand_obj", None)
+                if held and getattr(held, "location", None) == living_target and living_target.location:
+                    held.location = living_target.location
+                living_target.db.left_hand_obj = None
+            if "right arm" in removed_parts or "right hand" in removed_parts:
+                held = getattr(living_target.db, "right_hand_obj", None)
+                if held and getattr(held, "location", None) == living_target and living_target.location:
+                    held.location = living_target.location
+                living_target.db.right_hand_obj = None
+            # Recompute wielded state after losing hands.
+            try:
+                _update_primary_wielded(living_target)
+            except Exception:
+                pass
+            living_target.db.missing_body_parts = missing
+
+        # Update descriptive text and injuries for both living characters and corpses.
+        # 1) Clear organ, bone, and surface injuries tied to removed parts so summaries don't
+        #    describe damage on limbs that no longer exist.
+        organs_to_clear = set()
+        for p in removed_parts:
+            organs_to_clear.update(BODY_PART_ORGANS.get(p, []))
+
+        organ_damage = getattr(target.db, "organ_damage", None) or {}
+        for organ in organs_to_clear:
+            if organ in organ_damage:
+                del organ_damage[organ]
+        target.db.organ_damage = organ_damage
+
+        fractures = list(getattr(target.db, "fractures", []) or [])
+        kept_fractures = []
+        for bone in fractures:
+            parts_for_bone = set(BONE_TO_BODY_PARTS.get(bone, []))
+            if not parts_for_bone.intersection(removed_parts):
+                kept_fractures.append(bone)
+        target.db.fractures = kept_fractures
+
+        # Clear surface injuries on removed parts (used by clothing.get_effective_body_descriptions).
+        injuries = list(getattr(target.db, "injuries", []) or [])
+        if injuries:
+            kept_injuries = []
+            for inj in injuries:
+                part = (inj.get("body_part") or "").strip()
+                if part and part in removed_parts:
+                    # Drop injuries on amputated parts.
+                    continue
+                kept_injuries.append(inj)
+            target.db.injuries = kept_injuries
+
+        # 2) Replace body-part descriptions with "missing" text instead of whatever
+        #    they had before.
+        def _missing_desc(part_name: str) -> str:
+            if part_name == "head":
+                return "The head is gone; the neck ends in a jagged, butchered stump."
+            if "arm" in part_name or "hand" in part_name:
+                return "This limb is gone; only a ragged stump of torn muscle and bone remains."
+            if "thigh" in part_name or "foot" in part_name:
+                return "The leg ends abruptly in a torn stump; everything below is missing."
+            return "This part of the body is missing, carved away to nothing."
+
+        for p in removed_parts:
+            body_descs[p] = _missing_desc(p)
+        target.db.body_descriptions = body_descs
+
+        # Messaging and special handling for head.
+        part_for_msg = full
+        if full == "head":
+            part_for_msg = "head (and face)"
+        caller.msg(f"|rYou work the blade until the {part_for_msg} comes free in a wet, final pull.|n")
+        if caller.location:
+            caller.location.msg_contents(
+                f"{caller.get_display_name(caller.location)} saws away until {target.get_display_name(caller.location)}'s {part_for_msg} comes free.",
+                exclude=caller,
+            )
+
+        if living_target and full == "head":
+            # Decapitation: immediate death.
+            make_permanent_death(living_target, attacker=caller, reason="executed")
 class CmdStance(Command):
     """
     Change your combat stance.
@@ -2633,7 +3346,7 @@ def _can_use_ooc_room(character):
     if getattr(character.db, "grappled_by", None) or getattr(character.db, "grappling", None):
         return False, "You can't go OOC while grappled."
     try:
-        from world.grapple import is_unconscious
+        from world.medical import is_unconscious
         if is_unconscious(character):
             return False, "You can't go OOC while unconscious."
     except ImportError:
@@ -4322,6 +5035,65 @@ class CmdPut(Command):
             self.caller.msg("You can't put that in there.")
 
 
+class CmdLabel(Command):
+    """
+    Label a recording cassette or photograph, updating its name accordingly.
+
+    Usage:
+      label <item> = <text>
+
+    Examples:
+      label cassette = First Expedition Log
+      label photograph = Limbo, pre-collapse
+    """
+
+    key = "label"
+    locks = "cmd:all()"
+    help_category = "General"
+
+    def func(self):
+        caller = _command_character(self)
+        if not caller:
+            return
+        args = (self.args or "").strip()
+        if "=" not in args:
+            self.caller.msg("Usage: label <item> = <text>")
+            return
+        item_spec, _, label_text = args.partition("=")
+        item_spec = item_spec.strip()
+        label_text = label_text.strip()
+        if not item_spec or not label_text:
+            self.caller.msg("Usage: label <item> = <text>")
+            return
+        # Search in inventory first, then room.
+        candidates = list(getattr(caller, "contents", []) or [])
+        if getattr(caller, "location", None):
+            candidates += list(caller.location.contents or [])
+        obj = caller.search(item_spec, candidates=candidates)
+        if not obj:
+            return
+        from typeclasses.broadcast import Cassette, Photograph
+        if isinstance(obj, Cassette):
+            obj.set_label(label_text)
+            self.caller.msg(f"You carefully label the cassette as |w{label_text}|n.")
+            if caller.location:
+                caller.location.msg_contents(
+                    f"{caller.get_display_name(caller)} labels a cassette as |w{label_text}|n.",
+                    exclude=caller,
+                )
+        elif isinstance(obj, Photograph):
+            obj.set_label(label_text)
+            room_name = getattr(obj.db, "room_name", "somewhere")
+            self.caller.msg(f"You write a neat label on the back of the photograph of {room_name}: |w{label_text}|n.")
+            if caller.location:
+                caller.location.msg_contents(
+                    f"{caller.get_display_name(caller)} labels a photograph with the words |w{label_text}|n.",
+                    exclude=caller,
+                )
+        else:
+            self.caller.msg("You can only label recording cassettes and photographs.")
+
+
 def _find_camera(caller):
     """Return a Camera in caller's location or in caller's inventory, or None."""
     try:
@@ -4419,6 +5191,19 @@ class CmdCamera(Command):
             else:
                 self.caller.msg("Camera is off. (It wasn't linked to a TV.)")
             return
+        if sub in ("photo", "photograph"):
+            photo = camera.take_photograph(caller)
+            if not photo:
+                self.caller.msg("The camera fails to capture anything. Maybe it's not pointed at a room you can see.")
+                return
+            pname = photo.get_display_name(caller) if hasattr(photo, "get_display_name") else photo.key
+            room_name = getattr(photo.db, "room_name", "somewhere")
+            self.caller.msg(f"You depress the shutter. {pname} develops in your hands — a frozen moment of {room_name}.")
+            caller.location.msg_contents(
+                f"{caller.get_display_name(caller)} takes a photograph with the camera; a glossy print develops in their hands.",
+                exclude=caller,
+            )
+            return
         if sub == "record":
             camera.db.mode = "record"
             camera.db.recording_buffer = []
@@ -4429,11 +5214,11 @@ class CmdCamera(Command):
             if getattr(camera.db, "mode", "off") != "record":
                 self.caller.msg("The camera isn't recording.")
                 return
-            cassette = camera.stop_recording_and_make_cassette(caller.location)
+            cassette = camera.stop_recording_and_make_cassette(holder=caller)
             if cassette:
-                self.caller.msg("Recording stopped. A |wrecording cassette|n appears here.")
+                self.caller.msg("Recording stopped. A |wrecording cassette|n rests in your hands.")
                 caller.location.msg_contents(
-                    "%s stops the camera; a recording cassette appears." % caller.get_display_name(caller),
+                    "%s stops the camera and tucks a recording cassette away." % caller.get_display_name(caller),
                     exclude=caller,
                 )
             else:
@@ -4482,7 +5267,61 @@ class CmdTuneTelevision(Command):
             "%s tunes the television; the recording begins to play." % caller.get_display_name(caller),
             exclude=caller,
         )
-        tv.play_recording()
+        tv.play_recording(cassette=cassette)
+
+
+class CmdTelevisionApp(Command):
+    """
+    Browse and play recordings from all cassettes inside a television.
+
+    Usage:
+      tvapp            - list all cassettes currently in the television
+      tvapp <number>   - play the numbered cassette from the list
+    """
+
+    key = "tvapp"
+    aliases = ["tv app", "tvmenu", "tv menu"]
+    locks = "cmd:all()"
+    help_category = "General"
+
+    def func(self):
+        caller = _command_character(self)
+        if not caller or not caller.location:
+            return
+        tv = _find_television(caller)
+        if not tv:
+            self.caller.msg("There's no television here.")
+            return
+        cassettes = getattr(tv, "get_cassettes", lambda: [])()
+        if not cassettes:
+            self.caller.msg("The television's queue is empty. Put some cassettes inside first.")
+            return
+        args = (self.args or "").strip()
+        if not args:
+            lines = ["|wTelevision queue:|n"]
+            for idx, cas in enumerate(cassettes, start=1):
+                label = getattr(cas.db, "label", None)
+                name = cas.get_display_name(caller) if hasattr(cas, "get_display_name") else cas.key
+                extra = f" (labelled as {label})" if label else ""
+                lines.append(f"  |w{idx}.|n {name}{extra}")
+            lines.append("Use |wtvapp <number>|n to select which cassette to play.")
+            self.caller.msg("\n".join(lines))
+            return
+        if not args.isdigit():
+            self.caller.msg("Usage: tvapp <number>   (see 'tvapp' for the list).")
+            return
+        choice = int(args)
+        if choice < 1 or choice > len(cassettes):
+            self.caller.msg("There's no cassette with that number. Use 'tvapp' to see valid choices.")
+            return
+        cassette = cassettes[choice - 1]
+        cname = cassette.get_display_name(caller) if hasattr(cassette, "get_display_name") else cassette.key
+        self.caller.msg(f"You browse the television's queue and select |w{cname}|n to play.")
+        caller.location.msg_contents(
+            f"{caller.get_display_name(caller)} scrolls through the television's menu and selects |w{cname}|n to play.",
+            exclude=caller,
+        )
+        tv.play_recording(cassette=cassette)
 
 
 class CmdSpawnCamera(Command):
@@ -4785,7 +5624,7 @@ def _subscribe_channel(account, alias, msg_func):
 
 
 def _unsubscribe_channel(account, alias, msg_func):
-    """Unsubscribe account from channel by alias. Returns True on success."""
+    """Unsubscribe account from channel by alias. Returns True on success. Assist (xassist) cannot be left."""
     from evennia import search_channel
     channels = search_channel(alias)
     if not channels:
@@ -4795,6 +5634,9 @@ def _unsubscribe_channel(account, alias, msg_func):
         channel = channels[0]
     except (TypeError, IndexError):
         msg_func("No channel found matching '%s'." % alias)
+        return False
+    if getattr(channel, "key", None) == "Assist":
+        msg_func("You cannot leave the Assist channel (xassist); it is mandatory so staff can reach you.")
         return False
     if not channel.has_connection(account):
         msg_func("You are not subscribed to %s." % channel.key)
@@ -4897,7 +5739,11 @@ def _xhelp_staff_reply(caller, target_name, message, msg_func, session):
     if not accounts:
         msg_func("No account found matching '%s'." % target_name)
         return False
-    account = accounts[0] if isinstance(accounts, list) else accounts
+    try:
+        account = accounts[0]
+    except (TypeError, IndexError, AttributeError):
+        msg_func("No account found matching '%s'." % target_name)
+        return False
     message = strip_unsafe_input(message.strip(), session)
     account.msg("|m[Help reply from Staff]|n %s" % message)
     msg_func("You replied privately to |w%s|n: %s" % (account.key, message))
@@ -4905,8 +5751,8 @@ def _xhelp_staff_reply(caller, target_name, message, msg_func, session):
 
 
 class CmdHelpReply(Command):
-    """Staff only: send a private reply to one player on the Help channel. Usage: xhelpreply <account> <message>"""
-    key = "xhelpreply"
+    """Staff only: send a private reply to one player on the Assist channel. Usage: xassistreply <account> <message>"""
+    key = "xassistreply"
     locks = "cmd:perm(Builder)"
     help_category = "Channels"
 
@@ -4915,18 +5761,18 @@ class CmdHelpReply(Command):
         raw = (self.args or "").strip()
         parts = raw.split(None, 1)
         if len(parts) < 2:
-            self.msg("Usage: xhelpreply <account> <message>   (e.g. xhelpreply skythia Hello.)")
+            self.msg("Usage: xassistreply <account> <message>   (e.g. xassistreply skythia Hello.)")
             return
         _xhelp_staff_reply(caller, parts[0], parts[1], self.msg, self.session)
 
 
 class CmdHelp(Command):
     """
-    Send to the Help channel (you only see your own; staff see all).
-    Staff reply privately with: xhelpreply <account> <message>
+    Send to the Assist channel (you only see your own; staff see all).
+    Staff reply privately with: xassistreply <account> <message>
     """
-    key = "xhelp"
-    aliases = ["help"]
+    key = "xassist"
+    aliases = []
     locks = "cmd:all()"
     help_category = "Channels"
 
@@ -4938,16 +5784,16 @@ class CmdHelp(Command):
             self.msg("You must be logged in to use the Help channel.")
             return
         raw = (self.args or "").strip()
-        channels = search_channel("xhelp") or search_channel("Help")
+        channels = search_channel("xassist") or search_channel("Assist")
         if not channels:
-            self.msg("Help channel is not available.")
+            self.msg("Assist channel is not available.")
             return
         channel = channels[0]
         if not channel.access(caller, "send"):
-            self.msg("You are not allowed to send to the Help channel.")
+            self.msg("You are not allowed to send to the Assist channel.")
             return
         if not raw:
-            self.msg("Usage: xhelp <message>   (Staff reply privately: xhelpreply <account> <message>)")
+            self.msg("Usage: xassist <message>   (Staff reply privately: xassistreply <account> <message>)")
             return
         message = strip_unsafe_input(raw, self.session)
         channel.msg(message, senders=caller)

@@ -74,6 +74,17 @@ ORGAN_INFO = {
     "pelvic_organs": ("pelvic region", "bruised", "damaged", "severely damaged"),
 }
 
+
+def is_unconscious(character):
+    """
+    True if character is in the global knocked-out/unconscious state.
+
+    This is a simple flag on character.db and is used by grapple, sever,
+    and any future mechanics (drugs, injuries, etc.) that need to check
+    or set unconsciousness.
+    """
+    return bool(getattr(getattr(character, "db", None), "unconscious", False))
+
 # Body part -> bones that can fracture
 BODY_PART_BONES = {
     "head": ["skull"],
@@ -497,7 +508,7 @@ def apply_trauma(character, body_part, damage, is_critical=False, weapon_key="fi
 def get_brutal_hit_flavor(weapon_key, body_part, trauma_result, defender_name, attacker_name, is_critical, weapon_obj=None):
     """
     Short trauma lines with hit location. One phrase per type.
-    Uses damage type (slashing/impact/penetrating/magical) for flavor. Returns (attacker_msg, defender_msg).
+    Uses damage type (slashing/impact/penetrating/burn/freeze/arc/void) for flavor. Returns (attacker_msg, defender_msg).
     """
     from world.damage_types import get_damage_type
     if not trauma_result:
@@ -517,9 +528,18 @@ def get_brutal_hit_flavor(weapon_key, body_part, trauma_result, defender_name, a
         elif damage_type == "penetrating":
             lines_atk.append(f"|rThe round did real damage inside their {loc}.|n")
             lines_def.append(f"|rSomething inside your {loc} is wrong.|n")
-        elif damage_type == "magical":
-            lines_atk.append(f"|rThe energy sears something deep in their {loc}.|n")
-            lines_def.append(f"|rSomething inside your {loc} burns.|n")
+        elif damage_type == "burn":
+            lines_atk.append(f"|rThe heat sears deep into their {loc}.|n")
+            lines_def.append(f"|rSomething inside your {loc} is burning.|n")
+        elif damage_type == "freeze":
+            lines_atk.append(f"|rThe cold bites into the core of their {loc}.|n")
+            lines_def.append(f"|rA killing cold settles deep in your {loc}.|n")
+        elif damage_type == "arc":
+            lines_atk.append(f"|rThe current rips through nerves and organs in their {loc}.|n")
+            lines_def.append(f"|rSomething vital in your {loc} spasms and goes numb.|n")
+        elif damage_type == "void":
+            lines_atk.append(f"|rSomething inside their {loc} just stops being there.|n")
+            lines_def.append(f"|rSomething in your {loc} comes apart in ways it shouldn't.|n")
         else:
             lines_atk.append(f"|rThat blow to their {loc} went deep. Something gave.|n")
             lines_def.append(f"|rSomething broke in your {loc}. Not bone.|n")
@@ -530,9 +550,18 @@ def get_brutal_hit_flavor(weapon_key, body_part, trauma_result, defender_name, a
         elif damage_type == "impact":
             lines_atk.append(f"|yYou hear the crack in their {loc}. Something broke.|n")
             lines_def.append(f"|ySomething broke in your {loc}. You heard it.|n")
-        elif damage_type == "magical":
-            lines_atk.append(f"|yYou feel the crack of bone at their {loc}.|n")
-            lines_def.append(f"|ySomething in your {loc} gives under the force.|n")
+        elif damage_type == "burn":
+            lines_atk.append(f"|yHeat warps bone at their {loc}.|n")
+            lines_def.append(f"|yBone in your {loc} feels soft and wrong.|n")
+        elif damage_type == "freeze":
+            lines_atk.append(f"|yFrozen bone at their {loc} splinters under the force.|n")
+            lines_def.append(f"|ySomething brittle in your {loc} gives way.|n")
+        elif damage_type == "arc":
+            lines_atk.append(f"|yThe jolt snaps something in their {loc}.|n")
+            lines_def.append(f"|yYour {loc} locks and something inside it cracks.|n")
+        elif damage_type == "void":
+            lines_atk.append(f"|yThe structure of bone at their {loc} just unknits.|n")
+            lines_def.append(f"|yYour {loc} feels hollow, like something is missing.|n")
         else:
             lines_atk.append(f"|yBone at their {loc}. You felt it give.|n")
             lines_def.append(f"|ySomething broke in your {loc}.|n")

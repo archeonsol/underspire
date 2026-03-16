@@ -97,6 +97,7 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         super().at_cmdset_creation()
 
         from commands.command import (
+            CmdLook, CmdScavenge, CmdSkin, CmdButcher, CmdSever,
             CmdStats, CmdAttack, CmdStance, CmdStop, CmdFlee, CmdExecute, CmdGrapple, CmdLetGo, CmdResist, CmdHt, CmdUse, CmdApply, CmdStabilize, CmdEat, CmdDrink, CmdWield, CmdUnwield, CmdFreehands, CmdInventory, CmdReload, CmdUnload, CmdCheckAmmo,
             CmdWear, CmdRemove, CmdStrip, CmdSurvey, CmdRepairArmor, CmdLoot, CmdFrisk, CmdGet, CmdPut, CmdCamera, CmdTuneTelevision, CmdTailor, CmdTease, CmdXp,
             CmdDescribeBodypart, CmdDescribeMeAs, CmdBody, CmdVoice, CmdSdesc, CmdPending, CmdLookPlace, CmdSleepPlace, CmdWakeMsg, CmdFlatlineMsg, CmdSetPlace, CmdPose, CmdPronoun, CmdEmote, CmdNoMatch,
@@ -120,6 +121,15 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
             DefaultCmdGet = None
 
         # --- Player commands (everyone) ---
+        from evennia.commands.default import general as default_general
+
+        # Use our custom CmdLook instead of Evennia's default
+        self.remove(default_general.CmdLook)
+        self.add(CmdLook())
+        self.add(CmdScavenge())
+        self.add(CmdSkin())
+        self.add(CmdButcher())
+        self.add(CmdSever())
         self.add(CmdStats())
         self.add(CmdAttack())
         self.add(CmdStop())
@@ -270,11 +280,81 @@ class StaffOnlyUnpuppet(CmdOOC):
     locks = "cmd:perm(Builder)"
 
     def func(self):
-        from commands.command import _clear_multi_puppet_links_for_account
-        _clear_multi_puppet_links_for_account(self.account)
-        super().func()
+        """
+        Staff unpuppet:
+          - No args: unpuppet completely (current behaviour).
+          - Args like 'p2 p3 p4': drop those multi-puppet slots only, keeping p1 puppeted.
+        """
+        from commands.command import (
+            _clear_multi_puppet_links_for_account,
+            _multi_puppet_list,
+            _get_object_by_id,
+        )
+
+        args = (self.args or "").strip()
+
+        # No arguments: full unpuppet + clear all multi-puppets (legacy behaviour).
+        if not args:
+            _clear_multi_puppet_links_for_account(self.account)
+            super().func()
+            if hasattr(self.account, "db"):
+                self.account.db.multi_puppets = []
+            return
+
+        # With arguments: interpret as one or more p-slots (p2, p3, ...). Only drop those slots.
+        tokens = args.split()
+        indices_to_remove = set()
+        wants_full_unpuppet = False
+        for tok in tokens:
+            tok = tok.lower()
+            if tok.startswith("p") and tok[1:].isdigit():
+                idx = int(tok[1:]) - 1  # p1 -> 0, p2 -> 1, ...
+                if idx == 0:
+                    # Asking to unpuppet p1 too – treat as full unpuppet.
+                    wants_full_unpuppet = True
+                elif idx > 0:
+                    indices_to_remove.add(idx)
+
+        if wants_full_unpuppet or not indices_to_remove:
+            # Fall back to full unpuppet if p1 requested or nothing valid parsed.
+            _clear_multi_puppet_links_for_account(self.account)
+            super().func()
+            if hasattr(self.account, "db"):
+                self.account.db.multi_puppets = []
+            return
+
+        # Remove selected multi-puppet slots while keeping main puppet (p1) active.
+        ids = _multi_puppet_list(self.account)
+        if not ids:
+            self.caller.msg("You have no puppets in your set.")
+            return
+
+        removed_names = []
+        # Work from highest index down so list pops don't shift earlier indices.
+        for idx in sorted(indices_to_remove, reverse=True):
+            if 0 <= idx < len(ids):
+                oid = ids[idx]
+                obj = _get_object_by_id(oid)
+                if obj and hasattr(obj, "db"):
+                    removed_names.append(obj.get_display_name(self.caller))
+                    for key in ("_multi_puppet_account_id", "_multi_puppet_slot"):
+                        if hasattr(obj.db, key):
+                            try:
+                                del obj.db[key]
+                            except Exception:
+                                pass
+                ids.pop(idx)
+
+        # Re-number remaining slots and persist.
         if hasattr(self.account, "db"):
-            self.account.db.multi_puppets = []
+            self.account.db.multi_puppets = ids
+        for slot, oid in enumerate(ids, start=1):
+            obj = _get_object_by_id(oid)
+            if obj:
+                from commands.command import _set_multi_puppet_link
+                _set_multi_puppet_link(obj, self.account.id, slot)
+        if removed_names:
+            self.caller.msg("Unpuppeted: %s" % ", ".join(removed_names))
 
 
 class StaffCharCreate(CmdCharCreate):
@@ -315,22 +395,22 @@ class AccountCmdSet(default_cmds.AccountCmdSet):
         self.remove(CmdCharDelete)
         self.add(StaffCharDelete())
         from commands.command import (
-            CmdStats, CmdGoLight, CmdGoShard, CmdGrapple, CmdLetGo, CmdResist,
+            CmdStats, CmdGoLight, CmdGoShard,
             CmdAddPuppet, CmdPuppetList, CmdPuppetSlot,
-            CmdChannelSub, CmdChannelUnsub,
+            CmdChannelSub, CmdChannelUnsub, CmdTuneTelevision, CmdTelevisionApp, CmdLabel,
             CmdXooc, CmdXgame, CmdXstaff, CmdHelpReply, CmdHelp, CmdOocName,
         )
         self.add(CmdStats())
         self.add(CmdGoLight())
         self.add(CmdGoShard())
-        self.add(CmdGrapple())
-        self.add(CmdLetGo())
-        self.add(CmdResist())
         self.add(CmdAddPuppet())
         self.add(CmdPuppetList())
         self.add(CmdPuppetSlot())
         self.add(CmdChannelSub())
         self.add(CmdChannelUnsub())
+        self.add(CmdTuneTelevision())
+        self.add(CmdTelevisionApp())
+        self.add(CmdLabel())
         self.add(CmdXooc())
         self.add(CmdXgame())
         self.add(CmdXstaff())

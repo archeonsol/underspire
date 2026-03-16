@@ -33,10 +33,17 @@ class Corpse(DefaultObject):
             parts = get_effective_body_descriptions(self)
             merged = format_body_appearance_from_parts(parts)
             if merged:
-                return intro + "\n\n" + merged
+                intro = intro + "\n\n" + merged
         except Exception as e:
             from evennia.utils import logger
             logger.log_trace(f"Corpse.get_display_desc error: {e}")
+        extra_lines = []
+        if getattr(self.db, "skinned", False):
+            extra_lines.append("The body has been expertly skinned, raw musculature and slick fat exposed where the flesh was peeled away.")
+        if getattr(self.db, "butchered", False):
+            extra_lines.append("The torso is split wide and hollowed out, most of the useful organs carved free and taken.")
+        if extra_lines:
+            intro = intro + "\n\n" + " ".join(extra_lines)
         return intro
 
     def get_display_things(self, looker, **kwargs):

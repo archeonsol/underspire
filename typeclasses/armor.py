@@ -46,6 +46,45 @@ class Armor(Clothing):
         self.db.weight = 0
         self.db.mobility_impact = 0
         self.db.quality = 100
+        # Bind to an armor template by default, using the object's key as identifier.
+        if not getattr(self.db, "armor_template", None):
+            self.db.armor_template = self.key
+        self._apply_armor_template_defaults()
+
+    def _apply_armor_template_defaults(self):
+        """
+        Populate this Armor from world.armor_levels based on db.armor_template or the key.
+        Allows staff to @create e.g. 'Tunnelbone wrap':Armor and get a fully defined piece.
+        """
+        ident = getattr(self.db, "armor_template", None) or self.key
+        if not ident:
+            return
+        try:
+            from world.armor_levels import find_armor_template
+        except Exception:
+            return
+        template = find_armor_template(ident)
+        if not template:
+            return
+        # Store canonical template key and level
+        self.db.armor_template = template.get("key", ident)
+        self.db.armor_level = template.get("level", getattr(self.db, "armor_level", 1) or 1)
+        # Core armor stats
+        self.db.armor_layer = template.get("layer", getattr(self.db, "armor_layer", 0) or 0)
+        self.db.covered_parts = list(template.get("covered_parts") or [])
+        prot = template.get("protection")
+        if isinstance(prot, dict):
+            self.db.protection = dict(prot)
+        self.db.stacking_score = template.get("stacking_score", getattr(self.db, "stacking_score", 0) or 0)
+        self.db.mobility_impact = template.get("mobility_impact", getattr(self.db, "mobility_impact", 0) or 0)
+        # Quality defaults to 100 unless caller has already set something else
+        if getattr(self.db, "quality", None) is None:
+            self.db.quality = 100
+        # Descriptions
+        if not getattr(self.db, "desc", None) and template.get("desc"):
+            self.db.desc = template["desc"]
+        if template.get("worn_desc"):
+            self.db.worn_desc = template["worn_desc"]
 
     def get_protection(self, damage_type):
         """Return effective protection for this damage type (scaled by quality)."""

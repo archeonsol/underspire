@@ -31,10 +31,6 @@ class ObjectParent:
             cur = CmdSet()
         return cur, stack
 
-    def get_extra_display_name_info(self, looker=None, **kwargs):
-        """Hide (#dbref) from all look output. No permission check."""
-        return ""
-
 
 class Object(ObjectParent, DefaultObject):
     """

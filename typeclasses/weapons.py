@@ -74,8 +74,41 @@ class CombatWeapon(DefaultObject):
     """
     def at_object_creation(self):
         self.db.weapon_key = WEAPON_KEY_UNARMED
-        self.db.damage_type = "impact"  # slashing, impact, penetrating, magical
+        self.db.damage_type = "impact"  # slashing, impact, penetrating, burn/freeze/arc/void via overrides
         self.db.damage_mod = 0  # Future: quality modifier applied to move damage
+        # Subclasses will normally set weapon_key and then bind to a concrete template.
+        if not getattr(self.db, "weapon_template", None):
+            self.db.weapon_template = self.key
+
+    def _apply_weapon_template_defaults(self):
+        """
+        Populate this object's damage_type, weapon_tier, and desc from world.weapon_tiers
+        based on db.weapon_key and db.weapon_template (or key as a fallback).
+        This makes spawning e.g. 'Scrap Knife' immediately use the Scrap Knife template.
+        """
+        weapon_key = getattr(self.db, "weapon_key", None)
+        template_name = getattr(self.db, "weapon_template", None) or self.key
+        if not weapon_key or not template_name:
+            return
+        try:
+            from world.weapon_tiers import find_weapon_template
+        except Exception:
+            return
+        entry, tier = find_weapon_template(weapon_key, template_name)
+        if not entry:
+            return
+        # Ensure we store the canonical template name and tier
+        self.db.weapon_template = entry.get("name", template_name)
+        self.db.weapon_tier = entry.get("tier", tier or 1)
+        # Use template damage_type if provided
+        dt = entry.get("damage_type")
+        if dt:
+            self.db.damage_type = dt
+        # Only override description if none was set yet
+        if not getattr(self.db, "desc", None):
+            desc = entry.get("desc")
+            if desc:
+                self.db.desc = desc
 
     def has_ammo(self):
         """True if this weapon is ranged and has at least one round loaded."""
@@ -101,6 +134,9 @@ class UnarmedWeapon(CombatWeapon):
         super().at_object_creation()
         self.db.weapon_key = WEAPON_KEY_UNARMED
         self.db.damage_type = "impact"
+        if not getattr(self.db, "weapon_template", None):
+            self.db.weapon_template = self.key
+        self._apply_weapon_template_defaults()
         if not self.db.desc:
             self.db.desc = "A weapon that augments or counts as unarmed combat."
 
@@ -114,6 +150,9 @@ class ShortBladeWeapon(CombatWeapon):
         super().at_object_creation()
         self.db.weapon_key = WEAPON_KEY_SHORT_BLADE
         self.db.damage_type = "slashing"
+        if not getattr(self.db, "weapon_template", None):
+            self.db.weapon_template = self.key
+        self._apply_weapon_template_defaults()
         if not self.db.desc:
             self.db.desc = "A short blade: knife, dagger, or similar."
 
@@ -127,6 +166,11 @@ class LongBladeWeapon(CombatWeapon):
         super().at_object_creation()
         self.db.weapon_key = WEAPON_KEY_LONG_BLADE
         self.db.damage_type = "slashing"
+        if not getattr(self.db, "weapon_template", None):
+            self.db.weapon_template = self.key
+        self._apply_weapon_template_defaults()
+        # Generic long blade defaults to a basic tunnel sword.
+        self.db.weapon_template = "Tunnel Shortsword"
         if not self.db.desc:
             self.db.desc = "A long blade: sword or similar."
 
@@ -140,6 +184,11 @@ class BluntWeapon(CombatWeapon):
         super().at_object_creation()
         self.db.weapon_key = WEAPON_KEY_BLUNT
         self.db.damage_type = "impact"
+        if not getattr(self.db, "weapon_template", None):
+            self.db.weapon_template = self.key
+        self._apply_weapon_template_defaults()
+        # Generic blunt weapon defaults to an early crafted cudgel.
+        self.db.weapon_template = "Bound Cudgel"
         if not self.db.desc:
             self.db.desc = "A blunt weapon: club, bat, hammer, or similar."
 
@@ -163,6 +212,9 @@ class SidearmWeapon(CombatWeapon, _RangedWeaponMixin):
         self.db.damage_type = "penetrating"
         from world.ammo import AMMO_TYPE_SIDEARM, DEFAULT_AMMO_CAPACITY
         self.at_object_creation_ranged(AMMO_TYPE_SIDEARM, DEFAULT_AMMO_CAPACITY["sidearm"])
+        if not getattr(self.db, "weapon_template", None):
+            self.db.weapon_template = self.key
+        self._apply_weapon_template_defaults()
         if not self.db.desc:
             self.db.desc = "A sidearm: pistol or revolver. It needs pistol ammo to fire."
 
@@ -178,6 +230,9 @@ class LongarmWeapon(CombatWeapon, _RangedWeaponMixin):
         self.db.damage_type = "penetrating"
         from world.ammo import AMMO_TYPE_LONGARM, DEFAULT_AMMO_CAPACITY
         self.at_object_creation_ranged(AMMO_TYPE_LONGARM, DEFAULT_AMMO_CAPACITY["longarm"])
+        if not getattr(self.db, "weapon_template", None):
+            self.db.weapon_template = self.key
+        self._apply_weapon_template_defaults()
         if not self.db.desc:
             self.db.desc = "A longarm: rifle or shotgun. It needs rifle ammo to fire."
 
@@ -193,5 +248,8 @@ class AutomaticWeapon(CombatWeapon, _RangedWeaponMixin):
         self.db.damage_type = "penetrating"
         from world.ammo import AMMO_TYPE_AUTOMATIC, DEFAULT_AMMO_CAPACITY
         self.at_object_creation_ranged(AMMO_TYPE_AUTOMATIC, DEFAULT_AMMO_CAPACITY["automatic"])
+        if not getattr(self.db, "weapon_template", None):
+            self.db.weapon_template = self.key
+        self._apply_weapon_template_defaults()
         if not self.db.desc:
             self.db.desc = "An automatic weapon: SMG, assault rifle, or similar. It needs automatic ammo to fire."

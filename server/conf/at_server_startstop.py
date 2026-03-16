@@ -60,12 +60,27 @@ def at_server_start():
             locks="listen:perm(Builder);send:perm(Builder);control:perm(Admin)",
         )
 
-    # OOC channels: xooc, xgame, xstaff, xhelp only (no non-x aliases)
+    # OOC channels: xooc, xgame, xstaff, xassist only (no non-x aliases)
+    # First nuke any legacy Help/xhelp channels so we can recreate cleanly.
+    try:
+        legacy_help = list(search_channel("Help")) + list(search_channel("xhelp"))
+        seen = set()
+        for ch in legacy_help:
+            if not ch or ch.id in seen:
+                continue
+            seen.add(ch.id)
+            try:
+                ch.delete()
+            except Exception:
+                continue
+    except Exception:
+        pass
+
     ooc_channels = (
         ("OOC-Chat", ["xooc"], "OOC chat. Uses your account OOC name (set with @oocname).", "listen:all();send:all();control:perm(Admin)"),
         ("Game-Help", ["xgame"], "Game help. Ask questions about how to play.", "listen:all();send:all();control:perm(Admin)"),
         ("Staff", ["xstaff"], "Staff-only channel.", "listen:perm(Builder);send:perm(Builder);control:perm(Admin)"),
-        ("Help", ["xhelp"], "One-way help to staff. You only see your own messages; staff see all. Staff reply privately with xhelp/Name message.", "listen:all();send:all();control:perm(Admin)"),
+        ("Assist", ["xassist"], "One-way assistance channel to staff. You only see your own messages; staff see all. Staff reply privately with xhelpreply <account> <message>.", "listen:all();send:all();control:perm(Admin)"),
     )
     for key, aliases, desc, locks in ooc_channels:
         if not list(search_channel(aliases[0])):

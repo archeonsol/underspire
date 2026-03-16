@@ -175,15 +175,17 @@ def node_name(caller, raw_string, **kwargs):
 
 
 def node_apply_name(caller, raw_string, **kwargs):
-    from evennia.utils.evmenu import EvMenuGotoAbortMessage
     name = (raw_string or "").strip()
     if len(name) < 2:
-        raise EvMenuGotoAbortMessage("|rName must be at least 2 characters.|n")
+        caller.msg("|rName must be at least 2 characters.|n")
+        return node_name(caller, "", **kwargs)
     if len(name) > 30:
-        raise EvMenuGotoAbortMessage("|rName must be 30 characters or fewer.|n")
+        caller.msg("|rName must be 30 characters or fewer.|n")
+        return node_name(caller, "", **kwargs)
     for c in name:
         if not (c.isalnum() or c in " -'"):
-            raise EvMenuGotoAbortMessage("|rOnly letters, numbers, spaces, hyphens, apostrophes.|n")
+            caller.msg("|rOnly letters, numbers, spaces, hyphens, apostrophes are allowed in names.|n")
+            return node_name(caller, "", **kwargs)
     caller.key = name
     if hasattr(caller, "aliases") and caller.aliases:
         try:
@@ -246,58 +248,46 @@ def node_apply_background(caller, raw_string, **kwargs):
 # ==========================================
 
 def node_priority_intro(caller, raw_string, **kwargs):
-    caller.db.stat_priority_order = []
     text = (
         "|r── TRAIT EXTRACTION ──|n\n\n"
         "The Rite is not reading words. It is reading |rinstinct|n. The things that kept you alive when the Below tried to break you.\n\n"
-        "You will choose, in order, the traits that defined you. The |Rorder|n matters. The sigil will weight your potential.\n\n"
-        "|R\"First survival trait. What was it?\"|n"
+        "You will give, in order, the traits that defined you — from most defining to least. The |Rorder|n matters.\n\n"
+        "Stats (long → short): strength (str), perception (per), endurance (end), charisma (cha), intelligence (int), agility (agi), luck (lck).\n\n"
+        "|R\"Speak them in order. Greatest to least.\"|n\n"
+        "|xExample:|n str end agi per cha int luck"
     )
-    options = [{"desc": "|rI'm ready.|n", "goto": "node_priority_choose"}]
+    options = [{"key": "_default", "goto": "node_apply_priority_order"}]
     return text, options
 
 
-def node_priority_choose(caller, raw_string, **kwargs):
-    order = getattr(caller.db, "stat_priority_order", None) or []
-    remaining = [s for s in STAT_KEYS if s not in order]
-    if not remaining:
-        caller.db.stat_caps = _compute_stat_caps(order)
-        caller.db.stats = _randomize_stats_from_priority(order)
-        del caller.db.stat_priority_order
-        text = "|r'SIGIL SEQUENCE COMPLETE.'|n\n\nProceeding to readout — then the |Rladder of marks|n."
-        options = [{"desc": "|rContinue|n", "goto": "node_stats"}]
-        return text, options
-    slot = len(order) + 1
-    if slot == 1:
-        prompt = "What was the |rfirst|n thing the undercity taught you?"
-    elif slot == 7:
-        prompt = "One trait remains. The |rlast|n thread that held you together."
-    else:
-        prompt = "What came |rnext|n?"
-    text = (
-        "|r── TRAIT — SLOT %s ──|n\n\n"
-        "%s\n\n"
-        "|R\"SELECT.\"|n"
-    ) % (slot, prompt)
-    options = []
-    for stat in remaining:
-        options.append({
-            "desc": "|x%s|n" % STAT_PRIORITY_FLAVOR.get(stat, stat.replace("_", " ").title()),
-            "goto": ("node_priority_pick", {"stat": stat}),
-        })
+def node_apply_priority_order(caller, raw_string, **kwargs):
+    """
+    Free-input stat priority: user enters e.g. 'str end agi per cha int luck'.
+    We map abbrevs/long names to STAT_KEYS, preserve order, and append any missing
+    stats at the end.
+    """
+    raw = (raw_string or "").lower().replace(",", " ")
+    tokens = [tok for tok in raw.split() if tok]
+    if not tokens:
+        caller.msg("|rEnter stats from most important to least, e.g.: str end agi per cha int luck.|n")
+        return node_priority_intro(caller, "", **kwargs)
+    order = []
+    for tok in tokens:
+        full = STAT_ABBREVS.get(tok, tok)
+        if full in STAT_KEYS and full not in order:
+            order.append(full)
+    if not order:
+        caller.msg("|rNo valid stats found. Use stat names or abbrevs: str, per, end, cha, int, agi, lck.|n")
+        return node_priority_intro(caller, "", **kwargs)
+    # Append any missing stats in default order so all 7 get a slot.
+    for stat in STAT_KEYS:
+        if stat not in order:
+            order.append(stat)
+    caller.db.stat_caps = _compute_stat_caps(order)
+    caller.db.stats = _randomize_stats_from_priority(order)
+    text = "|r'SIGIL SEQUENCE COMPLETE.'|n\n\nProceeding to readout — then the |Rladder of marks|n."
+    options = [{"desc": "|rContinue|n", "goto": "node_stats"}]
     return text, options
-
-
-def node_priority_pick(caller, raw_string, **kwargs):
-    stat = kwargs.get("stat")
-    if stat not in STAT_KEYS:
-        return node_priority_choose(caller, raw_string, **kwargs)
-    order = getattr(caller.db, "stat_priority_order", None) or []
-    if stat in order:
-        return node_priority_choose(caller, raw_string, **kwargs)
-    order = list(order) + [stat]
-    caller.db.stat_priority_order = order
-    return node_priority_choose(caller, raw_string, **kwargs)
 
 
 # ==========================================
@@ -502,14 +492,11 @@ def node_apply_gender(caller, raw_string, **kwargs):
     gender = kwargs.get("gender", "nonbinary")
     caller.db.gender = gender
     caller.db.pronoun = gender
-    text = "|r'IDENTITY LOCKED.'|n\n\n|R\"How do you stand?\"|n"
-    options = [{"desc": "|rContinue|n", "goto": "node_build"}]
+    text = "|r'IDENTITY LOCKED.'|n\n\n|R\"How do you stand? Speak height and frame.\"|n\n\n" \
+           "Examples: |x'tall heavy'|n, |x'short average'|n, |x'average thin'|n."
+    options = [{"key": "_default", "goto": "node_apply_build_and_weight"}]
     return text, options
 
-
-# ==========================================
-# BUILD (height)
-# ==========================================
 
 # Height category -> (min_cm, max_cm) for random assignment. Narrative choice only.
 HEIGHT_RANGES_CM = {
@@ -517,38 +504,6 @@ HEIGHT_RANGES_CM = {
     "average": (166, 178),
     "tall": (180, 195),
 }
-
-
-def node_build(caller, raw_string, **kwargs):
-    text = (
-        "|r── BUILD ──|n\n\n"
-        "|R\"The sigil remembers the body. How do you stand in the world?\"|n\n\n"
-        "  |xShort|n — you are on the shorter side.\n"
-        "  |xAverage|n — neither short nor tall.\n"
-        "  |xTall|n — you stand taller than most."
-    )
-    options = [
-        {"desc": "|rShort|n", "goto": ("node_apply_build", {"height_category": "short"})},
-        {"desc": "|rAverage|n", "goto": ("node_apply_build", {"height_category": "average"})},
-        {"desc": "|rTall|n", "goto": ("node_apply_build", {"height_category": "tall"})},
-    ]
-    return text, options
-
-
-def node_apply_build(caller, raw_string, **kwargs):
-    import random
-    height_category = kwargs.get("height_category", "average")
-    mn, mx = HEIGHT_RANGES_CM.get(height_category, (166, 178))
-    caller.db.height_category = height_category
-    caller.db.height_cm = random.randint(mn, mx)
-    text = "|r'HEIGHT LOCKED.'|n\n\n|R\"And your frame?\"|n"
-    options = [{"desc": "|rContinue|n", "goto": "node_weight"}]
-    return text, options
-
-
-# ==========================================
-# WEIGHT
-# ==========================================
 
 # Weight category -> (min_kg, max_kg) for random assignment. Narrative choice only.
 WEIGHT_RANGES_KG = {
@@ -558,28 +513,39 @@ WEIGHT_RANGES_KG = {
 }
 
 
-def node_weight(caller, raw_string, **kwargs):
-    text = (
-        "|r── BUILD ──|n\n\n"
-        "|R\"How does the sigil remember your frame?\"|n\n\n"
-        "  |xThin|n — slender, lean.\n"
-        "  |xAverage|n — neither thin nor heavy.\n"
-        "  |xHeavy|n — broad, heavyset."
-    )
-    options = [
-        {"desc": "|rThin|n", "goto": ("node_apply_weight", {"weight_category": "thin"})},
-        {"desc": "|rAverage|n", "goto": ("node_apply_weight", {"weight_category": "average"})},
-        {"desc": "|rHeavy|n", "goto": ("node_apply_weight", {"weight_category": "heavy"})},
-    ]
-    return text, options
-
-
-def node_apply_weight(caller, raw_string, **kwargs):
+def node_apply_build_and_weight(caller, raw_string, **kwargs):
+    """
+    Free-input build: player types e.g. 'tall heavy' or 'short average'.
+    We parse height and weight words; any missing part defaults to 'average'.
+    """
     import random
-    weight_category = kwargs.get("weight_category", "average")
-    mn, mx = WEIGHT_RANGES_KG.get(weight_category, (59, 82))
+
+    raw = (raw_string or "").lower()
+    tokens = [tok for tok in raw.replace(",", " ").split() if tok]
+    height = None
+    weight = None
+    for tok in tokens:
+        if tok in HEIGHT_RANGES_CM and height is None:
+            height = tok
+        if tok in WEIGHT_RANGES_KG and weight is None:
+            weight = tok
+    if not height and not weight:
+        caller.msg("|rDescribe height and/or frame using: short/average/tall and thin/average/heavy.|n")
+        caller.msg("|xExamples:|n tall heavy   short average   average thin")
+        # Re-present prompt
+        return node_apply_gender(caller, "", **kwargs)
+
+    height_category = height or "average"
+    weight_category = weight or "average"
+
+    h_min, h_max = HEIGHT_RANGES_CM.get(height_category, (166, 178))
+    w_min, w_max = WEIGHT_RANGES_KG.get(weight_category, (59, 82))
+
+    caller.db.height_category = height_category
+    caller.db.height_cm = random.randint(h_min, h_max)
     caller.db.weight_category = weight_category
-    caller.db.weight_kg = random.randint(mn, mx)
+    caller.db.weight_kg = random.randint(w_min, w_max)
+
     text = "|r'BUILD LOCKED.'|n\n\n|R\"The Rite is complete. Rise.\"|n"
     options = [{"desc": "|rFinalize|n", "goto": "node_finish"}]
     return text, options

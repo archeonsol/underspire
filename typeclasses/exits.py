@@ -61,6 +61,14 @@ class Exit(ObjectParent, DefaultExit):
             STAMINA_COST_WALK = 1
             STAMINA_COST_CRAWL = 0
         exhausted = is_exhausted(traversing_object)
+        # Characters missing a leg/foot can only crawl (dragging themselves).
+        try:
+            missing = set(getattr(getattr(traversing_object, "db", None), "missing_body_parts", []) or [])
+        except Exception:
+            missing = set()
+        leg_lost = bool(missing.intersection({"left thigh", "right thigh", "left foot", "right foot"}))
+        if leg_lost:
+            exhausted = True
         if exhausted:
             spend_stamina(traversing_object, STAMINA_COST_CRAWL)
             delay_secs = CRAWL_DELAY
