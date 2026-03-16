@@ -62,9 +62,12 @@ def get_city_gate_room(provider):
         if path.startswith("world.") or "/" in path or path.count(".") >= 1:
             results = search_object(path)
             return results[0] if results else None
-        # Treat as tag
+        # Treat as tag: prefer rooms (location is None); exits also have at_object_leave
         from evennia.utils.search import search_tag
         tagged = search_tag(path)
+        for obj in (tagged or []):
+            if hasattr(obj, "at_object_leave") and getattr(obj, "location", None) is None:
+                return obj
         for obj in (tagged or []):
             if hasattr(obj, "at_object_leave"):
                 return obj
@@ -79,14 +82,38 @@ class ColonyWildernessRoom(wilderness.WildernessRoom):
     - Hides coordinates from regular players.
     - Shows coordinates only to builders.
     - Avoids double (#dbref) in the header.
+    - Accepts move_type/**kwargs in at_object_receive for Evennia move_to() compatibility.
     """
+
+    def at_object_receive(self, obj, source_location, move_type="move", **kwargs):
+        """Accept move_type and kwargs so @goto/teleport into wilderness doesn't break (contrib room expects no move_type)."""
+        super().at_object_receive(obj, source_location)
+
+    def _biome_label_for_coords(self, coordinates):
+        """Return a short label for the biome at these coordinates (for room header)."""
+        if coordinates is None:
+            return "The Harshlands"
+        try:
+            x, y = coordinates
+            dist = max(abs(x), abs(y))
+            if dist <= 20:
+                return "Grasslands"
+            if dist <= 40:
+                return "Harshlands"
+            if dist <= 60:
+                return "Hills"
+            if dist <= 80:
+                return "Ruined Settlement"
+            return "Volcanic Wastes"
+        except (TypeError, ValueError):
+            return "The Harshlands"
 
     def get_display_name(self, looker, **kwargs):
         """
-        Base, uncolored name for this room.
+        Base, uncolored name for this room. Reflects the biome at this coordinate.
         """
-        name = "The Harshlands"
         coords = self.coordinates
+        name = self._biome_label_for_coords(coords)
         if looker and self.locks.check_lockstring(looker, "perm(Builder)"):
             if coords is not None:
                 try:
@@ -117,7 +144,7 @@ class ColonyWildernessProvider(wilderness.WildernessMapProvider):
 
     room_typeclass = ColonyWildernessRoom
 
-    def __init__(self, city_gate_room_path=None):
+    def __init__(self, city_gate_room_path="#222"):
         """
         Args:
             city_gate_room_path: #dbref (e.g. "#123"), search path, or tag like "city_gate"
@@ -179,24 +206,31 @@ class ColonyWildernessProvider(wilderness.WildernessMapProvider):
                 return
 
         # 2) Biome selection and description.
-        # Grasslands near the city, harsher biomes further out.
-        if abs(x) <= 20 and abs(y) <= 20:
+        # Bands by distance from (0,0): 0-20 grasslands, 20-40 harshlands, 40-60 hills, 60-80 ruined settlement, 80-100 volcanic.
+        dist = max(abs(x), abs(y))
+        if dist <= 20:
             biome = "grasslands"
             desc = (
                 "Patchy scrub and stubborn grasses cling to the broken earth. The wind carries "
                 "the distant hum of the city behind you and the faint stink of burned ozone."
             )
-        elif abs(x) <= 40 and abs(y) <= 40:
-            biome = "ashlands"
+        elif dist <= 40:
+            biome = "harshlands"
             desc = (
                 "A grey ashfall carpets the ground, muffling your steps. Charred stumps, twisted "
                 "rebar and slag heaps jut from the waste like broken teeth."
             )
-        elif abs(y) > 40:
+        elif dist <= 60:
             biome = "hills"
             desc = (
                 "Low, rolling hills of cracked stone rise and fall underfoot. Rusted wreckage "
                 "and half-buried concrete ribs jut from the slopes like old bones."
+            )
+        elif dist <= 80:
+            biome = "ruined_settlement"
+            desc = (
+                "The skeleton of an old settlement: collapsed walls, buckled frames and rubble. "
+                "Weeds and rust claim what's left. Nothing here has answered in a long time."
             )
         else:
             biome = "volcanic"

@@ -64,7 +64,12 @@ class CmdScavenge(Command):
     def func(self):
         from evennia.utils import delay
         from world.skills import SKILL_STATS
-        from world.scavenging import perform_scavenge, _pick_loot_table
+        from world.scavenging import (
+            perform_scavenge,
+            _pick_loot_table,
+            get_scavenge_daily_limit,
+            get_server_date_key,
+        )
 
         caller = _command_character(self)
         if not caller or not getattr(caller, "db", None) or not hasattr(caller.db, "stats"):
@@ -81,17 +86,32 @@ class CmdScavenge(Command):
             caller.msg("There is nothing here to scavenge.")
             return
 
-        # Prevent spamming: simple per-character cooldown
-        try:
-            last = getattr(caller.db, "last_scavenge_at", None)
-            import time
+        # Global daily limit (resets at server midnight UTC); depends on scavenging skill level.
+        import time
+        today = get_server_date_key()
+        daily = getattr(caller.db, "scavenge_daily", None) or {}
+        if daily.get("date") != today:
+            daily = {"date": today, "count": 0}
+        skill_level = getattr(caller, "get_skill_level", lambda s: 0)("scavenging")
+        max_per_day = get_scavenge_daily_limit(skill_level)
+        if (daily.get("count") or 0) >= max_per_day:
+            caller.msg("You've already scavenged as much as you can today. Try again after the next server reset.")
+            return
+        daily["count"] = (daily.get("count") or 0) + 1
+        caller.db.scavenge_daily = daily
+
+        # Per-location cooldown (8 hours). Use room coordinates for wilderness (rooms cycle).
+        location_key = tuple(loc.coordinates) if getattr(loc, "coordinates", None) is not None else getattr(loc, "id", None)
+        if location_key is not None:
             now = time.time()
-            if last and now - float(last) < 10:
-                caller.msg("You just finished searching — give it a moment before you rummage again.")
+            cooldowns = dict(getattr(caller.db, "scavenge_location_cooldowns", None) or {})
+            # Prune expired entries
+            cooldowns = {k: v for k, v in cooldowns.items() if now - v < 8 * 3600}
+            if cooldowns.get(location_key) and (now - cooldowns[location_key]) < 8 * 3600:
+                caller.msg("You've already looked here.")
                 return
-            caller.db.last_scavenge_at = now
-        except Exception as e:
-            logger.log_trace("scavenge_cmds.CmdScavenge cooldown: %s" % e)
+            # Keep pruned dict for next time we save
+            caller.db.scavenge_location_cooldowns = cooldowns
 
         if getattr(caller.ndb, "is_scavenging", False):
             caller.msg("You are already picking through this place.")
@@ -126,6 +146,16 @@ class CmdScavenge(Command):
             if not obj:
                 caller.msg("You come up empty-handed this time.")
                 return
+
+            # Record 8-hour cooldown for this location (use starting loc so wilderness coords are correct)
+            try:
+                loc_key = tuple(loc.coordinates) if getattr(loc, "coordinates", None) is not None else getattr(loc, "id", None)
+                if loc_key is not None:
+                    cooldowns = dict(getattr(caller.db, "scavenge_location_cooldowns", None) or {})
+                    cooldowns[loc_key] = time.time()
+                    caller.db.scavenge_location_cooldowns = cooldowns
+            except Exception as e:
+                logger.log_trace("scavenge_cmds.CmdScavenge record cooldown: %s" % e)
 
             name = obj.get_display_name(caller) if hasattr(obj, "get_display_name") else obj.key
             caller.msg(f"|gYou find|n {name}|g while scavenging.|n")
@@ -564,14 +594,14 @@ class CmdSever(Command):
         except Exception:
             severed = None
 
-        # Mark missing parts on living target; corpses are static but we still update their
-        # body_descriptions and medical state so look/medical summaries reflect the loss.
+        # Mark missing parts on target so the same part cannot be severed again (and look/medical reflect the loss).
+        missing = list(getattr(target.db, "missing_body_parts", []) or [])
+        for p in removed_parts:
+            if p not in missing:
+                missing.append(p)
+        target.db.missing_body_parts = missing
+
         if living_target:
-            missing = list(getattr(living_target.db, "missing_body_parts", []) or [])
-            for p in removed_parts:
-                if p not in missing:
-                    missing.append(p)
-            living_target.db.missing_body_parts = missing
             # Clear any held items in lost hands.
             if "left arm" in removed_parts or "left hand" in removed_parts:
                 held = getattr(living_target.db, "left_hand_obj", None)
@@ -588,7 +618,6 @@ class CmdSever(Command):
                 _update_primary_wielded(living_target)
             except Exception:
                 pass
-            living_target.db.missing_body_parts = missing
 
         # Update descriptive text and injuries for both living characters and corpses.
         # 1) Clear organ, bone, and surface injuries tied to removed parts so summaries don't
