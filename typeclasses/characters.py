@@ -311,7 +311,7 @@ class Character(RoleplayMixin, MedicalMixin, RPGCharacterMixin, DefaultCharacter
         from world.xp import grant_pending_xp
         xp_granted, drops = grant_pending_xp(self)
         if xp_granted > 0 and drops > 0:
-            self.msg("|gYou gain {} XP from {} neural-link sync(s) (max 4 per 24h).|n".format(xp_granted, drops))
+            self.msg("|gYou got {} XP.|n".format(int(xp_granted) if xp_granted == int(xp_granted) else xp_granted))
         # Personal login message (only to the player)
         self.msg("|cYou open your eyes and return to the world, awake.|n")
         # Wake-up message to room when logging in (not during first-time chargen)

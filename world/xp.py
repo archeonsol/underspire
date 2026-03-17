@@ -1,6 +1,8 @@
 """
 XP system: time-based gains (2 XP per 6h window, max 4 drops per 24h).
-XP_CAP = 3050 (max in-game earnings; chargen XP is separate).
+Drops use UTC-aligned 6h windows (00:00, 06:00, 12:00, 18:00 UTC); granted on login (catch-up).
+XP_CAP = 3050 (max in-game earnings; chargen XP is separate). XP spent on languages does not count
+toward the cap (tracked in xp_spent_on_languages) so characters can earn that XP back.
 Skills: stored = display (0-150). Levels 0-80 = level*0.5; 81+ from world.constants.SKILL_XP_CURVE_LATE.
 Stats: stored 0-300, display = stored//2 (via character.get_display_stat). Cost: 2.0 to 180, then exponential.
 """
@@ -97,8 +99,7 @@ def _stat_level(character, stat_key):
     stats = getattr(character.db, "stats", None) or {}
     val = stats.get(stat_key, 0)
     if isinstance(val, int):
-        if 0 <= val <= 150:
-            val = min(MAX_STAT_LEVEL, val * 2)  # legacy 0-150 scale -> 0-300
+        # Stored in DB is always 0-300; no legacy scale conversion (would double new writes).
         return max(0, min(MAX_STAT_LEVEL, val))
     lo, hi = letter_to_level_range(str(val).upper() if val else "U", MAX_STAT_LEVEL)
     return (lo + hi) // 2
@@ -129,8 +130,7 @@ def _stat_cap_level(character, stat_key):
     caps = getattr(character.db, "stat_caps", None) or {}
     val = caps.get(stat_key, MAX_STAT_LEVEL)
     if isinstance(val, int):
-        if 0 <= val <= 150:
-            val = val * 2
+        # Cap in DB is always 0-300; no legacy scale conversion.
         return max(0, min(MAX_STAT_LEVEL, val))
     lo, hi = letter_to_level_range(str(val).upper() if val else "A", MAX_STAT_LEVEL)
     return hi
@@ -161,40 +161,57 @@ def get_xp_cost_skill(character, skill_key):
     return (round(cost, 3), None) if cost is not None else (None, None)
 
 
+def _utc_window_id(timestamp=None):
+    """Return the 6h UTC window id for a given time (default now). Windows align to 00:00, 06:00, 12:00, 18:00 UTC."""
+    t = timestamp if timestamp is not None else time.time()
+    return int(t // DROP_INTERVAL_SECS)
+
+
 def grant_pending_xp(character):
     """
-    Grant at most one XP drop on login if a 6h window has passed.
-    Max 4 drops per rolling 24h. Respects XP_CAP (3050).
+    Grant at most one XP drop on login for the most recent completed UTC 6h window (00:00, 06:00, 12:00, 18:00 UTC).
+    No bulk catch-up: missing multiple windows only grants the latest one. Respects XP cap; language XP doesn't count toward cap.
     Returns (xp_granted, drops_used).
     """
     now = time.time()
     xp = float(getattr(character.db, "xp", 0) or 0)
-    cap = int(getattr(character.db, "xp_cap", XP_CAP) or XP_CAP)
-    if xp >= cap:
+    base_cap = int(getattr(character.db, "xp_cap", XP_CAP) or XP_CAP)
+    language_xp_spent = float(getattr(character.db, "xp_spent_on_languages", 0) or 0)
+    effective_cap = base_cap + language_xp_spent
+    if xp >= effective_cap:
         return 0, 0
 
-    last = getattr(character.db, "xp_last_drop_time", None) or 0
-    drop_times = list(getattr(character.db, "xp_drop_times", None) or [])
-    drop_times = [t for t in drop_times if now - t < WINDOW_24H_SECS]
-    drop_times.sort()
+    # UTC-aligned 6h windows: catch-up grants only the single most recent completed window (no bulk catch-up)
+    current_window = _utc_window_id(now)
+    last_completed_window = current_window - 1
 
-    if last <= 0:
-        periods_elapsed = DROPS_PER_24H
-    else:
-        periods_elapsed = int((now - last) / DROP_INTERVAL_SECS)
-    can_claim = min(1, periods_elapsed, DROPS_PER_24H - len(drop_times))
-    if can_claim <= 0:
+    # Migrate legacy xp_drop_times to xp_drop_window_ids (timestamps are UTC epoch)
+    drop_window_ids = list(getattr(character.db, "xp_drop_window_ids", None) or [])
+    if not drop_window_ids:
+        legacy_times = list(getattr(character.db, "xp_drop_times", None) or [])
+        if legacy_times:
+            drop_window_ids = [_utc_window_id(t) for t in legacy_times]
+            character.db.xp_drop_window_ids = drop_window_ids
+
+    # Keep only window ids from the last 24h
+    drop_window_ids = [w for w in drop_window_ids if w >= current_window - 4]
+    already_got = set(drop_window_ids)
+    # Only grant for the most recent completed window if we haven't already
+    if last_completed_window in already_got:
         return 0, 0
-
-    total_grant = min(can_claim * DROP_XP, cap - xp)
-    drops_used = total_grant // DROP_XP if DROP_XP else 0
+    to_grant_windows = [last_completed_window]
+    drops_used = 1
     if drops_used <= 0:
         return 0, 0
 
-    drop_times.append(now)
-    drop_times = [t for t in drop_times if now - t < WINDOW_24H_SECS]
-    drop_times.sort()
-    character.db.xp_drop_times = drop_times[-DROPS_PER_24H:]
-    character.db.xp_last_drop_time = now
+    total_grant = min(drops_used * DROP_XP, effective_cap - xp)
+    drops_used = int(total_grant // DROP_XP) if DROP_XP else 0
+    if drops_used <= 0:
+        return 0, 0
+
+    drop_window_ids.extend(to_grant_windows[:drops_used])
+    drop_window_ids = [w for w in drop_window_ids if w >= current_window - 4]
+    drop_window_ids = sorted(set(drop_window_ids))[-DROPS_PER_24H:]
+    character.db.xp_drop_window_ids = drop_window_ids
     character.db.xp = xp + total_grant
     return total_grant, drops_used

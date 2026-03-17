@@ -44,30 +44,29 @@ class CmdXp(Command):
         caller = self.caller
         xp = float(getattr(caller.db, "xp", 0) or 0)
         cap = int(getattr(caller.db, "xp_cap", XP_CAP) or XP_CAP)
+        language_xp_spent = float(getattr(caller.db, "xp_spent_on_languages", 0) or 0)
+        effective_cap = cap + language_xp_spent
 
         if not self.args or self.args.strip().lower() in ("show", ""):
             # Column widths for aligned display (match chargen)
             NAME_W, LETTER_W, ADJ_W = 24, 5, 20
             xp_display = int(xp) if xp == int(xp) else round(xp, 2)
-            cap_display = int(cap) if cap == int(cap) else round(cap, 2)
+            cap_display = int(effective_cap) if effective_cap == int(effective_cap) else round(effective_cap, 2)
             output = "|cXP|n: |w{}|n (cap |w{}|n)".format(xp_display, cap_display)
-            if xp >= cap:
+            if xp >= effective_cap:
                 output += " |x(you are at your XP cap; you will not gain more time-based XP until this cap is raised)|n"
             output += "\n\n"
             output += "|cXP needed for next raise:|n\n\n"
             output += "|wStats|n:\n"
             for sk in STAT_KEYS:
-                cur = _stat_level(caller, sk)
-                cap_for_stat = _stat_cap_level(caller, sk)
-                at_cap = cur >= cap_for_stat or cur >= MAX_STAT_LEVEL
                 cost, _ = get_xp_cost_stat(caller, sk)
-                letter = get_stat_grade(cur)
+                letter = get_stat_grade(_stat_level(caller, sk))
                 adj = caller.get_stat_grade_adjective(letter, sk)
                 name_pad = sk.capitalize().ljust(NAME_W)
                 letter_part = ("[" + letter + "] ").ljust(LETTER_W)
                 adj_pad = adj.ljust(ADJ_W)
-                if at_cap or cost is None:
-                    output += "  {} {} {} |x(at your cap)|n\n".format(name_pad, letter_part, adj_pad)
+                if cost is None:
+                    output += "  {} {} {} |x(at cap)|n\n".format(name_pad, letter_part, adj_pad)
                 else:
                     cost_str = str(int(cost)) if cost == int(cost) else str(round(cost, 2))
                     output += "  {} {} {} next raise: |w{} XP|n\n".format(
@@ -163,6 +162,10 @@ class CmdXp(Command):
                         langs[attr_key] = int(new_val)
                         setattr(caller.db, db_key, langs)
                         caller.db.xp = xp_now - total_spent
+                        # Language XP does not count toward cap; track so they can earn it back
+                        caller.db.xp_spent_on_languages = float(
+                            getattr(caller.db, "xp_spent_on_languages", 0) or 0
+                        ) + total_spent
                         from world.language import get_language_level_name
 
                         level_name = get_language_level_name(new_val)
@@ -181,24 +184,6 @@ class CmdXp(Command):
                     else:
                         # Determine grade-letter helper
                         get_grade_fn = get_stat_grade if sub == "stat" else get_skill_grade
-                        
-                        # Extra safety: if a stat/skill cap has changed since the pending advance was created
-                        if sub == "stat":
-                            from world.xp import _stat_level, _stat_cap_level
-                            cur_now = _stat_level(caller, attr_key)
-                            cap_now = _stat_cap_level(caller, attr_key)
-                            if cur_now >= cap_now:
-                                caller.msg("That stat is already at its cap; your pending XP advance has been cancelled.")
-                                del caller.db.pending_xp_advance
-                                return
-                        elif sub == "skill":
-                            from world.xp import _skill_level, _skill_cap_level
-                            cur_now = _skill_level(caller, attr_key)
-                            cap_now = _skill_cap_level(caller, attr_key)
-                            if cur_now >= cap_now:
-                                caller.msg("That skill is already at its cap; your pending XP advance has been cancelled.")
-                                del caller.db.pending_xp_advance
-                                return
 
                         # SAFELY EXTRACT, MODIFY, AND FORCE-SAVE THE DICTIONARY
                         existing = getattr(caller.db, db_key, None) or {}
@@ -206,53 +191,47 @@ class CmdXp(Command):
                             db_dict = dict(existing)
                         except Exception:
                             db_dict = {}
-                            
-                        # Store the raw, unmodified value! (0-300 for stats, 0-150 for skills)
-                        # NEVER save the // 2 display value to the database.
+
+                        # Stats: store raw 0-300 "stored_new" value; display = stored // 2 is derived.
+                        # Skills: stored = display = 0-150.
                         stored_new = int(new_val)
                         db_dict[attr_key] = stored_new
-                        
+
                         # Force the database to save
                         setattr(caller.db, db_key, db_dict)
-                        
+
                         # Deduct XP
                         caller.db.xp = xp_now - total_spent
                         remainder = caller.db.xp
-                        
+
                         # Calculate display output
                         old_letter = get_grade_fn(cur)
                         new_letter = get_grade_fn(stored_new)
                         letter_changed = old_letter != new_letter
-                        
                         spent_str = (
                             str(int(total_spent))
                             if total_spent == int(total_spent)
                             else str(round(total_spent, 2))
                         )
-                        
                         if levels_gained == 1:
                             msg = "You spend {} XP.".format(spent_str)
                         else:
                             msg = "You spend {} XP and raise {} {} time{}.".format(
                                 spent_str, label, levels_gained, "s" if levels_gained > 1 else ""
                             )
-                            
                         if letter_changed:
                             if sub == "stat":
                                 adj = caller.get_stat_grade_adjective(new_letter, attr_key)
                             else:
                                 adj = caller.get_skill_grade_adjective(new_letter)
                             msg += " {} is now [{}] {}.".format(label, new_letter, adj)
-                            
                         rem_str = (
                             str(int(remainder))
                             if remainder == int(remainder)
                             else str(round(remainder, 2))
                         )
-                        
                         if stored_new >= cap and remainder > 0:
                             msg += " You reached your cap; {} XP remains.".format(rem_str)
-                            
                         caller.msg(msg)
                         del caller.db.pending_xp_advance
             return
@@ -377,7 +356,7 @@ class CmdXp(Command):
             }
             raise_msg = "time" if levels_gained == 1 else "times"
             caller.msg(
-                "Raise |w{}|n by |w{}|n level(s)? This will spend |w{}|n XP ({} raise{}). "
+                "Raise |w{}|n |w{}|n time(s)? This will spend |w{}|n XP. "
                 "Type |w@xp confirm|n to confirm or |w@xp cancel|n to cancel.".format(
                     stat_key.capitalize(), levels_gained, spent_str, levels_gained, raise_msg
                 )
@@ -432,7 +411,7 @@ class CmdXp(Command):
             }
             raise_msg = "time" if levels_gained == 1 else "times"
             caller.msg(
-                "Raise |w{}|n by |w{}|n level(s)? This will spend |w{}|n XP ({} raise{}). "
+                "Raise |w{}|n |w{}|n time(s)? This will spend |w{}|n XP. "
                 "Type |w@xp confirm|n to confirm or |w@xp cancel|n to cancel.".format(
                     label, levels_gained, spent_str, levels_gained, raise_msg
                 )
