@@ -28,7 +28,7 @@ LOOK_SDESC_COLOR = "|w"              # white for (a tall man wearing...)
 
 class Character(RoleplayMixin, MedicalMixin, RPGCharacterMixin, DefaultCharacter):
     """
-    The 'Colony' Core Engine. 
+    The 'Colony' Core Engine.
     Uses a Qualitative Grade system (U through A, 21 letters) where:
     - Skill = The success ceiling (Technical precision)
     - Stat = The roll weight/floor (Raw power)
@@ -50,7 +50,7 @@ class Character(RoleplayMixin, MedicalMixin, RPGCharacterMixin, DefaultCharacter
     def at_object_creation(self):
         """Called only once, when the character is first created."""
         super().at_object_creation()
-        
+
         # --- SPECIAL: levels 0-300 (letter displayed by tier; 300 = A)
         self.db.stats = {
             "strength": 0,
@@ -61,12 +61,12 @@ class Character(RoleplayMixin, MedicalMixin, RPGCharacterMixin, DefaultCharacter
             "agility": 0,
             "luck": 0,
         }
-        
+
         # --- SKILLS: levels 0-150; canonical list in world.skills
         from world.skills import SKILL_KEYS
         self.db.skills = {sk: 0 for sk in SKILL_KEYS}
-        
-        self.db.current_hp = None 
+
+        self.db.current_hp = None
         self.db.current_stamina = None
         self.db.background = "Unknown"
         self.db.traits = []
@@ -127,6 +127,38 @@ class Character(RoleplayMixin, MedicalMixin, RPGCharacterMixin, DefaultCharacter
                     logger.log_trace("characters.at_server_reload FlatlinedCmdSet: %s" % err)
         except Exception as err:
             logger.log_trace("characters.at_server_reload is_flatlined: %s" % err)
+
+    def at_pre_move(self, destination, **kwargs):
+        """
+        Called just before starting to move this object to destination.
+        If this returns False, the move is cancelled.
+
+        Block normal movement when sitting/lying (must stand first).
+        Allow teleportation (@tel, @goto, etc) to clear state automatically.
+        """
+        move_type = kwargs.get("move_type", "move")
+
+        # Check if sitting/lying
+        is_seated = self.db.sitting_on is not None
+        is_lying = self.db.lying_on is not None or self.db.lying_on_table is not None
+
+        # Block normal movement (walking through exits)
+        if (is_seated or is_lying) and move_type in ("move", "traverse"):
+            if is_seated:
+                self.msg("You need to stand up first.")
+            else:
+                self.msg("You need to get up first.")
+            return False
+
+        # Allow teleportation, but clear state
+        if is_seated:
+            del self.db.sitting_on
+        if self.db.lying_on:
+            del self.db.lying_on
+        if self.db.lying_on_table:
+            del self.db.lying_on_table
+
+        return True
 
     def at_init(self):
         """Ensure character uses the game's CharacterCmdSet (stats, heal, etc.). Fixes old chars with wrong path.
