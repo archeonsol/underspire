@@ -1,3 +1,7 @@
+# Dev
+.DS_Store
+/venv
+
 *.py[cod]
 
 # C extensions

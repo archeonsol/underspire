@@ -112,18 +112,19 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         from typeclasses.perfume import CmdUsePerfume
         from commands.death_cmds import CmdGoOOC, CmdReturnIC, CmdEnterPod, CmdLeavePod, CmdSplinterMe
         from commands.vehicle_cmds import CmdEnterVehicle, CmdExitVehicle, CmdStartEngine, CmdStopEngine, CmdShutoffEngine, CmdDrive, CmdVehicleStatus, CmdRepairPart
+        from commands.matrix_cmds import CmdJackIn, CmdJackOut
         from commands.staff_cmds import (
             CmdStats, CmdGiveXp, CmdStaffSheet, CmdStaffSetStat, CmdStaffSetSkill,
             CmdCreateItem, CmdTypeclasses, CmdSpawnItem, CmdSpawnArmor, CmdSpawnVehicle, CmdSpawnMedical, CmdSpawnOR,
             CmdSpawnCreature, CmdCreatureSet, CmdDespawn, CmdNpc, CmdMakeNpc, CmdNpcSet, CmdSpawnPerfume, CmdBadSmellRoom,
             CmdGoto, CmdGotoRoom, CmdSummon, CmdSetVoid, CmdVoid, CmdRelease, CmdBoot, CmdFind, CmdAnnounce, CmdRestore, CmdDebugKill,
-            CmdSpawnSeat, CmdSpawnBed, CmdSpawnPod, CmdSpawnCamera, CmdSpawnTelevision,
+            CmdSpawnSeat, CmdSpawnBed, CmdSpawnPod, CmdSpawnDiveRig, CmdSpawnCamera, CmdSpawnTelevision,
             CmdEmoteDebug, CmdDamageVehicle,
         )
         from commands.player_cmds import CmdXp
         from commands.builder_commands import (
-            CmdTag, CmdHere, CmdListCmds, CmdCloneSpawn, CmdDig, CmdDesc,
-            CmdSetAttr, CmdName, CmdOpen, CmdDestroy,
+            CmdTag, CmdHere, CmdListCmds, CmdCloneSpawn, CmdDig, CmdMatrixDig, CmdDesc,
+            CmdSetAttr, CmdName, CmdOpen, CmdDestroy, CmdMatrixLink,
         )
         try:
             from evennia.commands.default.general import CmdGet as DefaultCmdGet
@@ -216,11 +217,13 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdListCmds())
         self.add(CmdCloneSpawn())
         self.add(CmdDig())
+        self.add(CmdMatrixDig())
         self.add(CmdDesc())
         self.add(CmdSetAttr())
         self.add(CmdName())
         self.add(CmdOpen())
         self.add(CmdDestroy())
+        self.add(CmdMatrixLink())
         self.add(CmdEnterPod())
         self.add(CmdSplinterMe())
         self.add(SplinterPodCmdSet())  # CmdLeavePod here so it beats exits (priority 110)
@@ -233,6 +236,8 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdDrive())
         self.add(CmdVehicleStatus())
         self.add(CmdRepairPart())
+        self.add(CmdJackIn())
+        self.add(CmdJackOut())
 
         # --- Admin commands (Builder/Admin only; locked in command class) ---
         self.add(CmdEmoteDebug())
@@ -267,6 +272,7 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdSpawnSeat())
         self.add(CmdSpawnBed())
         self.add(CmdSpawnPod())
+        self.add(CmdSpawnDiveRig())
         self.add(CmdSpawnCamera())
         self.add(CmdSpawnTelevision())
         self.add(CmdBadSmellRoom())

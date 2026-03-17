@@ -24,3 +24,7 @@ class Item(DefaultObject):
         base = super().get_display_name(looker, **kwargs)
         # Strip a trailing '(#number)' (with or without color codes before it).
         return re.sub(r"\(#\d+\)$", "", str(base))
+
+
+# Re-export matrix item types for convenience
+from .matrix.items import MatrixItem

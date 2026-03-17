@@ -37,7 +37,8 @@ def _staggered_walk_callback(obj_id, dest_id):
         # If grappler: bring grappled victim along
         victim = getattr(getattr(obj, "db", None), "grappling", None)
         if victim and hasattr(victim, "move_to"):
-            victim.move_to(dest, quiet=True)
+            # Pass move_type to trigger forced removal handling in at_pre_move
+            victim.move_to(dest, quiet=True, move_type="teleport")
             if dest and hasattr(dest, "contents_get"):
                 for v in dest.contents_get(content_type="character"):
                     if v in (obj, victim):

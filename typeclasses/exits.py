@@ -31,6 +31,13 @@ class Exit(ObjectParent, DefaultExit):
         if not destination:
             super().at_traverse(traversing_object, destination)
             return
+        # Sitting/lying: must stand/get up first (check before any messages)
+        if getattr(traversing_object.db, "sitting_on", None):
+            traversing_object.msg("You need to stand up first.")
+            return
+        if getattr(traversing_object.db, "lying_on", None) or getattr(traversing_object.db, "lying_on_table", None):
+            traversing_object.msg("You need to get up first.")
+            return
         # Flatlined (dying): no movement — lock all IC action
         try:
             from world.death import is_flatlined

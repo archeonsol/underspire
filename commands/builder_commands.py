@@ -4,6 +4,8 @@ Prefixed with 'bu' to leave short names free. Locked to Builder only.
 """
 from evennia import Command
 from evennia.utils.create import create_object
+from typeclasses.matrix.rooms import MatrixNode
+from typeclasses.matrix.exits import MatrixExit
 
 
 class CmdTag(Command):
@@ -155,6 +157,8 @@ class CmdDig(Command):
     Exit format: name or name;alias1;alias2  (e.g. west;w  or south;s;down)
     Example: budig Testing = west;w, east;e
     Use /tel to teleport to the new room after creating.
+
+    Note: Cannot create meatspace rooms from Matrix rooms. Use mdig for Matrix rooms.
     """
     key = "budig"
     switch_options = ("tel", "teleport")
@@ -185,6 +189,11 @@ class CmdDig(Command):
         loc = caller.location
         if not loc:
             caller.msg("You are nowhere.")
+            return
+
+        # Verify current location is NOT a Matrix room
+        if isinstance(loc, MatrixNode):
+            caller.msg("You are in a Matrix room. Use mdig to create Matrix rooms.")
             return
         try:
             from typeclasses.rooms import Room
@@ -351,11 +360,156 @@ class CmdName(Command):
         caller.msg("Renamed %s to |w%s|n." % (old, new_name))
 
 
+class CmdMatrixDig(Command):
+    """
+    Create a new Matrix room and link it with exits. Creates MatrixNode/MatrixExit.
+    Usage: mdig <room name> = <exit out>[, <exit back>]
+    Exit format: name or name;alias1;alias2  (e.g. west;w  or south;s;down)
+    Example: mdig The Cortex = entrance;in, exit;out
+    Use /tel to teleport to the new room after creating.
+    Use /force to create a Matrix room without exits (for bootstrapping or isolated rooms).
+    """
+    key = "mdig"
+    switch_options = ("tel", "teleport", "force")
+    locks = "cmd:perm(Builder)"
+    help_category = "Building"
+
+    def parse(self):
+        """
+        Parse the command to extract switches manually.
+        Evennia's default parser doesn't seem to be picking them up.
+        """
+        super().parse()
+
+        # Extract switches from raw_string
+        # Format: "mdig/switch1/switch2 args"
+        raw = self.raw_string or ""
+        self.switches = []
+
+        # Find the command and switches
+        parts = raw.split(None, 1)  # Split on first whitespace
+        if parts:
+            cmd_part = parts[0]  # e.g., "mdig/force/tel"
+            # Split by / to get switches
+            segments = cmd_part.split('/')
+            if len(segments) > 1:
+                # First segment is the command, rest are switches
+                self.switches = segments[1:]
+
+            # Update args to not include switches
+            if len(parts) > 1:
+                self.args = parts[1]
+            else:
+                self.args = ""
+
+    def func(self):
+        caller = self.caller
+        args = (self.args or "").strip()
+
+        # Check switches
+        switches = getattr(self, 'switches', [])
+        teleport = "tel" in switches or "teleport" in switches
+        force = "force" in switches
+
+        # With /force, exit spec is optional
+        if "=" not in args:
+            if force:
+                room_name = args
+                exit_spec = None
+            else:
+                caller.msg("Usage: |wmdig <room name> = <exit out>[, <exit back>]|n  Exits: |wname;alias|n e.g. mdig The Cortex = entrance;in, exit;out")
+                caller.msg("Use |wmdig/force <room name>|n to create a Matrix room without exits.")
+                return
+        else:
+            room_spec, exit_spec = args.split("=", 1)
+            room_name = room_spec.strip()
+            exit_spec = exit_spec.strip()
+
+        if not room_name:
+            caller.msg("Give a room name.")
+            return
+
+        # Parse exit spec if provided
+        if exit_spec:
+            parts = [p.strip() for p in exit_spec.split(",")]
+            out_spec = parts[0] if parts else "out"
+            back_spec = parts[1] if len(parts) > 1 else None
+            exit_out, out_aliases = _parse_exit_spec(out_spec)
+            exit_back, back_aliases = _parse_exit_spec(back_spec) if back_spec else (None, [])
+        else:
+            exit_out, out_aliases = None, []
+            exit_back, back_aliases = None, []
+        loc = caller.location
+        if not loc:
+            caller.msg("You are nowhere.")
+            return
+
+        # Check if we're in a Matrix room
+        loc_is_matrix = isinstance(loc, MatrixNode)
+
+        # Require /force flag to create Matrix rooms from meatspace
+        if not loc_is_matrix and not force:
+            caller.msg("You must be in a Matrix room to use mdig.")
+            caller.msg("Use |wmdig/force|n to create the first Matrix room from meatspace.")
+            return
+
+        new_room = create_object(MatrixNode, key=room_name, location=None)
+        if not new_room:
+            caller.msg("Could not create Matrix room.")
+            return
+
+        # If /force flag is set or no exit spec provided, skip exit creation
+        if force or not exit_spec:
+            caller.msg("Created Matrix room |m%s|n (#%s) with no exits." % (room_name, new_room.id))
+            if teleport:
+                caller.move_to(new_room)
+                caller.msg("You teleport to the new Matrix room.")
+            return
+
+        # If not in Matrix (shouldn't happen due to check above, but safety)
+        if not loc_is_matrix:
+            caller.msg("Error: Cannot create exits from meatspace.")
+            return
+
+        out_exit = create_object(MatrixExit, key=exit_out, location=loc, destination=new_room)
+        if not out_exit:
+            caller.msg("Matrix room created but could not create exit.")
+            return
+        for al in out_aliases:
+            try:
+                out_exit.aliases.add(al)
+            except Exception:
+                pass
+
+        if exit_back:
+            back_exit = create_object(MatrixExit, key=exit_back, location=new_room, destination=loc)
+            if back_exit:
+                for al in back_aliases:
+                    try:
+                        back_exit.aliases.add(al)
+                    except Exception:
+                        pass
+
+        msg = "Created Matrix room |m%s|n (#%s) with exit |w%s|n from here." % (room_name, new_room.id, exit_out)
+        if out_aliases:
+            msg += " (|w%s|n)" % ", ".join(out_aliases)
+        if exit_back:
+            msg += " Exit |w%s|n leads back." % exit_back
+            if back_aliases:
+                msg += " (|w%s|n)" % ", ".join(back_aliases)
+        caller.msg(msg)
+        if teleport:
+            caller.move_to(new_room)
+            caller.msg("You teleport to the new Matrix room.")
+
+
 class CmdOpen(Command):
     """
     Create an exit from the current room to a destination.
     Usage: buopen <exit name> = <destination>
     Destination can be room name, #dbref, or "here" for current room (one-way).
+
+    Note: Cannot create exits between Matrix and meatspace rooms.
     """
     key = "buopen"
     locks = "cmd:perm(Builder)"
@@ -365,7 +519,7 @@ class CmdOpen(Command):
         caller = self.caller
         args = (self.args or "").strip()
         if "=" not in args:
-            caller.msg("Usage: |wopen <exit name> = <destination>|n")
+            caller.msg("Usage: |wbuopen <exit name> = <destination>|n")
             return
         exit_name, dest_spec = args.split("=", 1)
         exit_name = exit_name.strip()
@@ -383,9 +537,22 @@ class CmdOpen(Command):
             dest = caller.search(dest_spec, global_search=True)
             if not dest:
                 return
+
+        # Prevent cross-realm exits
+        loc_is_matrix = isinstance(loc, MatrixNode)
+        dest_is_matrix = isinstance(dest, MatrixNode) if dest else loc_is_matrix
+
+        if loc_is_matrix != dest_is_matrix:
+            caller.msg("Cannot create exits between Matrix and meatspace rooms.")
+            return
+
         try:
-            from typeclasses.exits import Exit
-            ex = create_object(Exit, key=exit_name, location=loc, destination=dest)
+            if loc_is_matrix:
+                ex = create_object(MatrixExit, key=exit_name, location=loc, destination=dest)
+            else:
+                from typeclasses.exits import Exit
+                ex = create_object(Exit, key=exit_name, location=loc, destination=dest)
+
             if ex:
                 caller.msg("Created exit |w%s|n from here to %s." % (exit_name, dest.get_display_name(caller) if dest else "nowhere (unlinked)"))
             else:
@@ -423,3 +590,103 @@ class CmdDestroy(Command):
             caller.msg("Destroyed %s." % name)
         except Exception as e:
             caller.msg("Could not destroy: %s" % e)
+
+
+class CmdMatrixLink(Command):
+    """
+    Link the current room to a network router.
+
+    Usage:
+        mlink <router_key>
+        mlink              (view current router)
+        mlink/clear        (remove router link)
+
+    Sets the network_router attribute (dbref) on the current room, which determines
+    whether networked devices in this room can connect to the Matrix.
+
+    Example:
+        mlink downtown_router
+    """
+    key = "mlink"
+    locks = "cmd:perm(Builder)"
+    help_category = "Building"
+    switch_options = ("clear",)
+
+    def parse(self):
+        """
+        Parse the command to extract switches manually.
+        """
+        super().parse()
+
+        # Extract switches from raw_string
+        # Format: "mlink/switch args"
+        raw = self.raw_string or ""
+        self.switches = []
+
+        # Find the command and switches
+        parts = raw.split(None, 1)  # Split on first whitespace
+        if parts:
+            cmd_part = parts[0]  # e.g., "mlink/clear"
+            # Split by / to get switches
+            segments = cmd_part.split('/')
+            if len(segments) > 1:
+                # First segment is the command, rest are switches
+                self.switches = segments[1:]
+
+            # Update args to not include switches
+            if len(parts) > 1:
+                self.args = parts[1]
+            else:
+                self.args = ""
+
+    def func(self):
+        caller = self.caller
+        args = (self.args or "").strip()
+        clear = "clear" in getattr(self, "switches", [])
+
+        loc = caller.location
+        if not loc:
+            caller.msg("You are nowhere.")
+            return
+
+        # View current router
+        if not args and not clear:
+            current_dbref = getattr(loc.db, 'network_router', None)
+            if current_dbref:
+                from evennia.objects.models import ObjectDB
+                try:
+                    router = ObjectDB.objects.get(pk=current_dbref)
+                    caller.msg(f"This room is linked to router: |w{router.key}|n (#{router.id})")
+                except ObjectDB.DoesNotExist:
+                    caller.msg(f"This room is linked to a router that no longer exists (#{current_dbref}).")
+                    caller.msg("Use |wmlink/clear|n to remove the broken link.")
+            else:
+                caller.msg("This room has no network router link.")
+            return
+
+        # Clear router
+        if clear:
+            loc.db.network_router = None
+            caller.msg("Network router link cleared from this room.")
+            return
+
+        # Set router - search for it and store dbref
+        from evennia.utils.search import search_object
+        from typeclasses.matrix.objects import Router
+
+        results = search_object(args, typeclass=Router)
+
+        if not results:
+            caller.msg(f"Could not find router '{args}'.")
+            return
+
+        if len(results) > 1:
+            caller.msg(f"Multiple routers found matching '{args}':")
+            for i, router in enumerate(results, 1):
+                caller.msg(f"  {i}. {router.key} (#{router.id}) in {router.location.key if router.location else 'nowhere'}")
+            caller.msg("Please be more specific or use the dbref.")
+            return
+
+        router = results[0]
+        loc.db.network_router = router.pk  # Store dbref, not name
+        caller.msg(f"Room linked to router |w{router.key}|n (#{router.id}). Networked devices here will use this router.")

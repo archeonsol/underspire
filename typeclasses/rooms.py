@@ -96,15 +96,31 @@ class Room(ObjectParent, DefaultRoom):
             except Exception:
                 pass
 
-    # Order: room name (header), desc, blank line, seats/beds, characters+things (you see + poses), exits
+    # Order: room name (header), desc, blank line, objects (you see), furniture (seats/beds), characters (poses), exits
     appearance_template = """
 {header}
 {desc}
 
 {things}
+{furniture}
 {characters}
 {exits}
 {footer}"""
+
+    def return_appearance(self, looker, **kwargs):
+        """
+        Override to explicitly call all display methods including furniture.
+        """
+        appearance = self.appearance_template.format(
+            header=self.get_display_header(looker, **kwargs),
+            desc=self.get_display_desc(looker, **kwargs),
+            things=self.get_display_things(looker, **kwargs),
+            furniture=self.get_display_furniture(looker, **kwargs),
+            characters=self.get_display_characters(looker, **kwargs),
+            exits=self.get_display_exits(looker, **kwargs),
+            footer=self.get_display_footer(looker, **kwargs),
+        )
+        return self.format_appearance(appearance, looker, **kwargs)
 
     def format_appearance(self, appearance, looker, **kwargs):
         """Allow one blank line between sections."""
@@ -139,11 +155,11 @@ class Room(ObjectParent, DefaultRoom):
             return "a"
         return "an" if n[0].lower() in "aeiou" else "a"
 
-    def get_display_characters(self, looker, **kwargs):
+    def get_display_things(self, looker, **kwargs):
         """
-        "You see a X, an Y and a Z." for objects (excluding vehicles and set-place items);
+        Objects section: "You see a X, an Y and a Z." for objects (excluding vehicles and set-place items);
         then "A X is <pose>." for set-place objects; then "X is parked/idling here." for vehicles.
-        Characters on a separate line. No vehicles in "You see" list.
+        No characters or furniture in this section.
         """
         characters = self.filter_visible(
             self.contents_get(content_type="character"), looker, **kwargs
@@ -156,10 +172,6 @@ class Room(ObjectParent, DefaultRoom):
             pass
         # Corpses are objects, not character poses; show them in "You see" line only
         characters = [c for c in characters if not _is_corpse(c)]
-        try:
-            from world.death import is_flatlined
-        except ImportError:
-            is_flatlined = lambda o: False
         see_items = []
         set_place_objects = []
         vehicle_poses = []  # (obj, "is parked here." / "is idling here.")
@@ -177,6 +189,9 @@ class Room(ObjectParent, DefaultRoom):
             if _is_vehicle(obj):
                 pose = "idling here." if getattr(obj, "engine_running", False) else "parked here."
                 vehicle_poses.append((obj, pose))
+                continue
+            # Seats/beds - skip here, handled in furniture section
+            if _is_seat(obj) or _is_bed(obj):
                 continue
             room_pose = getattr(obj.db, "room_pose", None)
             if room_pose:
@@ -209,12 +224,33 @@ class Room(ObjectParent, DefaultRoom):
         for obj, pose in vehicle_poses:
             name = obj.get_display_name(looker, **kwargs)
             vehicle_pose_parts.append(f"{ROOM_DESC_OBJECT_NAME_COLOR}{name}|n is {pose}")
-        first_para_parts = [you_see]
+        parts = [you_see]
         if object_pose_parts:
-            first_para_parts.append(" ".join(object_pose_parts))
+            parts.append(" ".join(object_pose_parts))
         if vehicle_pose_parts:
-            first_para_parts.append(" ".join(vehicle_pose_parts))
-        first_para = " ".join(filter(None, first_para_parts)).strip()
+            parts.append(" ".join(vehicle_pose_parts))
+        return " ".join(filter(None, parts)).strip()
+
+    def get_display_characters(self, looker, **kwargs):
+        """
+        Characters section: Shows character poses, including special states like
+        sitting/lying (tracked but displayed in furniture section), grappled, on operating tables, etc.
+        """
+        characters = self.filter_visible(
+            self.contents_get(content_type="character"), looker, **kwargs
+        )
+        # Be defensive: only treat true Characters (avoid edge cases where non-characters slip in)
+        try:
+            from evennia.utils.utils import inherits_from
+            characters = [c for c in characters if inherits_from(c, "evennia.objects.objects.DefaultCharacter")]
+        except Exception:
+            pass
+        # Corpses are objects, not character poses; show them in "You see" line only
+        characters = [c for c in characters if not _is_corpse(c)]
+        try:
+            from world.death import is_flatlined
+        except ImportError:
+            is_flatlined = lambda o: False
         # Patients lying on an operating table (db.lying_on_table = table; they stay in room)
         table_pose_parts = []
         on_table = set()  # characters shown in "lying on table" so we skip them in normal poses
@@ -230,28 +266,20 @@ class Room(ObjectParent, DefaultRoom):
                 name = char.get_display_name(looker, **kwargs)
                 table_name = obj.get_display_name(looker, **kwargs)
                 table_pose_parts.append(f"{ROOM_DESC_CHARACTER_NAME_COLOR}{name}|n is lying on {ROOM_DESC_OBJECT_NAME_COLOR}{table_name}|n.")
-        # Sitting on seats (chair, couch, etc.)
+        # Track sitting/lying characters so we exclude them from normal character poses
         sitting_set = set()
-        for obj in self.contents:
-            if not _is_seat(obj) or not self.filter_visible([obj], looker, **kwargs):
-                continue
-            for char in characters:
-                if getattr(char.db, "sitting_on", None) != obj:
-                    continue
-                if not self.filter_visible([char], looker, **kwargs):
-                    continue
-                sitting_set.add(char)
-        # Lying on beds (bed, cot, etc. — not operating table)
         lying_set = set()
         for obj in self.contents:
-            if not _is_bed(obj) or not self.filter_visible([obj], looker, **kwargs):
+            if not (_is_seat(obj) or _is_bed(obj)) or not self.filter_visible([obj], looker, **kwargs):
                 continue
+            # Just track which characters are sitting/lying (don't generate display here)
             for char in characters:
-                if getattr(char.db, "lying_on", None) != obj:
-                    continue
-                if not self.filter_visible([char], looker, **kwargs):
-                    continue
-                lying_set.add(char)
+                if getattr(char.db, "sitting_on", None) == obj:
+                    if self.filter_visible([char], looker, **kwargs):
+                        sitting_set.add(char)
+                elif getattr(char.db, "lying_on", None) == obj:
+                    if self.filter_visible([char], looker, **kwargs):
+                        lying_set.add(char)
         # Grappled: "X is locked in the grasp of Y"
         grappled_parts = []
         grappled_set = set()
@@ -264,7 +292,12 @@ class Room(ObjectParent, DefaultRoom):
             hname = holder.get_display_name(looker, **kwargs)
             grappled_parts.append(f"{ROOM_DESC_CHARACTER_NAME_COLOR}{vname}|n is locked in the grasp of {ROOM_DESC_CHARACTER_NAME_COLOR}{hname}|n.")
         char_pose_parts = []
-        for char in characters:
+        # Include looker if not already shown (helps you see your own @lp)
+        looker_shown = looker in on_table or looker in sitting_set or looker in lying_set or looker in grappled_set
+        chars_to_show = list(characters)
+        if not looker_shown and looker not in chars_to_show:
+            chars_to_show.append(looker)
+        for char in chars_to_show:
             if char in on_table or char in sitting_set or char in lying_set or char in grappled_set:
                 continue
             logged_off = False
@@ -334,14 +367,7 @@ class Room(ObjectParent, DefaultRoom):
             char_pose_line = " ".join(filter(None, [char_pose_line, " ".join(grappled_parts)]))
         if table_pose_parts:
             char_pose_line = " ".join(filter(None, [char_pose_line, " ".join(table_pose_parts)]))
-        parts = []
-        if first_para:
-            parts.append(first_para)
-        if char_pose_line:
-            parts.append(char_pose_line)
-        if not parts:
-            return ""
-        return "\n\n".join(parts)
+        return char_pose_line
 
     def at_object_receive(self, obj, source_location, move_type="move", **kwargs):
         """
@@ -360,88 +386,24 @@ class Room(ObjectParent, DefaultRoom):
                 except TypeError:
                     scr.at_object_receive(obj, source_location)
 
-    def get_display_things(self, looker, **kwargs):
+    def get_display_furniture(self, looker, **kwargs):
         """
-        Seats/beds section, shown before characters:
-        - Empty: "The bed is empty."
-        - Occupied: "Bob is lying on the bed." / "Bob is sitting on the couch."
-        Builders can customize per-object templates via:
-          obj.db.seating_empty_msg    (default: "The {obj} is empty.")
-          obj.db.seating_occupied_msg (Seat default: "{name} is sitting on the {obj}."
-                                       Bed default:  "{name} is lying on the {obj}.")
-        Placeholders:
-          {name} – occupant's display name (for occupied)
-          {obj}  – seat/bed display name
+        Furniture section: Seats/beds display.
+        Delegates to each furniture object's get_room_appearance() method.
         """
-        try:
-            from typeclasses.seats import Seat, Bed  # noqa: F401  (for type hints / clarity)
-        except Exception:
-            Seat = Bed = None  # type: ignore
-        # Visible characters in the room (used to check occupancy visibility)
-        characters = self.filter_visible(
-            self.contents_get(content_type="character"), looker, **kwargs
-        )
-        try:
-            from evennia.utils.utils import inherits_from
-            characters = [c for c in characters if inherits_from(c, "typeclasses.characters.Character")]
-        except Exception:
-            pass
         lines = []
         for obj in self.contents:
             if not (_is_seat(obj) or _is_bed(obj)):
                 continue
             if not self.filter_visible([obj], looker, **kwargs):
                 continue
-            # Determine occupant, if any
-            occupant = None
-            if _is_seat(obj):
-                getter = getattr(obj, "get_sitter", None)
-                if callable(getter):
-                    occupant = getter()
-            elif _is_bed(obj):
-                getter = getattr(obj, "get_occupant", None)
-                if callable(getter):
-                    occupant = getter()
-            if occupant and occupant not in characters:
-                # Occupant not visible to this viewer; treat as empty
-                occupant = None
-            obj_name = obj.get_display_name(looker, **kwargs)
-            if occupant:
-                # If the occupant has a manual @lp/@room_pose set and is present, let that
-                # override the default seat/bed messaging; their custom pose will be shown
-                # in the characters section instead. Only when it's blank/None do we fall
-                # back to the seating templates here.
-                manual_pose = (getattr(occupant.db, "room_pose", None) or "").strip()
-                if manual_pose:
-                    # Skip emitting a seating line for this object; character's @lp handles it.
-                    continue
-                char_name = occupant.get_display_name(looker, **kwargs)
-                tmpl = getattr(obj, "get_occupied_template", None)
-                if callable(tmpl):
-                    template = tmpl()
-                else:
-                    # Fallback by class type
-                    if _is_bed(obj):
-                        template = "{name} is lying on the {obj}."
-                    else:
-                        template = "{name} is sitting on the {obj}."
-                text = template.format(
-                    name=f"{ROOM_DESC_CHARACTER_NAME_COLOR}{char_name}|n",
-                    obj=f"{ROOM_DESC_OBJECT_NAME_COLOR}{obj_name}|n",
-                )
-            else:
-                tmpl = getattr(obj, "get_empty_template", None)
-                if callable(tmpl):
-                    template = tmpl()
-                else:
-                    template = "The {obj} is empty."
-                text = template.format(
-                    name="",
-                    obj=f"{ROOM_DESC_OBJECT_NAME_COLOR}{obj_name}|n",
-                )
-            text = (text or "").strip()
-            if text:
-                lines.append(text if text.endswith(".") else text + ".")
+
+            # Let the furniture object handle its own display
+            if hasattr(obj, 'get_room_appearance'):
+                appearance = obj.get_room_appearance(looker, **kwargs)
+                if appearance:
+                    lines.append(appearance)
+
         return " ".join(lines)
 
     def get_display_exits(self, looker, **kwargs):

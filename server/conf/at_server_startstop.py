@@ -53,6 +53,20 @@ def at_server_start():
             key=PENDING_SCRIPT_KEY,
             persistent=True,
         )
+
+    # Matrix scripts
+    if not ScriptDB.objects.filter(db_key="matrix_cleanup").first():
+        create_script(
+            "typeclasses.scripts.MatrixCleanupScript",
+            key="matrix_cleanup",
+            persistent=True,
+        )
+    if not ScriptDB.objects.filter(db_key="matrix_connection_check").first():
+        create_script(
+            "typeclasses.scripts.MatrixConnectionScript",
+            key="matrix_connection_check",
+            persistent=True,
+        )
     # Staff pending channel: so staff can subscribe and see new requests
     if not list(search_channel(STAFF_PENDING_CHANNEL_ALIAS)):
         create_channel(
