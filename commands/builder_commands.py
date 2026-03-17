@@ -367,54 +367,108 @@ class CmdMatrixDig(Command):
     Exit format: name or name;alias1;alias2  (e.g. west;w  or south;s;down)
     Example: mdig The Cortex = entrance;in, exit;out
     Use /tel to teleport to the new room after creating.
+    Use /force to create a Matrix room without exits (for bootstrapping or isolated rooms).
     """
     key = "mdig"
-    switch_options = ("tel", "teleport")
+    switch_options = ("tel", "teleport", "force")
     locks = "cmd:perm(Builder)"
     help_category = "Building"
+
+    def parse(self):
+        """
+        Parse the command to extract switches manually.
+        Evennia's default parser doesn't seem to be picking them up.
+        """
+        super().parse()
+
+        # Extract switches from raw_string
+        # Format: "mdig/switch1/switch2 args"
+        raw = self.raw_string or ""
+        self.switches = []
+
+        # Find the command and switches
+        parts = raw.split(None, 1)  # Split on first whitespace
+        if parts:
+            cmd_part = parts[0]  # e.g., "mdig/force/tel"
+            # Split by / to get switches
+            segments = cmd_part.split('/')
+            if len(segments) > 1:
+                # First segment is the command, rest are switches
+                self.switches = segments[1:]
+
+            # Update args to not include switches
+            if len(parts) > 1:
+                self.args = parts[1]
+            else:
+                self.args = ""
 
     def func(self):
         caller = self.caller
         args = (self.args or "").strip()
-        teleport = "tel" in getattr(self, "switches", []) or "teleport" in getattr(self, "switches", [])
+
+        # Check switches
+        switches = getattr(self, 'switches', [])
+        teleport = "tel" in switches or "teleport" in switches
+        force = "force" in switches
+
+        # With /force, exit spec is optional
         if "=" not in args:
-            caller.msg("Usage: |wmdig <room name> = <exit out>[, <exit back>]|n  Exits: |wname;alias|n e.g. mdig The Cortex = entrance;in, exit;out")
-            return
-        room_spec, exit_spec = args.split("=", 1)
-        room_name = room_spec.strip()
-        exit_spec = exit_spec.strip()
+            if force:
+                room_name = args
+                exit_spec = None
+            else:
+                caller.msg("Usage: |wmdig <room name> = <exit out>[, <exit back>]|n  Exits: |wname;alias|n e.g. mdig The Cortex = entrance;in, exit;out")
+                caller.msg("Use |wmdig/force <room name>|n to create a Matrix room without exits.")
+                return
+        else:
+            room_spec, exit_spec = args.split("=", 1)
+            room_name = room_spec.strip()
+            exit_spec = exit_spec.strip()
+
         if not room_name:
             caller.msg("Give a room name.")
             return
-        if not exit_spec:
-            caller.msg("Give at least one exit name after =.")
-            return
-        parts = [p.strip() for p in exit_spec.split(",")]
-        out_spec = parts[0] if parts else "out"
-        back_spec = parts[1] if len(parts) > 1 else None
-        exit_out, out_aliases = _parse_exit_spec(out_spec)
-        exit_back, back_aliases = _parse_exit_spec(back_spec) if back_spec else (None, [])
+
+        # Parse exit spec if provided
+        if exit_spec:
+            parts = [p.strip() for p in exit_spec.split(",")]
+            out_spec = parts[0] if parts else "out"
+            back_spec = parts[1] if len(parts) > 1 else None
+            exit_out, out_aliases = _parse_exit_spec(out_spec)
+            exit_back, back_aliases = _parse_exit_spec(back_spec) if back_spec else (None, [])
+        else:
+            exit_out, out_aliases = None, []
+            exit_back, back_aliases = None, []
         loc = caller.location
         if not loc:
             caller.msg("You are nowhere.")
             return
 
-        # Allow creating Matrix rooms from anywhere (needed to bootstrap first room)
-        # But validate exits if creating them
+        # Check if we're in a Matrix room
         loc_is_matrix = isinstance(loc, MatrixNode)
+
+        # Require /force flag to create Matrix rooms from meatspace
+        if not loc_is_matrix and not force:
+            caller.msg("You must be in a Matrix room to use mdig.")
+            caller.msg("Use |wmdig/force|n to create the first Matrix room from meatspace.")
+            return
 
         new_room = create_object(MatrixNode, key=room_name, location=None)
         if not new_room:
             caller.msg("Could not create Matrix room.")
             return
 
-        # Validate exit creation - cannot link Matrix and meatspace
-        if not loc_is_matrix:
-            caller.msg("|yWarning:|n Creating Matrix room from meatspace. No exit created (use buopen to link manually if needed).")
+        # If /force flag is set or no exit spec provided, skip exit creation
+        if force or not exit_spec:
             caller.msg("Created Matrix room |m%s|n (#%s) with no exits." % (room_name, new_room.id))
             if teleport:
                 caller.move_to(new_room)
                 caller.msg("You teleport to the new Matrix room.")
+            return
+
+        # If not in Matrix (shouldn't happen due to check above, but safety)
+        if not loc_is_matrix:
+            caller.msg("Error: Cannot create exits from meatspace.")
             return
 
         out_exit = create_object(MatrixExit, key=exit_out, location=loc, destination=new_room)

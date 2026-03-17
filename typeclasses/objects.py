@@ -224,8 +224,3 @@ class Object(ObjectParent, DefaultObject):
     """
 
     pass
-
-
-# Re-export matrix object types for convenience
-from .matrix.objects import MatrixObject
-from .matrix.devices import MatrixDevice

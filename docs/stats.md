@@ -1,2 +1,0 @@
-- S.P.E.C.I.A.L. system
-- 'Implants'

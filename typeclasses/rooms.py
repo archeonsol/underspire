@@ -375,7 +375,3 @@ class Room(ObjectParent, DefaultRoom):
         else:
             line = "There are exits to the " + ", ".join(bits[:-1]) + " and " + bits[-1] + "."
         return re.sub(r"  +", " ", line)
-
-
-# Re-export matrix room types for convenience
-from .matrix.rooms import MatrixNode, MatrixExit

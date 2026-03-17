@@ -119,7 +119,7 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
             CmdEmoteDebug, CmdDamageVehicle,
         )
         from commands.builder_commands import (
-            CmdTag, CmdHere, CmdListCmds, CmdCloneSpawn, CmdDig, CmdDesc,
+            CmdTag, CmdHere, CmdListCmds, CmdCloneSpawn, CmdDig, CmdMatrixDig, CmdDesc,
             CmdSetAttr, CmdName, CmdOpen, CmdDestroy,
         )
         try:
@@ -203,6 +203,7 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdListCmds())
         self.add(CmdCloneSpawn())
         self.add(CmdDig())
+        self.add(CmdMatrixDig())
         self.add(CmdDesc())
         self.add(CmdSetAttr())
         self.add(CmdName())
