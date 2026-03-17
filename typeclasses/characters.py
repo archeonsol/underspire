@@ -355,29 +355,12 @@ class Character(RoleplayMixin, MedicalMixin, RPGCharacterMixin, DefaultCharacter
                 from evennia.utils.evmenu import EvMenu
                 EvMenu(self, "world.chargen", startnode="node_start")
                 return
-        # CHECK: Are we jacked into the Matrix? Redirect to avatar.
-        avatar_dbref = self.db.matrix_avatar_dbref
-        if avatar_dbref:
-            try:
-                from typeclasses.matrix.avatars import MatrixAvatar
-                avatar = MatrixAvatar.objects.get(pk=avatar_dbref)
-
-                # Validate the connection is still good
-                rig = self.db.sitting_on
-                if (rig and avatar.location and
-                    not getattr(avatar.db, 'dead', False) and
-                    not getattr(avatar.db, 'idle', False)):
-                    # Connection valid - redirect to avatar
-                    account = self.account
-                    session = self.sessions.all()[0] if self.sessions.all() else None
-                    if account and session:
-                        self.msg("|cYour consciousness flows back into the Matrix...|n")
-                        account.puppet_object(session, avatar)
-                        avatar.msg("|gYou wake up in the Matrix.|n")
-                        return
-            except MatrixAvatar.DoesNotExist:
-                # Avatar was deleted, clear the reference
-                self.db.matrix_avatar_dbref = None
+        # CHECK: Are we jacked into the Matrix? Ask the rig to reconnect if valid.
+        rig = self.db.sitting_on
+        if rig and hasattr(rig, 'validate_and_reconnect'):
+            # Rig will validate connection and redirect to avatar if still valid
+            if rig.validate_and_reconnect(self):
+                return  # Successfully redirected to avatar
 
         # Normal post-puppet: grant pending XP and wake-up message
         from world.xp import grant_pending_xp

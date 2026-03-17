@@ -60,8 +60,7 @@ class CmdJackOut(Command):
     Usage:
         jack out
 
-    Cleanly disconnects you from the Matrix. Your avatar will be marked
-    as idle and cleaned up after a grace period.
+    Cleanly disconnects you from the Matrix and returns you to your body.
 
     Note: Cannot jack out during combat or other restricted situations.
     """
@@ -80,16 +79,21 @@ class CmdJackOut(Command):
             caller.msg("You are not jacked into the Matrix.")
             return
 
-        # Check if we have a real character to return to
-        real_character = caller.db.real_character
-        if not real_character:
-            caller.msg("Error: Cannot locate your physical body.")
-            return
-
-        # Check if we have an entry device
+        # Check if we have an entry device (the rig)
         entry_device = caller.db.entry_device
         if not entry_device:
             caller.msg("Error: Cannot locate your dive rig connection.")
+            return
+
+        # Get character from rig's active connection
+        conn = entry_device.db.active_connection
+        if not conn:
+            caller.msg("Error: No active connection found.")
+            return
+
+        character = conn.get('character')
+        if not character:
+            caller.msg("Error: Cannot locate your physical body.")
             return
 
         # TODO: Check for combat or other restrictions
@@ -97,9 +101,9 @@ class CmdJackOut(Command):
         #     caller.msg("You cannot jack out during combat!")
         #     return
 
-        # Perform clean logout
-        entry_device.jack_out_character(
-            real_character,
+        # Perform clean logout via the rig
+        entry_device.disconnect(
+            character,
             severity=JACKOUT_NORMAL,
             reason="Logging out"
         )

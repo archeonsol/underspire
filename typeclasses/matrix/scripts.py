@@ -75,33 +75,31 @@ class MatrixCleanupScript(DefaultScript):
 
 class MatrixConnectionScript(DefaultScript):
     """
-    Global script that periodically checks Matrix avatar connections.
+    Global script that periodically checks Matrix connections.
 
-    Runs every few seconds and verifies that each active avatar still has
-    a valid connection to meatspace (character in rig, rig connected, etc.).
-    Disconnects avatars whose physical connection has been severed.
+    Runs every few seconds and validates active connections on dive rigs and
+    teleop rigs. Disconnects any connections that have become invalid.
     """
 
     def at_script_creation(self):
         """Called when script is first created."""
         self.key = "matrix_connection_check"
-        self.desc = "Checks Matrix avatar and teleop connections periodically"
+        self.desc = "Checks Matrix dive and teleop connections periodically"
         self.interval = 10  # Run every 10 seconds
         self.repeats = 0  # Run forever
         self.persistent = True  # Survive server restarts
         self.start_delay = True  # Wait one interval before first run
 
     def at_repeat(self):
-        """Called every interval. Checks all active avatar and teleop connections."""
-        from typeclasses.matrix.avatars import MatrixAvatar
+        """Called every interval. Checks all active dive and teleop connections."""
         from evennia.objects.models import ObjectDB
 
-        # Check Matrix avatar connections
-        avatars = MatrixAvatar.objects.filter(db_idle=False)
-        avatar_disconnected = 0
-        for avatar in avatars:
-            if not avatar.check_connection():
-                avatar_disconnected += 1
+        # Check dive rig connections
+        dive_rigs = ObjectDB.objects.filter(db_active_connection__isnull=False)
+        dive_disconnected = 0
+        for rig in dive_rigs:
+            if hasattr(rig, 'validate_connection') and not rig.validate_connection():
+                dive_disconnected += 1
 
         # Check teleop connections - only objects currently under control
         controlled_objects = ObjectDB.objects.filter(db_controlled_by__isnull=False)
@@ -131,9 +129,9 @@ class MatrixConnectionScript(DefaultScript):
                     teleop_disconnected += 1
 
         # Optional: log disconnection activity
-        if avatar_disconnected > 0 or teleop_disconnected > 0:
+        if dive_disconnected > 0 or teleop_disconnected > 0:
             from evennia.utils import logger
-            logger.log_info(f"Connection check: disconnected {avatar_disconnected} avatar(s), {teleop_disconnected} teleop session(s)")
+            logger.log_info(f"Connection check: disconnected {dive_disconnected} dive session(s), {teleop_disconnected} teleop session(s)")
 
     def at_start(self):
         """Called when script starts (including after server restart)."""

@@ -3,7 +3,7 @@ Matrix Avatars
 
 Virtual representations of characters diving the Matrix.
 
-MatrixAvatar - Temporary character object created when jacking into the Matrix
+MatrixAvatar - Virtual character object created when jacking into the Matrix
 """
 
 from evennia import DefaultCharacter
@@ -19,20 +19,39 @@ class MatrixAvatar(DefaultCharacter):
     """
     Virtual representation of a character diving the Matrix.
 
-    Created when a character jacks in through a device, destroyed when they jack out.
-    Simpler than physical characters - no body parts, injuries, or complex inventory.
+    Created when a character jacks in through a device. Persists in the Matrix
+    until destroyed. Simpler than physical characters - no body parts, injuries,
+    or complex inventory.
+
+    The DiveRig owns the connection state - avatars are just puppets.
 
     Attributes:
-        real_character (Character): Link back to the meatspace character
-        entry_device (NetworkedObject/NetworkedItem): Device used to jack in
+        entry_device (DiveRig): The rig this avatar is connected through
+        dead (bool): Whether this avatar has been killed
     """
 
     def at_object_creation(self):
         """Called when avatar is first created."""
         super().at_object_creation()
-        self.db.real_character = None
         self.db.entry_device = None
-        self.db.idle = False
+        self.db.dead = False
+
+    def at_object_delete(self):
+        """
+        Called before avatar is deleted.
+
+        Triggers disconnection if the avatar is being destroyed while connected.
+        """
+        rig = self.db.entry_device
+        if rig and hasattr(rig, 'db') and rig.db.active_connection:
+            conn = rig.db.active_connection
+            if conn and conn.get('avatar') == self:
+                character = conn.get('character')
+                if character:
+                    # Avatar being destroyed - force disconnect
+                    rig.disconnect(character, severity=JACKOUT_FORCED, reason="Avatar destroyed")
+
+        return super().at_object_delete()
 
     def at_post_unpuppet(self, account=None, session=None, **kwargs):
         """
@@ -42,98 +61,22 @@ class MatrixAvatar(DefaultCharacter):
         # Avatar stays in place - location is preserved for reconnection
         pass
 
-    def check_connection(self):
+    def at_pre_death(self):
         """
-        Verify the physical connection to meatspace is still valid.
+        Called when avatar is about to die.
 
-        Checks if:
-        - Character still exists
-        - Character is still sitting in the rig
-        - Rig is still connected to the Matrix
-
-        Returns:
-            bool: True if connection is valid, False if disconnected
+        Triggers FATAL jack-out - character body dies too.
         """
-        # Skip check if idle (not actively connected)
-        if self.db.idle:
-            return True
-
-        character = self.db.real_character
-        if not character or not character.pk:
-            # Character deleted/invalid
-            self.jack_out(reason="Physical body lost", severity=JACKOUT_FORCED)
-            return False
-
         rig = self.db.entry_device
-        if not rig or not rig.pk:
-            # Rig deleted/invalid
-            self.jack_out(reason="Connection device lost", severity=JACKOUT_FORCED)
-            return False
-
-        # Is character still sitting in the rig?
-        if character.db.sitting_on != rig:
-            self.jack_out(reason="Physical connection severed", severity=JACKOUT_FORCED)
-            return False
-
-        # Is the rig still connected to the Matrix?
-        if not rig.is_connected():
-            self.jack_out(reason="Network connection lost", severity=JACKOUT_EMERGENCY)
-            return False
-
-        return True
-
-    def jack_out(self, reason="Disconnecting", severity=JACKOUT_NORMAL):
-        """
-        Disconnect from the Matrix and return to meatspace.
-
-        Marks the avatar as idle rather than deleting immediately.
-        Cleanup happens later via the cleanup script.
-
-        Args:
-            reason (str): Why the disconnect happened (shown to user)
-            severity (int): Severity level (JACKOUT_NORMAL, JACKOUT_EMERGENCY, JACKOUT_FORCED)
-        """
-        if self.db.real_character:
-            self.msg(f"|rDISCO:|n {reason}")
-
-            # Apply consequences immediately (even if player is linkdead)
-            character = self.db.real_character
-
-            if severity >= JACKOUT_FATAL:
-                # Fatal jackout - avatar death causes real death
-                # The dying consciousness is violently shoved back into the body
-                self.msg("|rYour avatar dissolves into static and void.|n")
-                self.msg("|rFor a brief, terrible moment, you see reality again—|n")
-                self.msg("|rYour body in the rig, convulsing—|n")
-                self.msg("|rThen nothing.|n")
-
-                # Kill the character immediately
+        if rig and hasattr(rig, 'db') and rig.db.active_connection:
+            conn = rig.db.active_connection
+            if conn and conn.get('avatar') == self:
+                character = conn.get('character')
                 if character:
-                    # TODO: Hook into your death system here
-                    # character.die() or however your death system works
-                    # For now, just send a message if they're connected
-                    if character.sessions.get():
-                        character.msg("|rYour consciousness is violently ejected. Your body dies.|n")
-
-            elif severity >= JACKOUT_FORCED:
-                # Violent disconnect - apply physical damage immediately
-                if character:
-                    # TODO: Apply actual physical damage using your damage system
-                    # For now, just send a message if they're connected
-                    if character.sessions.get():
-                        character.msg("|rViolent pain wracks your body as you're torn from the Matrix.|n")
-
-            elif severity >= JACKOUT_EMERGENCY:
-                # Uncontrolled disconnect - apply minor penalties immediately
-                if character:
-                    # TODO: Apply minor penalties (disorientation, stamina loss, etc.)
-                    # For now, just send a message if they're connected
-                    if character.sessions.get():
-                        character.msg("|yYou feel disoriented as the connection fails.|n")
-
-        # Mark as idle for cleanup later
-        self.db.idle = True
-        self.db.idle_since = None  # TODO: Set timestamp when we implement grace period
+                    # Mark avatar as dead
+                    self.db.dead = True
+                    # Fatal disconnect - character dies too
+                    rig.disconnect(character, severity=JACKOUT_FATAL, reason="Avatar killed")
 
     def get_display_desc(self, looker, **kwargs):
         """
