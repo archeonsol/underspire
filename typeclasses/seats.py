@@ -107,17 +107,20 @@ class Bed(Seat):
         capacity (int): How many people can use at once (default 1 for single bed, 2+ for larger)
         room_pose (str): How this appears in room look (e.g. "against the wall")
         seating_empty_msg (str): Template for empty bed display
-        seating_occupied_msg (str): Template for occupied bed display (default shows "lying")
+        sitting_template (str): Template when someone is sitting on bed
+        lying_template (str): Template when someone is lying on bed
     """
     def at_object_creation(self):
         super().at_object_creation()
         self.db.room_pose = "against the wall"  # Override default seat pose
 
-        # Default templates for beds show "lying" instead of "sitting"
+        # Default templates for beds
         if getattr(self.db, "seating_empty_msg", None) is None:
             self.db.seating_empty_msg = "The {obj} is empty."
-        if getattr(self.db, "seating_occupied_msg", None) is None:
-            self.db.seating_occupied_msg = "{name} is lying on the {obj}."
+        if getattr(self.db, "sitting_template", None) is None:
+            self.db.sitting_template = "{name} is sitting on the {obj}."
+        if getattr(self.db, "lying_template", None) is None:
+            self.db.lying_template = "{name} is lying on the {obj}."
 
     def get_display_name(self, looker, **kwargs):
         """Return custom name or key."""
@@ -153,3 +156,18 @@ class Bed(Seat):
         """Return first occupant, or None. For backwards compatibility."""
         occupants = self.get_occupants()
         return occupants[0] if occupants else None
+
+    def get_template_for_posture(self, posture):
+        """
+        Get the appropriate template for the given posture.
+
+        Args:
+            posture (str): "sitting" or "lying"
+
+        Returns:
+            str: Template string with {name} and {obj} placeholders
+        """
+        if posture == "lying":
+            return getattr(self.db, "lying_template", None) or "{name} is lying on the {obj}."
+        else:
+            return getattr(self.db, "sitting_template", None) or "{name} is sitting on the {obj}."
