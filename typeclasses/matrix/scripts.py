@@ -94,7 +94,6 @@ class MatrixConnectionScript(DefaultScript):
     def at_repeat(self):
         """Called every interval. Checks all active avatar and teleop connections."""
         from typeclasses.matrix.avatars import MatrixAvatar
-        from typeclasses.matrix.devices import TeleopRig
         from evennia.objects.models import ObjectDB
 
         # Check Matrix avatar connections
@@ -104,25 +103,31 @@ class MatrixConnectionScript(DefaultScript):
             if not avatar.check_connection():
                 avatar_disconnected += 1
 
-        # Check teleop rig connections
-        teleop_rigs = ObjectDB.objects.filter(db_typeclass_path__contains="TeleopRig")
+        # Check teleop connections - only objects currently under control
+        controlled_objects = ObjectDB.objects.filter(db_controlled_by__isnull=False)
         teleop_disconnected = 0
-        for rig in teleop_rigs:
-            # Check if someone is sitting in the rig
-            sitter = rig.get_sitter() if hasattr(rig, 'get_sitter') else None
-            if not sitter:
+        for target in controlled_objects:
+            # Get the control rig
+            rig_dbref = getattr(target.db, 'control_rig', None)
+            if not rig_dbref:
                 continue
 
-            # Check if they're currently puppeted into a target
-            target = rig.get_current_puppet(sitter) if hasattr(rig, 'get_current_puppet') else None
-            if not target:
+            try:
+                rig = ObjectDB.objects.get(pk=rig_dbref)
+            except ObjectDB.DoesNotExist:
+                # Rig was deleted - clean up target
+                target.db.controlled_by = None
+                target.db.control_rig = None
+                target.db.real_character = None
+                teleop_disconnected += 1
                 continue
 
             # Verify Matrix connection is still valid
             if hasattr(rig, 'is_connected') and not rig.is_connected():
                 # Lost Matrix connection - emergency disconnect
-                if hasattr(rig, 'disengage'):
-                    rig.disengage(sitter, severity=1, reason="Network connection lost")
+                character = target.db.controlled_by
+                if character and hasattr(rig, 'disengage'):
+                    rig.disengage(character, severity=1, reason="Network connection lost")
                     teleop_disconnected += 1
 
         # Optional: log disconnection activity
