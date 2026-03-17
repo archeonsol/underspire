@@ -351,26 +351,17 @@ class Room(ObjectParent, DefaultRoom):
                         pose = re.sub(rf"\b{re.escape(viewer_name)}\b", "you", pose)
                 except Exception:
                     pass
-            # Show "You" for the looker, name for others
-            if char == looker:
-                name = f"{ROOM_DESC_CHARACTER_NAME_COLOR}You|n"
-                # Strip all dot-verb markers (e.g. ".shiver" -> "shiver", ".is" -> "are")
-                pose = re.sub(r'\.(\w+)', lambda m: 'are' if m.group(1) == 'is' else m.group(1), pose)
-                # Also convert any remaining plain "is" to "are"
-                pose = re.sub(r'\bis\b', 'are', pose)
-            else:
-                name = char.get_display_name(looker, **kwargs)
-                name = f"{ROOM_DESC_CHARACTER_NAME_COLOR}{name}|n"
+            name = char.get_display_name(looker, **kwargs)
             if logged_off:
                 # Name in character color; sleep-place text in bold white (caller controls verb, e.g. "is sleeping here")
-                char_pose_parts.append(f"{name} |b|w{pose}.|n")
+                char_pose_parts.append(f"{ROOM_DESC_CHARACTER_NAME_COLOR}{name}|n |b|w{pose}.|n")
             elif is_dead:
                 # Dead/flatlined: always "Name is <pose>."
-                char_pose_parts.append(f"{name} is {pose}.")
+                char_pose_parts.append(f"{ROOM_DESC_CHARACTER_NAME_COLOR}{name}|n is {pose}.")
             else:
                 # For living, present characters, do not force an 'is' – use whatever the player set
                 # with @lp (e.g. 'is leaning against the wall', 'leaning against the wall', 'crouched here').
-                char_pose_parts.append(f"{name} {pose}.")
+                char_pose_parts.append(f"{ROOM_DESC_CHARACTER_NAME_COLOR}{name}|n {pose}.")
         char_pose_line = " ".join(char_pose_parts) if char_pose_parts else ""
         if grappled_parts:
             char_pose_line = " ".join(filter(None, [char_pose_line, " ".join(grappled_parts)]))
