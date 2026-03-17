@@ -1,173 +1,187 @@
 """
 Matrix Devices
 
-Physical devices connected to the Matrix. These are meatspace objects that have
-virtual interfaces accessible through diving. Examples include cameras, servers,
-terminals, kiosks, TVs, digital signs, door locks, etc.
+Physical devices that provide Matrix connectivity and interfaces.
 
-MatrixDevice - Base class for any physical device connected to the Matrix
+DiveRig - Reclined chair for jacking into the Matrix (combines Seat + NetworkedObject)
 """
 
-from typeclasses.objects import Object
+from typeclasses.seats import Seat
+from typeclasses.matrix.objects import NetworkedObject
+from typeclasses.matrix.avatars import MatrixAvatar, JACKOUT_FORCED, JACKOUT_EMERGENCY
 
 
-class MatrixDevice(Object):
+class DiveRig(Seat, NetworkedObject):
     """
-    Base class for physical devices connected to the Matrix.
+    Reclined chair for jacking into the Matrix.
 
-    These are meatspace objects that exist in regular rooms but have virtual
-    interfaces that can be accessed by diving. When an avatar dives into a
-    MatrixDevice, a temporary MatrixDevice room is created representing the
-    device's virtual interface.
+    Combines seating functionality with Matrix connectivity. When a character
+    sits in the rig and jacks in, their avatar appears in the linked Matrix node
+    and the player's puppet switches to control the avatar.
+
+    The character's body remains vulnerable in meatspace while diving.
 
     Attributes:
-        device_type (str): Type of device (camera, terminal, kiosk, lock, etc.)
-        security_level (int): Security level (0-10, 0=unsecured, 10=maximum)
-        is_connected (bool): Whether device is connected to Matrix (False = air-gapped, requires physical proximity)
-        virtual_interface (obj): Reference to active temporary interface room (if any)
-        access_logs (list): Log of access attempts (for future implementation)
+        target_node (MatrixNode): The Matrix node this rig connects to
+        jack_in_message (str): Custom message shown when jacking in
+        jack_out_message (str): Custom message shown when jacking out normally
     """
 
     def at_object_creation(self):
-        """Called when the device is first created."""
+        """Called when the rig is first created."""
         super().at_object_creation()
-        self.db.device_type = "generic"
-        self.db.security_level = 0
-        self.db.is_connected = True
-        self.db.virtual_interface = None
-        self.db.access_logs = []
+        self.setup_networked_attrs()
 
-    def generate_virtual_interface(self, **kwargs):
+        # DiveRig specific attributes
+        self.db.device_type = "dive_rig"
+        self.db.ephemeral_node = False  # Rigs connect to persistent nodes
+        self.db.target_node = None
+        self.db.jack_in_message = "jacks into the Matrix"
+        self.db.jack_out_message = "disconnects from the Matrix"
+
+    def jack_in(self, character):
         """
-        Generate a temporary virtual interface room for this device.
+        Jack a character into the Matrix.
 
-        Called when an avatar dives into this device. Creates a MatrixDevice room
-        with appropriate description and controls for this device type.
+        Creates an avatar in the target node and switches the player's puppet.
 
         Args:
-            **kwargs: Additional parameters for room creation
+            character (Character): The character jacking in
 
         Returns:
-            MatrixDevice room instance, or None if creation fails
+            bool: True if successful, False otherwise
         """
-        # Don't create duplicate interfaces
-        if self.db.virtual_interface:
-            # Check if it still exists
-            if self.db.virtual_interface.pk:
-                return self.db.virtual_interface
-            else:
-                # Stale reference, clear it
-                self.db.virtual_interface = None
-
-        # Import here to avoid circular dependency
-        from typeclasses.rooms import MatrixDevice as MatrixDeviceRoom
-
-        try:
-            interface = MatrixDeviceRoom.create_for_device(self, **kwargs)
-            self.db.virtual_interface = interface
-            return interface
-        except Exception as e:
-            # Log error but don't crash
-            print(f"Error creating virtual interface for {self.key}: {e}")
-            return None
-
-    def cleanup_virtual_interface(self):
-        """
-        Clean up the temporary virtual interface room.
-
-        Called when no avatars remain in the device interface, or when
-        the device is disconnected/destroyed.
-        """
-        interface = self.db.virtual_interface
-        if not interface:
-            return
-
-        # Clear our reference first
-        self.db.virtual_interface = None
-
-        # Clean up the interface room if it exists
-        if hasattr(interface, 'cleanup'):
-            interface.cleanup()
-        elif hasattr(interface, 'delete'):
-            interface.delete()
-
-    def at_dive(self, avatar, **kwargs):
-        """
-        Called when an avatar attempts to dive into this device.
-
-        Args:
-            avatar: The avatar object attempting to dive
-            **kwargs: Additional parameters
-
-        Returns:
-            bool: True if dive succeeds, False otherwise
-        """
-        # Note: is_connected determines if device can be accessed remotely via Matrix
-        # If False (air-gapped), avatar must be physically near the device
-        # TODO: Add proximity check for air-gapped devices in future implementation
-        # if not self.db.is_connected:
-        #     # Check if avatar's meatspace body is near this device
-        #     pass
-
-        # TODO: Security checks for future implementation
-        # if self.db.security_level > avatar.get_clearance_level():
-        #     avatar.msg("Access denied: insufficient clearance.")
-        #     return False
-
-        # Generate or get existing interface
-        interface = self.generate_virtual_interface()
-        if not interface:
-            if hasattr(avatar, 'msg'):
-                avatar.msg("Error: Could not establish connection to device interface.")
+        # Verify character is sitting in the rig
+        if character.db.sitting_on != self:
+            if hasattr(character, 'msg'):
+                character.msg("You must be sitting in the dive rig first.")
             return False
 
-        # Move avatar into the interface
-        avatar.move_to(interface)
+        # Verify rig has a target node
+        if not self.db.target_node:
+            if hasattr(character, 'msg'):
+                character.msg("This dive rig is not linked to a Matrix node.")
+            return False
 
-        # Log the access (for future implementation)
-        # self.log_access(avatar)
+        # Verify rig is connected to the Matrix
+        if not self.is_connected():
+            if hasattr(character, 'msg'):
+                character.msg("No Matrix connection available.")
+            return False
+
+        # Check if character already has an avatar (shouldn't happen, but safety check)
+        if hasattr(character.db, 'matrix_avatar') and character.db.matrix_avatar:
+            if hasattr(character, 'msg'):
+                character.msg("You are already jacked in.")
+            return False
+
+        # Create the avatar
+        avatar_name = f"{character.key} (Avatar)"
+        avatar = MatrixAvatar.create(
+            key=avatar_name,
+            location=self.db.target_node
+        )
+
+        if not avatar:
+            if hasattr(character, 'msg'):
+                character.msg("Failed to create Matrix avatar.")
+            return False
+
+        # Link avatar and character
+        avatar.db.real_character = character
+        avatar.db.entry_device = self
+        character.db.matrix_avatar = avatar
+
+        # Copy appearance/description if desired
+        if hasattr(character.db, 'matrix_desc'):
+            avatar.db.desc = character.db.matrix_desc
+
+        # Show jack-in message to room
+        character.location.msg_contents(
+            f"{character.name} {self.db.jack_in_message}.",
+            exclude=character
+        )
+
+        # Switch puppet to avatar
+        account = character.account
+        if account:
+            account.puppet_object(character.sessions.get(), avatar)
+            avatar.msg("|gJacking in...|n")
+            avatar.execute_cmd("look")
 
         return True
 
-    def at_disconnect(self):
+    def jack_out_character(self, character, severity=0, reason="Disconnecting"):
         """
-        Called when device is disconnected from Matrix.
+        Jack out a character from the Matrix.
 
-        Cleans up virtual interface and notifies any avatars inside.
-        """
-        self.db.is_connected = False
-
-        interface = self.db.virtual_interface
-        if interface and hasattr(interface, 'contents'):
-            # Notify and eject any avatars
-            for obj in interface.contents:
-                if hasattr(obj, 'force_disconnect'):
-                    obj.msg("|rConnection lost: device disconnected from Matrix.|n")
-                    obj.force_disconnect()
-
-        # Clean up the interface
-        self.cleanup_virtual_interface()
-
-    def at_object_delete(self):
-        """
-        Called just before this device is deleted.
-
-        Clean up any virtual interfaces.
-        """
-        self.cleanup_virtual_interface()
-        return super().at_object_delete()
-
-    def get_device_description(self, looker=None):
-        """
-        Get description text specific to this device's function.
-
-        Override this in subclasses to provide device-specific descriptions
-        in the virtual interface.
+        Called when the character needs to disconnect (voluntary or forced).
 
         Args:
-            looker: Who is looking (for permission checks)
-
-        Returns:
-            str: Description for virtual interface
+            character (Character): The meatspace character
+            severity (int): Jack-out severity level
+            reason (str): Reason for disconnect
         """
-        return f"A {self.db.device_type} interface."
+        avatar = character.db.matrix_avatar
+        if not avatar:
+            return
+
+        # Get the account before we do anything else
+        account = character.account
+
+        # Jack out the avatar (handles consequences based on severity)
+        avatar.jack_out(reason=reason, severity=severity)
+
+        # Clean up character's reference
+        character.db.matrix_avatar = None
+
+        # Switch puppet back to character
+        if account:
+            account.puppet_object(character.sessions.get(), character)
+            character.msg("|rJacked out.|n")
+            character.execute_cmd("look")
+
+        # Show message to room
+        character.location.msg_contents(
+            f"{character.name} {self.db.jack_out_message}.",
+            exclude=character
+        )
+
+    def at_object_delete(self):
+        """Clean up when rig is destroyed."""
+        # Force disconnect anyone using the rig
+        sitter = self.get_sitter()
+        if sitter and hasattr(sitter.db, 'matrix_avatar') and sitter.db.matrix_avatar:
+            self.jack_out_character(sitter, severity=JACKOUT_FORCED, reason="Dive rig destroyed")
+
+        return super().at_object_delete()
+
+    def handle_disconnect(self):
+        """
+        Called when the rig loses Matrix connectivity.
+
+        Emergency jacks out anyone currently diving.
+        """
+        sitter = self.get_sitter()
+        if sitter and hasattr(sitter.db, 'matrix_avatar') and sitter.db.matrix_avatar:
+            self.jack_out_character(
+                sitter,
+                severity=JACKOUT_EMERGENCY,
+                reason="Connection lost"
+            )
+
+    def handle_forced_removal(self, character):
+        """
+        Called when someone is forcibly removed from the rig (grappled, etc.).
+
+        Forces violent jack-out with physical consequences.
+
+        Args:
+            character (Character): Character being removed
+        """
+        if hasattr(character.db, 'matrix_avatar') and character.db.matrix_avatar:
+            self.jack_out_character(
+                character,
+                severity=JACKOUT_FORCED,
+                reason="Forcibly disconnected!"
+            )

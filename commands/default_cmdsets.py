@@ -109,6 +109,7 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         from commands.roleplay_cmds import CmdSit, CmdLieOnTable, CmdGetOffTable
         from commands.death_cmds import CmdGoOOC, CmdReturnIC, CmdEnterPod, CmdLeavePod, CmdSplinterMe
         from commands.vehicle_cmds import CmdEnterVehicle, CmdExitVehicle, CmdStartEngine, CmdStopEngine, CmdShutoffEngine, CmdDrive, CmdVehicleStatus, CmdRepairPart
+        from commands.matrix_cmds import CmdJackIn, CmdJackOut
         from commands.staff_cmds import (
             CmdStats, CmdXp, CmdGiveXp, CmdStaffSheet, CmdStaffSetStat, CmdStaffSetSkill,
             CmdCreateItem, CmdTypeclasses, CmdSpawnItem, CmdSpawnArmor, CmdSpawnVehicle, CmdSpawnMedical, CmdSpawnOR,
@@ -219,6 +220,8 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdDrive())
         self.add(CmdVehicleStatus())
         self.add(CmdRepairPart())
+        self.add(CmdJackIn())
+        self.add(CmdJackOut())
 
         # --- Admin commands (Builder/Admin only; locked in command class) ---
         self.add(CmdEmoteDebug())

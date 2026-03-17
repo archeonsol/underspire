@@ -152,3 +152,7 @@ class StaffPendingScript(Script):
         self.repeats = 0
         self.persistent = True
         self.db.pending = []
+
+
+# Matrix scripts
+from typeclasses.matrix.scripts import MatrixCleanupScript
