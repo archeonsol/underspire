@@ -8,7 +8,7 @@ MatrixItem - Portable data objects in Matrix virtual space (files, credentials, 
 """
 
 from typeclasses.items import Item
-from typeclasses.mixins.networked import NetworkedMixin
+from typeclasses.matrix.mixins import NetworkedMixin
 
 
 class NetworkedItem(NetworkedMixin, Item):
