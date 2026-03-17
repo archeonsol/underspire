@@ -388,30 +388,9 @@ class Room(ObjectParent, DefaultRoom):
 
     def get_display_furniture(self, looker, **kwargs):
         """
-        Furniture section: Seats/beds display
-        - Empty: "The bed is empty."
-        - Occupied: "Bob is lying on the bed." / "Bob is sitting on the couch."
-        Supports multiple occupants with grammatical name lists.
-        Builders can customize per-object templates via:
-          obj.db.seating_empty_msg    (default: "The {obj} is empty.")
-          obj.db.seating_occupied_msg (Seat default: "{name} is sitting on the {obj}.")
-          obj.db.sitting_template     (Bed: "{name} is sitting on the {obj}.")
-          obj.db.lying_template       (Bed: "{name} is lying on the {obj}.")
-        Placeholders:
-          {name} – occupant's display name (for occupied)
-          {obj}  – seat/bed display name
+        Furniture section: Seats/beds display.
+        Delegates to each furniture object's get_room_appearance() method.
         """
-        from evennia.utils.utils import iter_to_str
-        # Visible characters in the room (used to check occupancy visibility)
-        characters = self.filter_visible(
-            self.contents_get(content_type="character"), looker, **kwargs
-        )
-        # Be defensive: only treat true Characters (avoid edge cases where non-characters slip in)
-        try:
-            from evennia.utils.utils import inherits_from
-            characters = [c for c in characters if inherits_from(c, "evennia.objects.objects.DefaultCharacter")]
-        except Exception:
-            pass
         lines = []
         for obj in self.contents:
             if not (_is_seat(obj) or _is_bed(obj)):
@@ -419,90 +398,11 @@ class Room(ObjectParent, DefaultRoom):
             if not self.filter_visible([obj], looker, **kwargs):
                 continue
 
-            # Collect all occupants
-            occupants = []
-            # Check looker first (they may not be in characters list due to filter_visible)
-            if getattr(looker.db, "sitting_on", None) == obj:
-                occupants.append((looker, "sitting"))
-            elif getattr(looker.db, "lying_on", None) == obj:
-                occupants.append((looker, "lying"))
-            # Then check other visible characters
-            for char in characters:
-                if char == looker:
-                    continue  # Already checked looker above
-                if getattr(char.db, "sitting_on", None) == obj:
-                    if self.filter_visible([char], looker, **kwargs):
-                        occupants.append((char, "sitting"))
-                elif getattr(char.db, "lying_on", None) == obj:
-                    if self.filter_visible([char], looker, **kwargs):
-                        occupants.append((char, "lying"))
-
-            obj_name = obj.get_display_name(looker, **kwargs)
-
-            # Generate display
-            if occupants:
-                # Group by posture (for beds with mixed sitting/lying)
-                sitting_on = []
-                lying_on = []
-                for char, posture in occupants:
-                    if posture == "lying":
-                        lying_on.append(char)
-                    else:
-                        sitting_on.append(char)
-
-                # Generate combined messages for each posture group
-                for group, posture in [(sitting_on, "sitting"), (lying_on, "lying")]:
-                    if not group:
-                        continue
-
-                    # Build name list with "you" for looker
-                    names = []
-                    has_you = False
-                    for char in group:
-                        if char == looker:
-                            has_you = True
-                        else:
-                            char_name = char.get_display_name(looker, **kwargs)
-                            names.append(f"{ROOM_DESC_CHARACTER_NAME_COLOR}{char_name}|n")
-
-                    # Combine names grammatically
-                    if has_you and names:
-                        # "Joe, Jane and you"
-                        name_list = iter_to_str(names, sep=",", endsep=" and")
-                        combined = f"{name_list} and {ROOM_DESC_CHARACTER_NAME_COLOR}you|n"
-                        verb = "are"
-                    elif has_you:
-                        # Just "you"
-                        combined = f"{ROOM_DESC_CHARACTER_NAME_COLOR}You|n"
-                        verb = "are"
-                    elif len(names) == 1:
-                        # Just one other person
-                        combined = names[0]
-                        verb = "is"
-                    else:
-                        # Multiple others
-                        combined = iter_to_str(names, sep=",", endsep=" and")
-                        verb = "are"
-
-                    # Get appropriate template
-                    if _is_bed(obj) and hasattr(obj, 'get_template_for_posture'):
-                        template = obj.get_template_for_posture(posture)
-                    else:
-                        template = obj.get_occupied_template()
-
-                    # Replace "is" with correct verb in template
-                    template = template.replace(" is ", f" {verb} ")
-
-                    text = template.format(
-                        name=combined,
-                        obj=f"{ROOM_DESC_OBJECT_NAME_COLOR}{obj_name}|n"
-                    )
-                    lines.append(text)
-            else:
-                # Empty furniture
-                template = obj.get_empty_template()
-                text = template.format(obj=f"{ROOM_DESC_OBJECT_NAME_COLOR}{obj_name}|n", name="")
-                lines.append(text)
+            # Let the furniture object handle its own display
+            if hasattr(obj, 'get_room_appearance'):
+                appearance = obj.get_room_appearance(looker, **kwargs)
+                if appearance:
+                    lines.append(appearance)
 
         return " ".join(lines)
 

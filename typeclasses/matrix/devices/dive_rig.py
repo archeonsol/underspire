@@ -44,6 +44,11 @@ class DiveRig(PuppetRigMixin, Seat, NetworkedObject):
         self.db.forced_jackout_msg = "|rYou feel your consciousness being violently ripped back through the Matrix!|n"
         self.db.fatal_jackout_msg = "|rThe world fractures. Your avatar is dying. The Matrix ejects your consciousness like poison—|n"
 
+        # Room display message when someone is jacked in (diving)
+        # Placeholder: {name} = character display name, {obj} = rig display name
+        if getattr(self.db, "diving_msg", None) is None:
+            self.db.diving_msg = "{name} is jacked into the Matrix, diving through {obj}."
+
     def jack_in(self, character):
         """
         Jack a character into the Matrix.
@@ -239,3 +244,94 @@ class DiveRig(PuppetRigMixin, Seat, NetworkedObject):
                 severity=JACKOUT_FORCED,
                 reason="Forcibly disconnected!"
             )
+
+    def is_character_diving(self, character):
+        """
+        Check if a character is currently jacked into the Matrix via this rig.
+
+        Args:
+            character (Character): The character to check
+
+        Returns:
+            bool: True if character is jacked in and puppeting their avatar
+        """
+        # Character must be sitting on this rig
+        if getattr(character.db, 'sitting_on', None) != self:
+            return False
+
+        # Character must have an avatar
+        avatar_dbref = getattr(character.db, 'matrix_avatar_dbref', None)
+        if not avatar_dbref:
+            return False
+
+        # Check if the character's account is currently puppeting the avatar
+        try:
+            from typeclasses.matrix.avatars import MatrixAvatar
+            avatar = MatrixAvatar.objects.get(pk=avatar_dbref)
+            # If the avatar exists and the character has no sessions (puppeting avatar instead)
+            if avatar and hasattr(character, 'sessions'):
+                return not character.sessions.get()
+        except MatrixAvatar.DoesNotExist:
+            return False
+
+        return False
+
+    def get_room_appearance(self, looker, **kwargs):
+        """
+        Return how this dive rig appears in the room description.
+        Shows special diving message when character is jacked into the Matrix.
+
+        Args:
+            looker: The character looking at the room
+            **kwargs: Additional options
+
+        Returns:
+            str: The formatted display string, or empty string if nothing to show
+        """
+        from typeclasses.rooms import ROOM_DESC_CHARACTER_NAME_COLOR, ROOM_DESC_OBJECT_NAME_COLOR
+
+        # Get the sitter
+        sitter = self.get_sitter()
+
+        obj_name = self.get_display_name(looker, **kwargs)
+
+        if not sitter:
+            # Empty rig
+            template = self.get_empty_template()
+            return template.format(obj=f"{ROOM_DESC_OBJECT_NAME_COLOR}{obj_name}|n", name="")
+
+        # Check visibility - always show looker
+        if sitter != looker:
+            location = self.location
+            if location and hasattr(location, 'filter_visible'):
+                if not location.filter_visible([sitter], looker, **kwargs):
+                    # Not visible, show as empty
+                    template = self.get_empty_template()
+                    return template.format(obj=f"{ROOM_DESC_OBJECT_NAME_COLOR}{obj_name}|n", name="")
+
+        # Check if sitter is diving (jacked into Matrix)
+        is_diving = self.is_character_diving(sitter)
+
+        # Format name
+        if sitter == looker:
+            char_name = f"{ROOM_DESC_CHARACTER_NAME_COLOR}You|n"
+            verb = "are"
+        else:
+            char_name = sitter.get_display_name(looker, **kwargs)
+            char_name = f"{ROOM_DESC_CHARACTER_NAME_COLOR}{char_name}|n"
+            verb = "is"
+
+        if is_diving:
+            # Use special diving message
+            template = getattr(self.db, "diving_msg", None) or "{name} is jacked into the Matrix, diving through {obj}."
+        else:
+            # Use standard sitting message
+            template = self.get_occupied_template()
+
+        # Replace verb
+        template = template.replace(" is ", f" {verb} ")
+
+        return template.format(
+            name=char_name,
+            obj=f"{ROOM_DESC_OBJECT_NAME_COLOR}{obj_name}|n"
+        )

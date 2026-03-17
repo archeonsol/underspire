@@ -32,6 +32,13 @@ class Seat(DefaultObject):
         if getattr(self.db, "seating_occupied_msg", None) is None:
             self.db.seating_occupied_msg = "{name} is sitting on the {obj}."
 
+        # Transition messages (shown when character sits/stands)
+        # Placeholders: {name} = character name, {obj} = furniture name
+        if getattr(self.db, "sit_msg", None) is None:
+            self.db.sit_msg = "You sit down on {obj}."
+        if getattr(self.db, "sit_msg_room", None) is None:
+            self.db.sit_msg_room = "{name} sits down on {obj}."
+
     def get_display_name(self, looker, **kwargs):
         """Return custom name or key."""
         return self.key or "a seat"
@@ -93,6 +100,80 @@ class Seat(DefaultObject):
         """
         return getattr(self.db, "seating_occupied_msg", None) or "{name} is sitting on the {obj}."
 
+    def get_room_appearance(self, looker, **kwargs):
+        """
+        Return how this seat appears in the room description.
+
+        Args:
+            looker: The character looking at the room
+            **kwargs: Additional options
+
+        Returns:
+            str: The formatted display string, or empty string if nothing to show
+        """
+        from evennia.utils.utils import iter_to_str
+
+        # Get visible occupants
+        occupants = []
+        sitters = self.get_sitters()
+        for char in sitters:
+            # Filter visibility - always include looker
+            if char == looker:
+                occupants.append(char)
+            else:
+                # Check if looker can see this character
+                location = self.location
+                if location and hasattr(location, 'filter_visible'):
+                    if location.filter_visible([char], looker, **kwargs):
+                        occupants.append(char)
+
+        obj_name = self.get_display_name(looker, **kwargs)
+
+        if not occupants:
+            # Empty furniture
+            template = self.get_empty_template()
+            from typeclasses.rooms import ROOM_DESC_OBJECT_NAME_COLOR
+            return template.format(obj=f"{ROOM_DESC_OBJECT_NAME_COLOR}{obj_name}|n", name="")
+
+        # Build name list with "you" for looker
+        from typeclasses.rooms import ROOM_DESC_CHARACTER_NAME_COLOR, ROOM_DESC_OBJECT_NAME_COLOR
+        names = []
+        has_you = False
+        for char in occupants:
+            if char == looker:
+                has_you = True
+            else:
+                char_name = char.get_display_name(looker, **kwargs)
+                names.append(f"{ROOM_DESC_CHARACTER_NAME_COLOR}{char_name}|n")
+
+        # Combine names grammatically
+        if has_you and names:
+            # "Joe, Jane and you"
+            name_list = iter_to_str(names, sep=",", endsep=" and")
+            combined = f"{name_list} and {ROOM_DESC_CHARACTER_NAME_COLOR}you|n"
+            verb = "are"
+        elif has_you:
+            # Just "you"
+            combined = f"{ROOM_DESC_CHARACTER_NAME_COLOR}You|n"
+            verb = "are"
+        elif len(names) == 1:
+            # Just one other person
+            combined = names[0]
+            verb = "is"
+        else:
+            # Multiple others
+            combined = iter_to_str(names, sep=",", endsep=" and")
+            verb = "are"
+
+        # Get template and replace verb
+        template = self.get_occupied_template()
+        template = template.replace(" is ", f" {verb} ")
+
+        return template.format(
+            name=combined,
+            obj=f"{ROOM_DESC_OBJECT_NAME_COLOR}{obj_name}|n"
+        )
+
 
 class Bed(Seat):
     """
@@ -121,6 +202,17 @@ class Bed(Seat):
             self.db.sitting_template = "{name} is sitting on the {obj}."
         if getattr(self.db, "lying_template", None) is None:
             self.db.lying_template = "{name} is lying on the {obj}."
+
+        # Transition messages for beds (both sit and lie)
+        # Placeholders: {name} = character name, {obj} = furniture name
+        if getattr(self.db, "sit_msg", None) is None:
+            self.db.sit_msg = "You sit down on {obj}."
+        if getattr(self.db, "sit_msg_room", None) is None:
+            self.db.sit_msg_room = "{name} sits down on {obj}."
+        if getattr(self.db, "lie_msg", None) is None:
+            self.db.lie_msg = "You lie down on {obj}."
+        if getattr(self.db, "lie_msg_room", None) is None:
+            self.db.lie_msg_room = "{name} lies down on {obj}."
 
     def get_display_name(self, looker, **kwargs):
         """Return custom name or key."""
@@ -171,3 +263,95 @@ class Bed(Seat):
             return getattr(self.db, "lying_template", None) or "{name} is lying on the {obj}."
         else:
             return getattr(self.db, "sitting_template", None) or "{name} is sitting on the {obj}."
+
+    def get_room_appearance(self, looker, **kwargs):
+        """
+        Return how this bed appears in the room description.
+        Handles both sitting and lying occupants.
+
+        Args:
+            looker: The character looking at the room
+            **kwargs: Additional options
+
+        Returns:
+            str: The formatted display string, or empty string if nothing to show
+        """
+        from evennia.utils.utils import iter_to_str
+        from typeclasses.rooms import ROOM_DESC_CHARACTER_NAME_COLOR, ROOM_DESC_OBJECT_NAME_COLOR
+
+        # Get visible occupants
+        occupants = []
+        all_occupants = self.get_occupants()
+        for char in all_occupants:
+            # Determine posture
+            if getattr(char.db, "lying_on", None) == self:
+                posture = "lying"
+            else:
+                posture = "sitting"
+
+            # Filter visibility - always include looker
+            if char == looker:
+                occupants.append((char, posture))
+            else:
+                location = self.location
+                if location and hasattr(location, 'filter_visible'):
+                    if location.filter_visible([char], looker, **kwargs):
+                        occupants.append((char, posture))
+
+        obj_name = self.get_display_name(looker, **kwargs)
+
+        if not occupants:
+            # Empty furniture
+            template = self.get_empty_template()
+            return template.format(obj=f"{ROOM_DESC_OBJECT_NAME_COLOR}{obj_name}|n", name="")
+
+        # Group by posture
+        sitting_on = []
+        lying_on = []
+        for char, posture in occupants:
+            if posture == "lying":
+                lying_on.append(char)
+            else:
+                sitting_on.append(char)
+
+        # Generate messages for each posture group
+        lines = []
+        for group, posture in [(sitting_on, "sitting"), (lying_on, "lying")]:
+            if not group:
+                continue
+
+            # Build name list with "you" for looker
+            names = []
+            has_you = False
+            for char in group:
+                if char == looker:
+                    has_you = True
+                else:
+                    char_name = char.get_display_name(looker, **kwargs)
+                    names.append(f"{ROOM_DESC_CHARACTER_NAME_COLOR}{char_name}|n")
+
+            # Combine names grammatically
+            if has_you and names:
+                name_list = iter_to_str(names, sep=",", endsep=" and")
+                combined = f"{name_list} and {ROOM_DESC_CHARACTER_NAME_COLOR}you|n"
+                verb = "are"
+            elif has_you:
+                combined = f"{ROOM_DESC_CHARACTER_NAME_COLOR}You|n"
+                verb = "are"
+            elif len(names) == 1:
+                combined = names[0]
+                verb = "is"
+            else:
+                combined = iter_to_str(names, sep=",", endsep=" and")
+                verb = "are"
+
+            # Get template and replace verb
+            template = self.get_template_for_posture(posture)
+            template = template.replace(" is ", f" {verb} ")
+
+            lines.append(template.format(
+                name=combined,
+                obj=f"{ROOM_DESC_OBJECT_NAME_COLOR}{obj_name}|n"
+            ))
+
+        return " ".join(lines)

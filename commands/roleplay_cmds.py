@@ -1569,14 +1569,26 @@ class CmdSit(Command):
         if not obj.has_room(posture="sitting"):
             caller.msg("There's no room left to sit there.")
             return
+        # Clear any other seating/lying state
+        if caller.db.lying_on:
+            del caller.db.lying_on
+        if caller.db.lying_on_table:
+            del caller.db.lying_on_table
         caller.db.sitting_on = obj
         sname = obj.get_display_name(caller)
-        caller.msg("|wYou sit down on %s.|n" % sname)
+        cname = caller.get_display_name(caller) if hasattr(caller, "get_display_name") else caller.name
+
+        # Use customizable transition messages from furniture
+        sit_msg = getattr(obj.db, "sit_msg", None) or "You sit down on {obj}."
+        sit_msg_room = getattr(obj.db, "sit_msg_room", None) or "{name} sits down on {obj}."
+
+        caller.msg("|w%s|n" % sit_msg.format(name=cname, obj=sname))
         if caller.location and hasattr(caller.location, "contents_get"):
             for v in caller.location.contents_get(content_type="character"):
                 if v == caller:
                     continue
-                v.msg("%s sits down on %s." % (caller.get_display_name(v) if hasattr(caller, "get_display_name") else caller.name, sname))
+                vname = caller.get_display_name(v) if hasattr(caller, "get_display_name") else caller.name
+                v.msg(sit_msg_room.format(name=vname, obj=sname))
 
 
 class CmdLieOnTable(Command):
@@ -1618,14 +1630,26 @@ class CmdLieOnTable(Command):
             if not obj.has_room(posture="lying"):
                 caller.msg("There's no room left on that bed.")
                 return
+            # Clear any other seating/lying state
+            if caller.db.sitting_on:
+                del caller.db.sitting_on
+            if caller.db.lying_on_table:
+                del caller.db.lying_on_table
             caller.db.lying_on = obj
             bname = obj.get_display_name(caller)
-            caller.msg("|wYou lie down on %s.|n" % bname)
+            cname = caller.get_display_name(caller) if hasattr(caller, "get_display_name") else caller.name
+
+            # Use customizable transition messages from furniture
+            lie_msg = getattr(obj.db, "lie_msg", None) or "You lie down on {obj}."
+            lie_msg_room = getattr(obj.db, "lie_msg_room", None) or "{name} lies down on {obj}."
+
+            caller.msg("|w%s|n" % lie_msg.format(name=cname, obj=bname))
             if caller.location and hasattr(caller.location, "contents_get"):
                 for v in caller.location.contents_get(content_type="character"):
                     if v == caller:
                         continue
-                    v.msg("%s lies down on %s." % (caller.get_display_name(v) if hasattr(caller, "get_display_name") else caller.name, bname))
+                    vname = caller.get_display_name(v) if hasattr(caller, "get_display_name") else caller.name
+                    v.msg(lie_msg_room.format(name=vname, obj=bname))
         else:
             caller.msg("You can only lie on an operating table or a bed.")
 
