@@ -687,12 +687,22 @@ class CmdRestore(Command):
 
     def func(self):
         caller = self.caller
-        args = (self.args or "").strip()
-        if not args:
-            caller.msg("Usage: @restore <character>")
-            return
-        # First try the normal global search (quiet so we can run our own fallback without spurious errors).
-        target = caller.search(args, global_search=True, quiet=True)
+        raw = (self.args or "").strip()
+
+        # Quality-of-life: allow self-target shorthand so you can very quickly
+        # restore your current puppet. The following all target the caller:
+        #   @restore
+        #   @restore/me
+        #   @restore/self
+        #
+        # Note: plain "me"/"self" without a slash are left alone so they can still
+        # be resolved via normal search if desired.
+        if not raw or raw.lower() in ("/me", "/self"):
+            target = caller
+        else:
+            args = raw
+            # First try the normal global search (quiet so we can run our own fallback without spurious errors).
+            target = caller.search(args, global_search=True, quiet=True)
 
         # If that failed, try a more relaxed match on characters in the room,
         # allowing partial/surname matching similar to @puppet.
