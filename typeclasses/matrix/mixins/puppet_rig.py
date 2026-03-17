@@ -70,7 +70,7 @@ class PuppetRigMixin:
         target.db.idle = False
 
         # Staged puppet-in sequence
-        jack_in_msg = getattr(self.db, 'jack_in_message', 'connects to the system')
+        jack_in_msg = self.db.jack_in_message or 'connects to the system'
         character.msg("|gConnecting...|n")
         character.location.msg_contents(
             f"{character.name} {jack_in_msg}.",
@@ -85,8 +85,7 @@ class PuppetRigMixin:
     def _puppet_in_stage1(self, character, target):
         """Stage 1: Character loses consciousness."""
         character.db.conscious = False
-        transition_msg = getattr(self.db, 'jack_in_transition_msg',
-                                "|cThe room seems to be sucked out of existence...|n")
+        transition_msg = self.db.jack_in_transition_msg or "|cThe room seems to be sucked out of existence...|n"
         character.msg(transition_msg)
 
         # Stage 2: After another second, puppet swap
@@ -99,7 +98,6 @@ class PuppetRigMixin:
             session = character.sessions.all()[0] if character.sessions.all() else None
             if session:
                 account.puppet_object(session, target)
-                target.execute_cmd("look")
 
     def puppet_out(self, character, severity=0, reason="Disconnecting"):
         """
@@ -136,17 +134,13 @@ class PuppetRigMixin:
 
         # Different messages based on severity
         if severity >= JACKOUT_FATAL:  # FATAL
-            msg = getattr(self.db, 'fatal_jackout_msg',
-                         "|rThe world fractures. The Matrix ejects your consciousness like poison—|n")
+            msg = self.db.fatal_jackout_msg or "|rThe world fractures. The Matrix ejects your consciousness like poison—|n"
         elif severity >= 2:  # FORCED
-            msg = getattr(self.db, 'forced_jackout_msg',
-                         "|rYou feel your consciousness being violently ripped back!|n")
+            msg = self.db.forced_jackout_msg or "|rYou feel your consciousness being violently ripped back!|n"
         elif severity >= 1:  # EMERGENCY
-            msg = getattr(self.db, 'emergency_jackout_msg',
-                         "|yYou feel your awareness being urgently pulled back...|n")
+            msg = self.db.emergency_jackout_msg or "|yYou feel your awareness being urgently pulled back...|n"
         else:  # NORMAL
-            msg = getattr(self.db, 'normal_jackout_msg',
-                         "|cYou feel your awareness being drawn back into your body.|n")
+            msg = self.db.normal_jackout_msg or "|cYou feel your awareness being drawn back into your body.|n"
 
         target.msg(msg)
 
@@ -176,18 +170,15 @@ class PuppetRigMixin:
             character.msg("|rYou shouldn't be alive.|n")
         else:
             character.db.conscious = True
-            character.msg("|rDISCO.|n")
-            character.execute_cmd("look")
+            character.msg("|cDisconnected...|n")
 
         # Show message to room where character's body is
         if character.location:
-            jack_out_msg = getattr(self.db, 'jack_out_message', 'disconnects from the system')
+            jack_out_msg = self.db.jack_out_message or 'disconnects from the system'
             character.location.msg_contents(
                 f"{character.name} {jack_out_msg}.",
                 exclude=character
             )
-
-        character.execute_cmd("look")
 
     # Methods that subclasses must implement
 

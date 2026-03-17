@@ -69,12 +69,7 @@ class DiveRig(PuppetRigMixin, Seat, NetworkedObject):
             severity (int): Jack-out severity level
             reason (str): Reason for disconnect
         """
-        # Look up avatar and tell it to jack out (applies consequences)
-        avatar = self.get_current_puppet(character)
-        if avatar and hasattr(avatar, 'jack_out'):
-            avatar.jack_out(reason=reason, severity=severity)
-
-        # Puppet back to character
+        # Puppet back to character (handles all messaging and consequences)
         self.puppet_out(character, severity=severity, reason=reason)
 
     # PuppetRigMixin required methods
