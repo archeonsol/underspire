@@ -6,13 +6,14 @@ Physical devices that provide Matrix connectivity and interfaces.
 DiveRig - Reclined chair for jacking into the Matrix (combines Seat + NetworkedObject)
 """
 
-from evennia.utils import delay
+from evennia.utils.create import create_object
 from typeclasses.seats import Seat
 from typeclasses.matrix.objects import NetworkedObject
+from typeclasses.matrix.mixins import PuppetRigMixin
 from typeclasses.matrix.avatars import MatrixAvatar, JACKOUT_FORCED, JACKOUT_EMERGENCY
 
 
-class DiveRig(Seat, NetworkedObject):
+class DiveRig(PuppetRigMixin, Seat, NetworkedObject):
     """
     Reclined chair for jacking into the Matrix.
 
@@ -23,7 +24,6 @@ class DiveRig(Seat, NetworkedObject):
     The character's body remains vulnerable in meatspace while diving.
 
     Attributes:
-        target_node (MatrixNode): The Matrix node this rig connects to
         jack_in_message (str): Custom message shown when jacking in
         jack_out_message (str): Custom message shown when jacking out normally
     """
@@ -38,13 +38,16 @@ class DiveRig(Seat, NetworkedObject):
         self.db.ephemeral_node = False  # Rigs connect to persistent nodes
         self.db.jack_in_message = "jacks into the Matrix"
         self.db.jack_out_message = "disconnects from the Matrix"
+        self.db.jack_in_transition_msg = "|cThe room seems to be sucked out of existence...|n"
+        self.db.normal_jackout_msg = "|cYou feel your awareness being drawn back through the Matrix and into your body.|n"
+        self.db.emergency_jackout_msg = "|yYou feel your awareness being urgently pulled back through the Matrix...|n"
+        self.db.forced_jackout_msg = "|rYou feel your consciousness being violently ripped back through the Matrix!|n"
 
     def jack_in(self, character):
         """
         Jack a character into the Matrix.
 
         Creates an avatar at the router's location and switches the player's puppet.
-        The router must exist in a Matrix node for this to work.
 
         Args:
             character (Character): The character jacking in
@@ -52,12 +55,36 @@ class DiveRig(Seat, NetworkedObject):
         Returns:
             bool: True if successful, False otherwise
         """
-        # Verify character is sitting in the rig
-        if character.db.sitting_on != self:
-            if hasattr(character, 'msg'):
-                character.msg("You must be sitting in the dive rig first.")
-            return False
+        return self.puppet_in(character)
 
+    def jack_out_character(self, character, severity=0, reason="Disconnecting"):
+        """
+        Jack out a character from the Matrix.
+
+        Called when the character needs to disconnect (voluntary or forced).
+
+        Args:
+            character (Character): The meatspace character
+            severity (int): Jack-out severity level
+            reason (str): Reason for disconnect
+        """
+        # Look up avatar and tell it to jack out (applies consequences)
+        avatar = self.get_current_puppet(character)
+        if avatar and hasattr(avatar, 'jack_out'):
+            avatar.jack_out(reason=reason, severity=severity)
+
+        # Puppet back to character
+        self.puppet_out(character, severity=severity, reason=reason)
+
+    # PuppetRigMixin required methods
+
+    def validate_connection(self, character):
+        """
+        Validate that Matrix connection is available.
+
+        Returns:
+            bool: True if connection is valid, False otherwise
+        """
         # Get the router
         router = self.get_relay()
         if not router:
@@ -78,8 +105,23 @@ class DiveRig(Seat, NetworkedObject):
                 character.msg("Router is not properly configured (no Matrix location).")
             return False
 
+        return True
+
+    def get_puppet_target(self, character):
+        """
+        Get or create the Matrix avatar for this character.
+
+        Returns:
+            MatrixAvatar: The avatar object, or None if creation failed
+        """
+        # Get the router to determine spawn location
+        router = self.get_relay()
+        target_node = router.location if router else None
+
+        if not target_node:
+            return None
+
         # Find or create persistent avatar using stored dbref
-        from typeclasses.matrix.avatars import MatrixAvatar
         avatar_dbref = character.db.matrix_avatar_dbref
         avatar = None
 
@@ -113,7 +155,6 @@ class DiveRig(Seat, NetworkedObject):
         # Create avatar if it doesn't exist or needs respawn
         if not avatar:
             avatar_name = f"{character.key} (Avatar)"
-            from evennia.utils.create import create_object
             avatar = create_object(
                 MatrixAvatar,
                 key=avatar_name,
@@ -121,13 +162,10 @@ class DiveRig(Seat, NetworkedObject):
             )
 
             if not avatar:
-                if hasattr(character, 'msg'):
-                    character.msg("Failed to create Matrix avatar.")
-                return False
+                return None
 
             # Link avatar and character
             avatar.db.real_character = character
-            avatar.db.entry_device = self
             # Store avatar's dbref (not the object itself)
             character.db.matrix_avatar_dbref = avatar.pk
 
@@ -136,120 +174,42 @@ class DiveRig(Seat, NetworkedObject):
 
             if needs_respawn:
                 character.msg("|yYour previous avatar was lost. Respawning...|n")
-        else:
-            # Avatar exists and is valid, just reconnecting at current location
-            avatar.db.entry_device = self
-            avatar.db.idle = False
 
-        # Staged jack-in sequence
-        character.msg("|gJacking in...|n")
-        character.location.msg_contents(
-            f"{character.name} {self.db.jack_in_message}.",
-            exclude=character
-        )
+        return avatar
 
-        # Stage 1: After 1 second, character loses consciousness
-        delay(1, self._jack_in_stage1, character, avatar)
-
-        return True
-
-    def _jack_in_stage1(self, character, avatar):
-        """Stage 1: Character loses consciousness in meatspace."""
-        character.db.conscious = False
-        character.msg("|cThe room seems to be sucked out of existence...|n")
-
-        # Stage 2: After another second, puppet swap
-        delay(1, self._jack_in_stage2, character, avatar)
-
-    def _jack_in_stage2(self, character, avatar):
-        """Stage 2: Switch puppet to avatar."""
-        account = character.account
-        if account:
-            session = character.sessions.all()[0] if character.sessions.all() else None
-            if session:
-                account.puppet_object(session, avatar)
-
-    def jack_out_character(self, character, severity=0, reason="Disconnecting"):
+    def get_current_puppet(self, character):
         """
-        Jack out a character from the Matrix.
+        Get the currently puppeted avatar for this character.
 
-        Called when the character needs to disconnect (voluntary or forced).
-
-        Args:
-            character (Character): The meatspace character
-            severity (int): Jack-out severity level
-            reason (str): Reason for disconnect
+        Returns:
+            MatrixAvatar: The avatar object, or None if not connected
         """
-        # Look up avatar by dbref
-        from typeclasses.matrix.avatars import MatrixAvatar
         avatar_dbref = character.db.matrix_avatar_dbref
         if not avatar_dbref:
-            return
+            return None
 
         try:
-            avatar = MatrixAvatar.objects.get(pk=avatar_dbref)
+            return MatrixAvatar.objects.get(pk=avatar_dbref)
         except MatrixAvatar.DoesNotExist:
             # Avatar was deleted
             character.db.matrix_avatar_dbref = None
-            return
+            return None
 
-        # Get the account and session from avatar (since that's what's currently puppeted)
-        account = avatar.account if hasattr(avatar, 'account') else None
+    def cleanup_on_disconnect(self, character):
+        """
+        Clean up when connection is forcibly broken.
 
-        # Jack out the avatar (handles consequences based on severity)
-        avatar.jack_out(reason=reason, severity=severity)
+        For DiveRig, avatar persists in the Matrix - no cleanup needed.
+        """
+        pass
 
-        # Don't clear the reference - avatar persists for reconnection
-        # character.db.matrix_avatar stays set
-
-        # Staged jack-out sequence
-        # Stage 1: After 1 second, show transition message
-        delay(1, self._jack_out_stage1, character, avatar, severity, account)
-
-    def _jack_out_stage1(self, character, avatar, severity, account):
-        """Stage 1: Avatar becomes unconscious, show transition message."""
-        avatar.db.conscious = False
-
-        # Different messages based on severity
-        if severity >= JACKOUT_FORCED:
-            avatar.msg("|rYou feel your consciousness being violently ripped back through the Matrix!|n")
-        elif severity >= JACKOUT_EMERGENCY:
-            avatar.msg("|yYou feel your awareness being urgently pulled back through the Matrix...|n")
-        else:
-            avatar.msg("|cYou feel your awareness being drawn back through the Matrix and into your body.|n")
-
-        # Stage 2: After another second, puppet swap
-        delay(1, self._jack_out_stage2, character, avatar, account)
-
-    def _jack_out_stage2(self, character, avatar, account):
-        """Stage 2: Switch puppet back to character."""
-        # Switch puppet back to character
-        # Session is attached to avatar, not character
-        if account:
-            sessions = avatar.sessions.all()
-            session = sessions[0] if sessions else None
-            if session:
-                account.puppet_object(session, character)
-
-                # Stage 3: After another second, regain consciousness
-                delay(1, self._jack_out_stage3, character)
-
-    def _jack_out_stage3(self, character):
-        """Stage 3: Character regains consciousness in meatspace."""
-        character.db.conscious = True
-
-        # Show message to meatspace room where character's body is
-        if character.location:
-            character.location.msg_contents(
-                f"{character.name} {self.db.jack_out_message}.",
-                exclude=character
-            )
+    # Rig lifecycle methods
 
     def at_object_delete(self):
         """Clean up when rig is destroyed."""
         # Force disconnect anyone using the rig
         sitter = self.get_sitter()
-        if sitter and hasattr(sitter.db, 'matrix_avatar') and sitter.db.matrix_avatar:
+        if sitter and hasattr(sitter.db, 'matrix_avatar_dbref') and sitter.db.matrix_avatar_dbref:
             self.jack_out_character(sitter, severity=JACKOUT_FORCED, reason="Dive rig destroyed")
 
         return super().at_object_delete()
@@ -261,7 +221,7 @@ class DiveRig(Seat, NetworkedObject):
         Emergency jacks out anyone currently diving.
         """
         sitter = self.get_sitter()
-        if sitter and hasattr(sitter.db, 'matrix_avatar') and sitter.db.matrix_avatar:
+        if sitter and hasattr(sitter.db, 'matrix_avatar_dbref') and sitter.db.matrix_avatar_dbref:
             self.jack_out_character(
                 sitter,
                 severity=JACKOUT_EMERGENCY,
@@ -277,7 +237,7 @@ class DiveRig(Seat, NetworkedObject):
         Args:
             character (Character): Character being removed
         """
-        if hasattr(character.db, 'matrix_avatar') and character.db.matrix_avatar:
+        if hasattr(character.db, 'matrix_avatar_dbref') and character.db.matrix_avatar_dbref:
             self.jack_out_character(
                 character,
                 severity=JACKOUT_FORCED,

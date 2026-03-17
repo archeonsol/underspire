@@ -85,29 +85,50 @@ class MatrixConnectionScript(DefaultScript):
     def at_script_creation(self):
         """Called when script is first created."""
         self.key = "matrix_connection_check"
-        self.desc = "Checks Matrix avatar connections periodically"
+        self.desc = "Checks Matrix avatar and teleop connections periodically"
         self.interval = 10  # Run every 10 seconds
         self.repeats = 0  # Run forever
         self.persistent = True  # Survive server restarts
         self.start_delay = True  # Wait one interval before first run
 
     def at_repeat(self):
-        """Called every interval. Checks all active avatar connections."""
+        """Called every interval. Checks all active avatar and teleop connections."""
         from typeclasses.matrix.avatars import MatrixAvatar
+        from typeclasses.matrix.devices import TeleopRig
+        from evennia.objects.models import ObjectDB
 
-        # Find all non-idle Matrix avatars
+        # Check Matrix avatar connections
         avatars = MatrixAvatar.objects.filter(db_idle=False)
-
-        disconnected_count = 0
+        avatar_disconnected = 0
         for avatar in avatars:
-            # Check connection validity
             if not avatar.check_connection():
-                disconnected_count += 1
+                avatar_disconnected += 1
+
+        # Check teleop rig connections
+        teleop_rigs = ObjectDB.objects.filter(db_typeclass_path__contains="TeleopRig")
+        teleop_disconnected = 0
+        for rig in teleop_rigs:
+            # Check if someone is sitting in the rig
+            sitter = rig.get_sitter() if hasattr(rig, 'get_sitter') else None
+            if not sitter:
+                continue
+
+            # Check if they're currently puppeted into a target
+            target = rig.get_current_puppet(sitter) if hasattr(rig, 'get_current_puppet') else None
+            if not target:
+                continue
+
+            # Verify Matrix connection is still valid
+            if hasattr(rig, 'is_connected') and not rig.is_connected():
+                # Lost Matrix connection - emergency disconnect
+                if hasattr(rig, 'disengage'):
+                    rig.disengage(sitter, severity=1, reason="Network connection lost")
+                    teleop_disconnected += 1
 
         # Optional: log disconnection activity
-        if disconnected_count > 0:
+        if avatar_disconnected > 0 or teleop_disconnected > 0:
             from evennia.utils import logger
-            logger.log_info(f"Matrix connection check: disconnected {disconnected_count} avatar(s)")
+            logger.log_info(f"Connection check: disconnected {avatar_disconnected} avatar(s), {teleop_disconnected} teleop session(s)")
 
     def at_start(self):
         """Called when script starts (including after server restart)."""
