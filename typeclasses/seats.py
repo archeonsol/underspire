@@ -14,7 +14,7 @@ class Seat(DefaultObject):
     """
     def at_object_creation(self):
         super().at_object_creation()
-        self.locks.add("get:false()")
+        # Seats are moveable furniture (no get lock)
 
     def get_display_name(self, looker):
         return getattr(self.db, "desc", None) or self.key or "a seat"
@@ -38,7 +38,7 @@ class Bed(DefaultObject):
     """
     def at_object_creation(self):
         super().at_object_creation()
-        self.locks.add("get:false()")
+        # Beds are moveable furniture (no get lock)
 
     def get_display_name(self, looker):
         return getattr(self.db, "desc", None) or self.key or "a bed"

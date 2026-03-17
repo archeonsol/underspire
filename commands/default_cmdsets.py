@@ -116,7 +116,7 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
             CmdCreateItem, CmdTypeclasses, CmdSpawnItem, CmdSpawnArmor, CmdSpawnVehicle, CmdSpawnMedical, CmdSpawnOR,
             CmdSpawnCreature, CmdCreatureSet, CmdDespawn, CmdNpc, CmdMakeNpc, CmdNpcSet,
             CmdGoto, CmdGotoRoom, CmdSummon, CmdSetVoid, CmdVoid, CmdRelease, CmdBoot, CmdFind, CmdAnnounce, CmdRestore, CmdDebugKill,
-            CmdSpawnSeat, CmdSpawnBed, CmdSpawnPod, CmdSpawnCamera, CmdSpawnTelevision,
+            CmdSpawnSeat, CmdSpawnBed, CmdSpawnPod, CmdSpawnDiveRig, CmdSpawnCamera, CmdSpawnTelevision,
             CmdEmoteDebug, CmdDamageVehicle,
         )
         from commands.player_cmds import CmdXp
@@ -263,6 +263,7 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdSpawnSeat())
         self.add(CmdSpawnBed())
         self.add(CmdSpawnPod())
+        self.add(CmdSpawnDiveRig())
         self.add(CmdSpawnCamera())
         self.add(CmdSpawnTelevision())
         self.add(CmdSpawnCreature())

@@ -1126,6 +1126,33 @@ class CmdSpawnPod(Command):
             caller.msg("|rCould not create splinter pod: %s|n" % e)
 
 
+class CmdSpawnDiveRig(Command):
+    """
+    Create a dive rig in the room. Builder+.
+
+    A dive rig is a reclining chair that allows characters to jack into the Matrix.
+    Characters must sit in the rig before using 'jack in'.
+
+    Usage: spawndiverig [name]
+    """
+    key = "spawndiverig"
+    aliases = ["spawn diverig", "spawn rig", "spawn dive rig"]
+    locks = "cmd:perm(Builder)"
+    help_category = "Staff"
+
+    def func(self):
+        caller = self.caller
+        name = (self.args or "dive rig").strip()
+        from evennia.utils.create import create_object
+        try:
+            from typeclasses.matrix.devices.dive_rig import DiveRig
+            rig = create_object("typeclasses.matrix.devices.dive_rig.DiveRig", key=name, location=caller.location)
+            caller.msg("|gDive rig |w%s|n created here. Players can |wsit on %s|n then |wjack in|n.|n" % (name, name))
+            caller.msg("|yReminder: Link this rig to a Matrix node with |wmatrixlink <node>|y while standing in the rig's location.|n")
+        except Exception as e:
+            caller.msg("|rCould not create dive rig: %s|n" % e)
+
+
 # Predefined creature types for spawncreature (key for display, typeclass path)
 CREATURE_SPAWN_TYPES = {
     "gutter hulk": ("typeclasses.creatures.GutterHulk", "Gutter Hulk"),
