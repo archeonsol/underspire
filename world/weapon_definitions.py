@@ -1,11 +1,13 @@
 """
-Weapon- and combat-adjacent static data.
+Weapon and combat definition data used by the combat system.
 
-Separated from `world.combat` so flavor and balance tweaks don't require
-touching the combat engine itself.
+This module intentionally contains only static/mostly-static data structures so
+that combat logic can evolve independently of flavor text and numbers.
 """
 
-# Hands required per weapon: 1 = one-handed, 2 = two-handed.
+from __future__ import annotations
+
+# Hands required per weapon: 1 = one-handed, 2 = two-handed. Used for wield/unwield.
 WEAPON_HANDS = {
     "fists": 1,
     "knife": 1,
@@ -17,8 +19,9 @@ WEAPON_HANDS = {
 }
 
 
-# "Ready" messages when combat is initiated: attacker sees weapon-specific
-# line; defender and room see defender squaring up.
+# "Ready" messages when combat is initiated: attacker sees weapon-specific line;
+# defender and room see generic messages. Templates use {target} for the
+# defender's name.
 COMBAT_READY_ATTACKER_MSG = {
     "fists": "|rYou raise your fists, eyeing {target}.|n",
     "knife": "|rYou ready your blade, eyeing {target}.|n",
