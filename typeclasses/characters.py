@@ -166,7 +166,10 @@ class Character(RoleplayMixin, MedicalMixin, RPGCharacterMixin, DefaultCharacter
             sitting_on = self.db.sitting_on
             # Notify furniture of forced removal (e.g., dive rig jack-out)
             if sitting_on and hasattr(sitting_on, "handle_forced_removal"):
+                logger.log_info(f"at_pre_move: Calling handle_forced_removal on {sitting_on.key} for {self.key}, move_type={move_type}")
                 sitting_on.handle_forced_removal(self)
+            else:
+                logger.log_info(f"at_pre_move: sitting_on={sitting_on}, has method={hasattr(sitting_on, 'handle_forced_removal') if sitting_on else 'N/A'}")
             del self.db.sitting_on
 
         if self.db.lying_on:

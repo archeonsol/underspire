@@ -141,7 +141,12 @@ class DiveRig(Seat, NetworkedObject):
             reason (str): Reason for disconnect
         """
         conn = self.db.active_connection
-        if not conn or conn.get('character') != character:
+        if not conn:
+            return
+
+        conn_character = conn.get('character')
+        # Compare by pk to handle stale references
+        if not conn_character or conn_character.pk != character.pk:
             return  # No active connection for this character
 
         avatar = conn.get('avatar')
@@ -183,7 +188,12 @@ class DiveRig(Seat, NetworkedObject):
         """
         conn = self.db.active_connection
 
-        if not conn or conn.get('character') != character:
+        if not conn:
+            return False
+
+        conn_character = conn.get('character')
+        # Compare by pk to handle stale references
+        if not conn_character or conn_character.pk != character.pk:
             return False  # No connection for this character
 
         avatar = conn.get('avatar')
@@ -226,8 +236,8 @@ class DiveRig(Seat, NetworkedObject):
         character = conn.get('character')
         avatar = conn.get('avatar')
 
-        # Check if character still exists
-        if not character or not character.pk:
+        # Check if character still exists (check pk first to handle stale refs)
+        if not character or not hasattr(character, 'pk') or not character.pk:
             self.db.active_connection = None
             return False
 
@@ -236,8 +246,9 @@ class DiveRig(Seat, NetworkedObject):
             self.disconnect(character, severity=JACKOUT_FORCED, reason="Avatar lost")
             return False
 
-        # Check if character is still sitting in rig
-        if character.db.sitting_on != self:
+        # Check if character is still sitting in rig (compare by pk to handle stale refs)
+        sitting_on = getattr(character.db, 'sitting_on', None)
+        if not sitting_on or (hasattr(sitting_on, 'pk') and sitting_on.pk != self.pk):
             self.disconnect(character, severity=JACKOUT_FORCED, reason="Physical connection severed")
             return False
 
@@ -284,9 +295,25 @@ class DiveRig(Seat, NetworkedObject):
         Args:
             character (Character): Character being removed
         """
+        from evennia.utils import logger
+        logger.log_info(f"DiveRig.handle_forced_removal called for {character.key} (pk={character.pk})")
+
         conn = self.db.active_connection
-        if conn and conn.get('character') == character:
+        logger.log_info(f"Active connection: {conn}")
+
+        if not conn:
+            logger.log_info("No active connection")
+            return
+
+        conn_character = conn.get('character')
+        logger.log_info(f"Connection character: {conn_character}, pk={conn_character.pk if conn_character else 'None'}")
+
+        # Compare by pk to handle stale references after reloads
+        if conn_character and conn_character.pk == character.pk:
+            logger.log_info(f"Match! Triggering forced disconnect")
             self.disconnect(character, severity=JACKOUT_FORCED, reason="Forcibly disconnected!")
+        else:
+            logger.log_info(f"No match - conn_character.pk={conn_character.pk if conn_character else 'None'}, character.pk={character.pk}")
 
     # ========================================
     # Display/Query Methods
@@ -303,7 +330,12 @@ class DiveRig(Seat, NetworkedObject):
             bool: True if character is jacked in and puppeting their avatar
         """
         conn = self.db.active_connection
-        if not conn or conn.get('character') != character:
+        if not conn:
+            return False
+
+        conn_character = conn.get('character')
+        # Compare by pk to handle stale references
+        if not conn_character or conn_character.pk != character.pk:
             return False
 
         # Character must be sitting on this rig
@@ -393,7 +425,9 @@ class DiveRig(Seat, NetworkedObject):
         """
         # Check if there's an existing avatar in our connection
         conn = self.db.active_connection
-        if conn and conn.get('character') == character:
+        conn_character = conn.get('character') if conn else None
+        # Compare by pk to handle stale references
+        if conn and conn_character and conn_character.pk == character.pk:
             avatar = conn.get('avatar')
             if avatar and avatar.pk and not getattr(avatar.db, 'dead', False):
                 return avatar

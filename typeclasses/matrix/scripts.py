@@ -95,38 +95,29 @@ class MatrixConnectionScript(DefaultScript):
         from evennia.objects.models import ObjectDB
 
         # Check dive rig connections
-        dive_rigs = ObjectDB.objects.filter(db_active_connection__isnull=False)
+        # Can't filter by attribute, so get all DiveRigs and check for active_connection
+        from typeclasses.matrix.devices.dive_rig import DiveRig
+        all_dive_rigs = DiveRig.objects.all()
         dive_disconnected = 0
-        for rig in dive_rigs:
-            if hasattr(rig, 'validate_connection') and not rig.validate_connection():
-                dive_disconnected += 1
+        for rig in all_dive_rigs:
+            # Only check rigs with active connections
+            if getattr(rig.db, 'active_connection', None):
+                if hasattr(rig, 'validate_connection') and not rig.validate_connection():
+                    dive_disconnected += 1
 
-        # Check teleop connections - only objects currently under control
-        controlled_objects = ObjectDB.objects.filter(db_controlled_by__isnull=False)
+        # Check teleop connections - iterate all objects and check for controlled_by attribute
+        # (Can't filter by attribute directly)
+        from typeclasses.matrix.devices.teleop_rig import TeleopRig
+        all_teleop_rigs = TeleopRig.objects.all()
         teleop_disconnected = 0
-        for target in controlled_objects:
-            # Get the control rig
-            rig_dbref = getattr(target.db, 'control_rig', None)
-            if not rig_dbref:
+        for rig in all_teleop_rigs:
+            # Check if this rig has an active control session
+            if not getattr(rig.db, 'controlled_target', None):
                 continue
 
-            try:
-                rig = ObjectDB.objects.get(pk=rig_dbref)
-            except ObjectDB.DoesNotExist:
-                # Rig was deleted - clean up target
-                target.db.controlled_by = None
-                target.db.control_rig = None
-                target.db.real_character = None
+            # Validate the connection
+            if hasattr(rig, 'validate_connection') and not rig.validate_connection():
                 teleop_disconnected += 1
-                continue
-
-            # Verify Matrix connection is still valid
-            if hasattr(rig, 'is_connected') and not rig.is_connected():
-                # Lost Matrix connection - emergency disconnect
-                character = target.db.controlled_by
-                if character and hasattr(rig, 'disengage'):
-                    rig.disengage(character, severity=1, reason="Network connection lost")
-                    teleop_disconnected += 1
 
         # Optional: log disconnection activity
         if dive_disconnected > 0 or teleop_disconnected > 0:
