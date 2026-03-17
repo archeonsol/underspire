@@ -997,18 +997,56 @@ class CmdLookPlace(Command):
         caller.msg(f"When people look here, they will see: |w{caller.name} {pose}.|n")
 
 
+class CmdTempPlace(Command):
+    """
+    Set a temporary look-place for your character that only lasts until you move rooms.
+    This overrides your normal @lp while you remain in the current room.
+
+    Usage:
+      @tp <text>
+      @tp                    (clear your temporary place)
+    """
+
+    key = "@tp"
+    aliases = ["@temp_place"]
+    locks = "cmd:all()"
+    help_category = "General"
+
+    def func(self):
+        caller = self.caller
+        args = (self.args or "").strip()
+        if not args:
+            # Clear any temporary place; fall back to normal @lp / default.
+            if hasattr(caller.db, "temp_room_pose"):
+                try:
+                    del caller.db.temp_room_pose
+                except Exception:
+                    caller.db.temp_room_pose = None
+            # Show what they'll appear as now (using the same fallback as room look).
+            base = getattr(caller.db, "room_pose", None)
+            if not base or base.strip().lower() == "standing here":
+                base = "is standing here"
+            caller.msg(f"You clear your temporary place. You now appear in the room as: |w{caller.name} {base.rstrip('.')}|n.")
+            caller.msg("Use |w@tp <text>|n to set a temporary one again (e.g. @tp leaning against the wall).")
+            return
+        caller.db.temp_room_pose = args
+        pose = args.rstrip(".")
+        caller.msg(f"For now (until you move rooms), people will see: |w{caller.name} {pose}.|n")
+
+
 class CmdSleepPlace(Command):
     """
     Set how you appear when logged off (look line) and/or the message the room sees when you log off.
-    Use $N $P $S in the text. See help tokens.
+    Use $N $P $S in the text. See help tokens. The text you set is used directly in the room line
+    (no automatic 'is' is added), so include a verb if you want one (e.g. "is sleeping here").
 
     Usage:
       @sp                         - show current appearance and log-off message
       @sp <text>                   - set how you appear when logged off (e.g. "sleeping here")
       @sp msg <text>               - set the message the room sees when you log off (e.g. "$N falls asleep.")
     """
-    key = "@sp"
-    aliases = ["@sleep place", "@sleep_place", "@sleepplace", "@logout_pose"]
+    key = "@sleepplace"
+    aliases = ["@sleep place", "@sleep_place", "@logout_pose"]
     locks = "cmd:all()"
     help_category = "General"
 
@@ -1020,19 +1058,20 @@ class CmdSleepPlace(Command):
             fall = getattr(caller.db, "fall_asleep_message", None) or "$N falls asleep."
             caller.msg(f"When logged off, you appear: |w{place}|n.")
             caller.msg(f"When you log off, the room sees: |w{fall}|n")
-            caller.msg("Use |w@sp <text>|n to set how you appear when logged off.")
-            caller.msg("Use |w@sp msg <text>|n to set the message the room sees when you log off.")
+            caller.msg("Use |w@sleepplace <text>|n to set how you appear when logged off.")
+            caller.msg("Use |w@sleepplace msg <text>|n to set the message the room sees when you log off.")
             return
-        # @sp msg <text> or @sp message <text> -> set fall_asleep_message only
+        # @sleepplace msg <text> or @sleepplace message <text> -> set fall_asleep_message only
         if args.lower().startswith("msg ") or args.lower().startswith("message "):
             prefix = "msg " if args.lower().startswith("msg ") else "message "
             text = args[len(prefix):].strip()
             caller.db.fall_asleep_message = text if text else "$N falls asleep."
             caller.msg(f"When you log off, the room will see: |w{caller.db.fall_asleep_message}|n")
             return
-        # @sp <text> -> set sleep_place only (how you appear when logged off)
+        # @sleepplace <text> -> set sleep_place only (how you appear when logged off)
         caller.db.sleep_place = args
-        caller.msg(f"When logged off, others will see you as: |w{caller.name} is {args.rstrip('.')}.|n")
+        pose = args.rstrip(".")
+        caller.msg(f"When logged off, others will see you as: |w{caller.name} {pose}.|n")
 
 
 class CmdWakeMsg(Command):
@@ -1102,11 +1141,11 @@ class CmdSetPlace(Command):
     Only works on items and objects—you cannot set the place for characters (they use |w@lp|n).
 
     Usage:
-      @setplace <item> = <text>
-      @setplace <item>     (show current; clear with empty text)
+      @sp <item> = <text>
+      @sp <item>     (show current; clear with empty text)
     """
-    key = "@setplace"
-    aliases = []
+    key = "@sp"
+    aliases = ["@setplace"]
     locks = "cmd:all()"
     help_category = "General"
 
@@ -1115,7 +1154,7 @@ class CmdSetPlace(Command):
         caller = self.caller
         args = (self.args or "").strip()
         if not args:
-            caller.msg("Usage: |w@setplace <item> = <text>|n (e.g. @setplace knife = lying in a pool of blood)")
+            caller.msg("Usage: |w@sp <item> = <text>|n (e.g. @sp knife = lying in a pool of blood)")
             return
         if "=" in args:
             raw_name, _, text = args.partition("=")
@@ -1125,7 +1164,7 @@ class CmdSetPlace(Command):
             item_name = args
             text = None
         if not item_name:
-            caller.msg("Name an item: |w@setplace <item> = <text>|n")
+            caller.msg("Name an item: |w@sp <item> = <text>|n")
             return
         location = caller.location
         if not location:
@@ -1134,6 +1173,13 @@ class CmdSetPlace(Command):
         obj = caller.search(item_name, location=location)
         if not obj:
             return
+        # Optional per-object toggle: only allow @sp on items that explicitly opt in,
+        # unless the caller has Builder+ permissions.
+        # Builders can set obj.db.allow_setplace = True on templates or individual objects.
+        if not getattr(obj.db, "allow_setplace", False):
+            if not caller.check_permstring("Builder"):
+                caller.msg("You cannot set the place for that.")
+                return
         if isinstance(obj, DefaultCharacter):
             caller.msg("You can only set the place for objects and items, not for characters. Characters use |w@lp|n.")
             return
@@ -1150,7 +1196,7 @@ class CmdSetPlace(Command):
         if text is None:
             current = getattr(obj.db, "room_pose", None) or "on the ground"
             caller.msg(f"|w{obj.get_display_name(caller)}|n appears here as: {current}.")
-            caller.msg("To change: |w@setplace {name} = <text>|n. To clear back to default: |w@setplace {name} = |n".format(name=obj.get_display_name(caller)))
+            caller.msg("To change: |w@sp {name} = <text>|n. To clear back to default: |w@sp {name} = |n".format(name=obj.get_display_name(caller)))
             return
         if not text:
             if obj.db.room_pose:
@@ -1159,7 +1205,7 @@ class CmdSetPlace(Command):
             return
         obj.db.room_pose = text
         pose = text.rstrip(".")
-        caller.msg(f"When people look here, they will see: |w{obj.get_display_name(caller)} is {pose}.|n")
+        caller.msg(f"When people look here, they will see: |w{obj.get_display_name(caller)} {pose}.|n")
 
 
 class CmdPronoun(Command):

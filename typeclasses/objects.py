@@ -223,4 +223,35 @@ class Object(ObjectParent, DefaultObject):
 
     """
 
-    pass
+    def at_pre_get(self, getter, **kwargs):
+        """
+        Called just before this object is picked up.
+
+        If builders have marked this object as immovable (db.immovable = True),
+        block being picked up or otherwise moved into an inventory for normal
+        players. Builder+ can always bypass this.
+        """
+        if getattr(self.db, "immovable", False):
+            if getter and not getter.check_permstring("Builder"):
+                getter.msg("You cannot pick that up.")
+                return False
+        return super().at_pre_get(getter, **kwargs)
+
+    def at_get(self, getter, **kwargs):
+        """
+        Called after this object has been picked up.
+
+        If the object had a room-place (@sp) set (db.room_pose), clear it so the
+        set-place only applies while it's in a room, not while carried.
+        """
+        try:
+            super().at_get(getter, **kwargs)
+        except Exception:
+            # Be defensive if a parent in the MRO doesn't implement at_get.
+            pass
+        room_pose = getattr(self.db, "room_pose", None)
+        if room_pose:
+            try:
+                del self.db.room_pose
+            except Exception:
+                self.db.room_pose = None

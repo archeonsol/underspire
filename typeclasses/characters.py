@@ -411,3 +411,20 @@ class Character(RoleplayMixin, MedicalMixin, RPGCharacterMixin, DefaultCharacter
         """Carry capacity from strength display level (uses get_display_stat from RPGCharacterMixin)."""
         str_display = self.get_display_stat("strength")
         return 10 + (str_display * 10)
+
+    def at_post_move(self, source_location, move_type="move", **kwargs):
+        """
+        After moving to a new room, clear any temporary place (@tp) so it only applies
+        in the room where it was set. Persistent @lp (room_pose) is not touched.
+        """
+        # Let parent hooks run first
+        try:
+            super().at_post_move(source_location, move_type=move_type, **kwargs)
+        except Exception:
+            # Be defensive in case a parent doesn't implement at_post_move
+            pass
+        if hasattr(self.db, "temp_room_pose"):
+            try:
+                del self.db.temp_room_pose
+            except Exception:
+                self.db.temp_room_pose = None

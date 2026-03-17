@@ -162,6 +162,9 @@ class OperatingTable(MedicalTool):
         self.db.medical_tool_type = TOOL_SURGICAL_KIT
         self.db.uses_remaining = None
         self.db.stationary_medical = True
+        # Fixtures: immovable and no @sp for non-builders.
+        self.db.immovable = True
+        self.db.allow_setplace = False
         self.locks.add("get:false()")
 
     def get_display_name(self, looker):
