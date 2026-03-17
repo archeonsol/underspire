@@ -7,6 +7,7 @@ MatrixAvatar - Virtual character object created when jacking into the Matrix
 """
 
 from evennia import DefaultCharacter
+from typeclasses.mixins import FurnitureMixin, RoleplayMixin
 
 # Jack-out severity levels
 JACKOUT_NORMAL = 0      # Clean logout, no penalties
@@ -15,13 +16,24 @@ JACKOUT_FORCED = 2      # Violent disconnect, physical damage
 JACKOUT_FATAL = 3       # Unsurvivable... Sorry
 
 
-class MatrixAvatar(DefaultCharacter):
+class MatrixAvatar(RoleplayMixin, FurnitureMixin, DefaultCharacter):
     """
     Virtual representation of a character diving the Matrix.
 
     Created when a character jacks in through a device. Persists in the Matrix
-    until destroyed. Simpler than physical characters - no body parts, injuries,
-    or complex inventory.
+    until destroyed.
+
+    Mixins:
+    - RoleplayMixin: Recognition, display names, say/whisper, movement announcements
+    - FurnitureMixin: Sitting/lying on virtual furniture (nodes, consoles, etc.)
+
+    Unlike physical Characters, avatars have NO:
+    - Body parts, organs, medical systems
+    - Hunger, thirst, or survival needs
+    - Sleep/wake messages
+    - XP earning
+    - Clothing/worn items
+    - Stats/skills (uses controlling character's stats for checks)
 
     The DiveRig owns the connection state - avatars are just puppets.
 
@@ -35,6 +47,77 @@ class MatrixAvatar(DefaultCharacter):
         super().at_object_creation()
         self.db.entry_device = None
         self.db.dead = False
+
+    def get_controlling_character(self):
+        """
+        Get the physical character controlling this avatar.
+
+        Returns:
+            Character: The meatspace character jacked into this avatar, or None
+        """
+        rig = self.db.entry_device
+        if not rig or not hasattr(rig, 'db'):
+            return None
+        conn = rig.db.active_connection
+        if not conn:
+            return None
+        return conn.get('character')
+
+    def get_stat_level(self, stat_key):
+        """Delegate to controlling character's stats."""
+        char = self.get_controlling_character()
+        if char and hasattr(char, 'get_stat_level'):
+            return char.get_stat_level(stat_key)
+        return 0
+
+    def get_display_stat(self, stat_name):
+        """Delegate to controlling character's display stats (with buffs)."""
+        char = self.get_controlling_character()
+        if char and hasattr(char, 'get_display_stat'):
+            return char.get_display_stat(stat_name)
+        return 0
+
+    def get_skill_level(self, skill_key):
+        """Delegate to controlling character's skills."""
+        char = self.get_controlling_character()
+        if char and hasattr(char, 'get_skill_level'):
+            return char.get_skill_level(skill_key)
+        return 0
+
+    def get_stat_grade_adjective(self, grade_letter, stat_key):
+        """Delegate to controlling character's stat grade adjectives."""
+        char = self.get_controlling_character()
+        if char and hasattr(char, 'get_stat_grade_adjective'):
+            return char.get_stat_grade_adjective(grade_letter, stat_key)
+        return grade_letter
+
+    def get_skill_grade_adjective(self, grade_letter):
+        """Delegate to controlling character's skill grade adjectives."""
+        char = self.get_controlling_character()
+        if char and hasattr(char, 'get_skill_grade_adjective'):
+            return char.get_skill_grade_adjective(grade_letter)
+        return grade_letter
+
+    def get_stat_cap(self, stat_key):
+        """Delegate to controlling character's stat caps."""
+        char = self.get_controlling_character()
+        if char and hasattr(char, 'get_stat_cap'):
+            return char.get_stat_cap(stat_key)
+        return 0
+
+    def get_skill_cap(self, skill_key):
+        """Delegate to controlling character's skill caps."""
+        char = self.get_controlling_character()
+        if char and hasattr(char, 'get_skill_cap'):
+            return char.get_skill_cap(skill_key)
+        return 0
+
+    def roll_check(self, stat_list, skill_name, difficulty=0, modifier=0):
+        """Delegate to controlling character's roll system."""
+        char = self.get_controlling_character()
+        if char and hasattr(char, 'roll_check'):
+            return char.roll_check(stat_list, skill_name, difficulty, modifier)
+        return "Failure", 0
 
     def at_object_delete(self):
         """

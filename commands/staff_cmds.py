@@ -24,22 +24,37 @@ class CmdStats(Command):
     def func(self):
         from world.chargen import STAT_KEYS
         from world.skills import SKILL_KEYS, SKILL_DISPLAY_NAMES
+        from evennia.utils.utils import inherits_from
         caller = self.caller
+        data_source = caller  # Who we get stats/skills from
+
         # If caller is Account (no db.stats), use session's puppet so stats/sheet work when puppeted
         if not getattr(caller.db, "stats", None) and getattr(self, "session", None):
             try:
                 puppet = getattr(self.session, "puppet", None)
                 if puppet:
                     caller = puppet
+                    data_source = puppet
             except Exception as e:
                 logger.log_trace("staff_cmds.CmdStats session puppet fallback: %s" % e)
-        if not getattr(caller, "db", None) or not hasattr(caller.db, "stats"):
+
+        # If this is a MatrixAvatar, get stats from controlling character but send output to avatar
+        if inherits_from(caller, "typeclasses.matrix.avatars.MatrixAvatar"):
+            controlling_char = caller.get_controlling_character() if hasattr(caller, 'get_controlling_character') else None
+            if not controlling_char:
+                caller.msg("You are not connected to a physical body. Cannot view stats.")
+                return
+            # Use the controlling character for stats/skills but keep caller as avatar for messaging
+            data_source = controlling_char
+
+        if not getattr(data_source, "db", None) or not hasattr(data_source.db, "stats"):
             caller.msg("Puppet a character to view your sheet.")
             return
-        _db = caller.db
+        _db = data_source.db
         stats = _db.stats or {}
         skills = _db.skills or {}
         bg = _db.background or "Unknown"
+        display_name = data_source.name or "Unknown"
         xp = int(getattr(_db, "xp", 0) or 0)
 
         # Soul last fragmented: from character's clone_snapshot (shard is per-character)
@@ -63,7 +78,7 @@ class CmdStats(Command):
         w = 50
         edge = "|x├" + "─" * (w - 2) + "┤|n"
         output = "|x┌" + "─" * (w - 2) + "┐|n\n"
-        output += "|x│|n |R■|n |wSOUL READOUT|n  |x—|n  " + (caller.name or "Unknown").ljust(18) + " |x│|n\n"
+        output += "|x│|n |R■|n |wSOUL READOUT|n  |x—|n  " + display_name.ljust(18) + " |x│|n\n"
         output += "|x│|n   |wOrigin|n " + (bg or "Unknown").ljust(w - 18) + " |x│|n\n"
         output += edge + "\n"
         output += "|x│|n |wXP|n " + str(xp).ljust(w - 10) + " |x│|n\n"
@@ -77,7 +92,7 @@ class CmdStats(Command):
         base_stat_display = {}
         for key in STAT_KEYS:
             try:
-                stored = int(_stat_level(caller, key) or 0)
+                stored = int(_stat_level(data_source, key) or 0)
                 base_stat_display[key] = max(0, min(150, stored // 2))
             except Exception:
                 base_stat_display[key] = 0
@@ -87,15 +102,15 @@ class CmdStats(Command):
         for key in STAT_KEYS:
             try:
                 effective_stat_display[key] = int(
-                    caller.get_display_stat(key) if hasattr(caller, "get_display_stat") else base_stat_display.get(key, 0)
+                    data_source.get_display_stat(key) if hasattr(data_source, "get_display_stat") else base_stat_display.get(key, 0)
                 )
             except Exception:
                 effective_stat_display[key] = base_stat_display.get(key, 0)
 
         for key in STAT_KEYS:
-            stored = caller.get_stat_level(key) if hasattr(caller, "get_stat_level") else 0
+            stored = data_source.get_stat_level(key) if hasattr(data_source, "get_stat_level") else 0
             letter = get_stat_grade(stored)
-            adj = caller.get_stat_grade_adjective(letter, key) if hasattr(caller, "get_stat_grade_adjective") else letter
+            adj = data_source.get_stat_grade_adjective(letter, key) if hasattr(data_source, "get_stat_grade_adjective") else letter
             label = key.capitalize()
             eff_disp = effective_stat_display.get(key, 0)
             base_disp = base_stat_display.get(key, 0)
@@ -114,7 +129,7 @@ class CmdStats(Command):
         base_skill_levels = {}
         for key in SKILL_KEYS:
             try:
-                base_skill_levels[key] = int(_skill_level(caller, key))
+                base_skill_levels[key] = int(_skill_level(data_source, key))
             except Exception:
                 base_skill_levels[key] = int((skills.get(key, 0) or 0))
 
@@ -123,7 +138,7 @@ class CmdStats(Command):
         for key in SKILL_KEYS:
             try:
                 effective_skill_levels[key] = int(
-                    caller.get_skill_level(key) if hasattr(caller, "get_skill_level") else (skills.get(key, 0) or 0)
+                    data_source.get_skill_level(key) if hasattr(data_source, "get_skill_level") else (skills.get(key, 0) or 0)
                 )
             except Exception:
                 effective_skill_levels[key] = base_skill_levels.get(key, int((skills.get(key, 0) or 0)))
@@ -134,7 +149,7 @@ class CmdStats(Command):
             if not level:
                 continue
             letter = get_skill_grade(level)
-            adj = caller.get_skill_grade_adjective(letter) if hasattr(caller, "get_skill_grade_adjective") else letter
+            adj = data_source.get_skill_grade_adjective(letter) if hasattr(data_source, "get_skill_grade_adjective") else letter
             label = SKILL_DISPLAY_NAMES.get(key, key.replace("_", " ").title())
             base_lv = base_skill_levels.get(key, 0)
             delta = level - base_lv
