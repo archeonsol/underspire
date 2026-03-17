@@ -199,8 +199,8 @@ def route_to_device(caller, raw_string, **kwargs):
             exclude=[caller]
         )
 
-    # Move to vestibule
-    caller.move_to(vestibule, quiet=True)
+    # Move to vestibule (let Evennia handle auto-look)
+    caller.move_to(vestibule)
 
     # Announce arrival
     vestibule.msg_contents(
@@ -208,8 +208,9 @@ def route_to_device(caller, raw_string, **kwargs):
         exclude=[caller]
     )
 
-    # Show the vestibule
-    caller.execute_cmd("look")
+    # Set nolookaround to suppress EvMenu's auto-look when closing
+    if hasattr(caller.ndb, '_evmenu'):
+        caller.ndb._evmenu.nolookaround = True
 
     # Exit the menu
     return None

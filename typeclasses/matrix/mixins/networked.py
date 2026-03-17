@@ -158,11 +158,11 @@ class NetworkedMixin:
 
         # Create exits between rooms
         from evennia.utils.create import create_object
-        from typeclasses.exits import Exit
+        from typeclasses.matrix.exits import MatrixExit
 
         # Vestibule -> Interface (locked until ICE defeated or on ACL)
         exit_to_interface = create_object(
-            Exit,
+            MatrixExit,
             key="interface",
             location=vestibule,
             destination=interface
@@ -172,7 +172,7 @@ class NetworkedMixin:
 
         # Interface -> Vestibule (back exit)
         exit_to_vestibule = create_object(
-            Exit,
+            MatrixExit,
             key="back",
             aliases=["vestibule"],
             location=interface,

@@ -34,8 +34,8 @@ class MatrixExit(Exit):
         """
         Called when someone attempts to traverse this exit.
 
-        Matrix navigation is instantaneous (no walking delay).
-        Future implementation will add:
+        Matrix navigation is fast but not instant - base 0.5 second delay,
+        reducible with decking skill. Future implementation will add:
         - Security clearance checks
         - Credential verification
         - ICE alerts on unauthorized access
@@ -51,9 +51,26 @@ class MatrixExit(Exit):
         #     # Alert ICE if unauthorized
         #     pass
 
-        # Matrix navigation is instantaneous - no delay like physical movement
-        direction = (self.key or "away").strip()
-        traversing_object.msg(f"You navigate {direction}.")
+        # Matrix navigation delay - fast but not instant
+        # Base delay: 1.0s, reduced by decking skill
+        # TODO: When decking skill exists, reduce delay based on skill level
+        base_delay = 1.0
 
-        # Move immediately
-        traversing_object.move_to(destination)
+        # Check if traversing object has decking skill
+        skill_reduction = 0.0
+        if hasattr(traversing_object, 'get_skill_level'):
+            try:
+                # Future: decking_skill = traversing_object.get_skill_level('decking')
+                # skill_reduction = min(0.3, decking_skill / 500)  # Max 0.3s reduction
+                pass
+            except:
+                pass
+
+        move_delay = max(0.2, base_delay - skill_reduction)  # Minimum 0.2s delay
+
+        direction = (self.key or "away").strip()
+        traversing_object.msg(f"You navigate {direction}...")
+
+        # Use utils.delay to add movement delay
+        from evennia.utils import delay
+        delay(move_delay, traversing_object.move_to, destination)

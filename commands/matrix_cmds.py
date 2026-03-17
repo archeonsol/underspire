@@ -317,25 +317,29 @@ class CmdRoute(Command):
             caller.msg("|rError: Router has no physical location.|n")
             return
 
-        # Announce departure
-        caller.msg(f"|cClosing connection to {parent_device.key}...|n")
+        # Show closing message
+        caller.msg(f"|gConnection closed. Returned to {router.key}.|n")
+
+        # Announce departure to current room
         room.msg_contents(
             f"{caller.key} disconnects and fades into the data stream.",
             exclude=[caller]
         )
 
-        # Move to router's location
-        caller.move_to(router_location, quiet=True)
+        # Delay 1 second before moving
+        from evennia.utils import delay
 
-        # Announce arrival
-        caller.msg(f"|gConnection closed. Returned to {router.key}.|n")
-        router_location.msg_contents(
-            f"{caller.key} materializes from a device connection.",
-            exclude=[caller]
-        )
+        def _do_move():
+            # Move to router's location (let Evennia handle auto-look)
+            caller.move_to(router_location)
 
-        # Show the router location
-        caller.execute_cmd("look")
+            # Announce arrival
+            router_location.msg_contents(
+                f"{caller.key} materializes from a device connection.",
+                exclude=[caller]
+            )
+
+        delay(1.0, _do_move)
 
 
 # Router Access Menu Nodes are in commands/matrix_menus.py
