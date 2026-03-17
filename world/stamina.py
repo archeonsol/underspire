@@ -85,17 +85,25 @@ STAMINA_RECOVERY_LABELS = (
 
 def get_stamina_recovery_label(character):
     """
-    Stamina recovery as a condition: base is moderately. Goes down when fighting,
-    bleeding, or injured; goes up when sitting or lying. Does not change with every
-    action—derived from current state (combat_target, bleeding_level, trauma, posture).
+    Stamina recovery as a condition: base is moderately. Goes down when bleeding
+    or injured; goes up when sitting or lying. When actively fighting, this reports
+    a special "physically active" state instead of implying your stamina is barely
+    recovering at all.
     """
     if not character or not getattr(character, "db", None):
         return STAMINA_RECOVERY_LABELS[2]
     score = 2  # default: recovering moderately
 
-    # In combat: recovery drops
-    if getattr(character.db, "combat_target", None) is not None:
-        score -= 2
+    # Actively doing something physical: burning stamina rather than "recovering".
+    # Show a dedicated label instead of implying terrible regen.
+    is_in_combat = getattr(character.db, "combat_target", None) is not None
+    is_sneaking = getattr(character.db, "is_sneaking", False)
+    is_hiding = getattr(character.db, "is_hiding", False)
+    is_running = getattr(character.db, "is_running", False)
+    is_climbing = getattr(character.db, "is_climbing", False)
+    is_swimming = getattr(character.db, "is_swimming", False)
+    if any((is_in_combat, is_sneaking, is_hiding, is_running, is_climbing, is_swimming)):
+        return "physically active"
 
     # Bleeding: worse bleeding pulls recovery down
     bleeding = getattr(character.db, "bleeding_level", 0) or 0

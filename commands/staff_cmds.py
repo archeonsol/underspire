@@ -691,7 +691,31 @@ class CmdRestore(Command):
         if not args:
             caller.msg("Usage: @restore <character>")
             return
-        target = caller.search(args, global_search=True)
+        # First try the normal global search (quiet so we can run our own fallback without spurious errors).
+        target = caller.search(args, global_search=True, quiet=True)
+
+        # If that failed, try a more relaxed match on characters in the room,
+        # allowing partial/surname matching similar to @puppet.
+        if not target:
+            loc = getattr(caller, "location", None)
+            if loc and hasattr(loc, "contents_get"):
+                arg_low = args.lower()
+                relaxed = []
+                for obj in loc.contents_get(content_type="character"):
+                    if not hasattr(obj, "db"):
+                        continue
+                    key_low = (getattr(obj, "key", "") or "").lower()
+                    words = key_low.split()
+                    if any(w.startswith(arg_low) for w in words) or arg_low in key_low:
+                        relaxed.append(obj)
+                if len(relaxed) == 1:
+                    target = relaxed[0]
+                elif len(relaxed) > 1:
+                    # Ambiguous – show options like other staff commands do.
+                    names = [f"{o.name}(#{getattr(o, 'id', '?')})" for o in relaxed]
+                    caller.msg("Multiple matches for that name here: %s" % ", ".join(names))
+                    return
+
         if not target or not hasattr(target, "db"):
             return
         try:

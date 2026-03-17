@@ -15,7 +15,7 @@ def _body_parts():
 def _body_part_groups():
     """Return (head_face, upper_body, lower_body) lists of body part keys."""
     parts = _body_parts()
-    head_face = ["head", "face", "neck"]
+    head_face = ["head", "face", "left eye", "right eye", "neck"]
     upper_body = ["left shoulder", "right shoulder", "left arm", "right arm", "left hand", "right hand", "torso", "back", "abdomen"]
     lower_body = ["groin", "left thigh", "right thigh", "left foot", "right foot"]
     return head_face, upper_body, lower_body

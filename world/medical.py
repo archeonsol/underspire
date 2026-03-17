@@ -14,12 +14,12 @@ BODY_PARTS = [
     "left foot", "right foot", "left hand", "right hand",
     "left thigh", "right thigh", "left arm", "right arm",
     "left shoulder", "right shoulder", "torso", "back", "abdomen",
-    "groin", "neck", "face", "head",
+    "groin", "neck", "face", "left eye", "right eye", "head",
 ]
 
 # Display order: head to feet (for describe_bodypart usage and body listing)
 BODY_PARTS_HEAD_TO_FEET = [
-    "head", "face", "neck",
+    "head", "face", "left eye", "right eye", "neck",
     "left shoulder", "right shoulder", "torso", "back", "abdomen",
     "left arm", "right arm", "left hand", "right hand",
     "groin", "left thigh", "right thigh", "left foot", "right foot",
@@ -32,6 +32,7 @@ BODY_PART_ALIASES = {
     "lthigh": "left thigh", "rthigh": "right thigh",
     "larm": "left arm", "rarm": "right arm",
     "lshoulder": "left shoulder", "rshoulder": "right shoulder",
+    "leye": "left eye", "reye": "right eye",
 }
 
 # -----------------------------------------------------------------------------
@@ -40,6 +41,8 @@ BODY_PART_ALIASES = {
 BODY_PART_ORGANS = {
     "head": ["brain"],
     "face": ["eyes"],
+    "left eye": ["eyes"],
+    "right eye": ["eyes"],
     "neck": ["throat", "carotid"],
     "left shoulder": ["collarbone_area"],
     "right shoulder": ["collarbone_area"],
@@ -89,6 +92,8 @@ def is_unconscious(character):
 BODY_PART_BONES = {
     "head": ["skull"],
     "face": ["jaw", "nose"],
+    "left eye": [],
+    "right eye": [],
     "neck": ["cervical_spine"],
     "left shoulder": ["clavicle", "scapula"],
     "right shoulder": ["clavicle", "scapula"],
@@ -164,6 +169,8 @@ ORGAN_TO_REGION = {
 BODY_PART_BLEED = {
     "head": (0.35, "venous"),      # scalp vessels
     "face": (0.55, "arterial"),    # facial artery, nose
+    "left eye": (0.60, "arterial"),
+    "right eye": (0.60, "arterial"),
     "neck": (0.72, "arterial"),    # carotid/jugular - life-threatening
     "left shoulder": (0.28, "venous"),
     "right shoulder": (0.28, "venous"),

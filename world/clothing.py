@@ -15,7 +15,7 @@ from world.medical import (
 from world.crafting import substitute_clothing_desc
 
 # Class-level constants for body part groups (for merging look paragraphs)
-_HEAD_FACE = ("head", "face", "neck")
+_HEAD_FACE = ("head", "face", "left eye", "right eye", "neck")
 _UPPER_BODY = (
     "left shoulder",
     "right shoulder",
@@ -133,7 +133,7 @@ def _bandaged_desc(part, poss):
         return f"{poss.capitalize()} back is bound with bandages."
     if part == "abdomen":
         return f"{poss.capitalize()} abdomen is wrapped and bound."
-    if part in ("head", "face", "neck"):
+    if part in ("head", "face", "neck", "left eye", "right eye"):
         return f"{poss.capitalize()} {part} is bandaged."
     if part == "groin":
         return f"{poss.capitalize()} groin is bandaged."
@@ -172,7 +172,7 @@ def _stabilized_organ_desc(part, poss):
         return f"{poss.capitalize()} abdomen shows signs of recent surgery."
     if part == "head":
         return f"{poss.capitalize()} head shows signs of recent surgery."
-    if part == "face":
+    if part in ("face", "left eye", "right eye"):
         return f"{poss.capitalize()} face or eyes show stitches and signs of recent surgery."
     if part == "neck":
         return f"{poss.capitalize()} neck shows stitches and signs of recent surgery."

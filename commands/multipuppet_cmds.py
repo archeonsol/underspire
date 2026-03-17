@@ -98,13 +98,50 @@ class CmdAddPuppet(BaseCommand):
         if not self.args or not self.args.strip():
             self.msg("Usage: @addpuppet <character>")
             return
-        # Resolve character: search from current puppet's location or globally
+        # Resolve character: search from current puppet's location or globally.
+        raw = self.args.strip()
         searcher = getattr(session, "puppet", None) or self.caller
-        char = searcher.search(self.args.strip(), global_search=True) if hasattr(searcher, "search") else None
+        # Use quiet=True so we don't emit "Could not find" before our relaxed search succeeds.
+        char = (
+            searcher.search(raw, global_search=True, quiet=True)
+            if hasattr(searcher, "search")
+            else None
+        )
+
+        # If normal search failed, try a relaxed, room-local surname/partial match
+        # similar to @puppet/@restore: match any word in the name, or substring.
+        if not char and hasattr(searcher, "location"):
+            loc = getattr(searcher, "location", None)
+            if loc and hasattr(loc, "contents_get"):
+                arg_low = raw.lower()
+                relaxed = []
+                for obj in loc.contents_get(content_type="character"):
+                    # Only consider characters we can puppet.
+                    if not obj.access(account, "puppet"):
+                        continue
+                    key_low = (getattr(obj, "key", "") or "").lower()
+                    words = key_low.split()
+                    if any(w.startswith(arg_low) for w in words) or arg_low in key_low:
+                        relaxed.append(obj)
+                if len(relaxed) == 1:
+                    char = relaxed[0]
+                elif len(relaxed) > 1:
+                    names = [f"{o.name}(#{getattr(o, 'id', '?')})" for o in relaxed]
+                    self.msg("Multiple matches for that name here: %s" % ", ".join(names))
+                    return
+
         if not char:
+            # Final fallback: global object search like before.
             from evennia.utils.search import search_object
-            char = search_object(self.args.strip())
-            char = char[0] if char else None
+
+            matches = search_object(raw)
+            if isinstance(matches, list) and len(matches) == 1:
+                char = matches[0]
+            elif isinstance(matches, list) and len(matches) > 1:
+                names = [f"{o.name}(#{getattr(o, 'id', '?')})" for o in matches]
+                self.msg("Multiple global matches: %s" % ", ".join(names))
+                return
+
         if not char:
             return
         from evennia.utils import make_iter

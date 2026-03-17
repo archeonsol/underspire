@@ -67,14 +67,32 @@ def _combat_display_name(char, viewer):
 def _body_part_and_multiplier(attack_value):
     """
     Map attack roll outcome to body part hit and damage multiplier (0.5 to 1.5).
-    Higher roll = more precise hit = more severe body part and higher multiplier.
-    Adds a random nudge so the same roll doesn't always hit the exact same part.
+    Body part is chosen mostly at random, with a small bias from a strong roll
+    toward higher-severity locations (torso/head) so good hits feel better
+    without every high-skill strike auto-gravitating to the face/head.
     """
+    # Normalize roll 0..1 for damage scaling and bias strength.
     normalized = (max(_ROLL_MIN, min(_ROLL_MAX, attack_value)) - _ROLL_MIN) / (_ROLL_MAX - _ROLL_MIN)
-    base_index = int(normalized * len(BODY_PARTS))
-    # Nudge ±2 so hits vary (right shoulder vs left shoulder vs torso, etc.)
-    index = max(0, min(len(BODY_PARTS) - 1, base_index + random.randint(-2, 2)))
-    multiplier = 0.5 + normalized  # 0.5 .. 1.5 (unchanged by nudge)
+
+    # Start from a mostly random body part.
+    base_index = random.randrange(len(BODY_PARTS))
+
+    # Small upward bias for better rolls: stronger rolls are *more likely* to
+    # drift toward high-value locations, but never guarantee head/face.
+    bias_steps = 0
+    if normalized > 0.25:
+        bias_steps += 1
+    if normalized > 0.55:
+        bias_steps += 1
+    if normalized > 0.85:
+        bias_steps += 1
+
+    index = base_index
+    if bias_steps > 0 and random.random() < 0.6:
+        step = random.randint(1, bias_steps)
+        index = min(len(BODY_PARTS) - 1, base_index + step)
+
+    multiplier = 0.5 + normalized  # 0.5 .. 1.5 based on roll quality only
     return BODY_PARTS[index], multiplier
 
 
@@ -360,8 +378,18 @@ def resolve_attack(attacker, defender, weapon_key="fists"):
 
     if defense_value >= attack_value:
         return "DODGED", attack_value
+
+    # Criticals: even at high skill, make crits feel special and slightly
+    # random instead of every "Critical Success" becoming a guaranteed crit.
     if success_level == "Critical Success":
-        return "CRITICAL", attack_value
+        # Clamp and normalize roll to 0..1 for scaling.
+        norm = (max(_ROLL_MIN, min(_ROLL_MAX, attack_value)) - _ROLL_MIN) / (_ROLL_MAX - _ROLL_MIN)
+        # Base ~4% crit chance on a crit success, scaling up to ~15% at
+        # extremely strong rolls so high skill still matters but doesn't spam crits.
+        crit_chance = 0.04 + 0.11 * norm
+        if random.random() < crit_chance:
+            return "CRITICAL", attack_value
+
     return "HIT", attack_value
 
 # world/combat.py
@@ -472,6 +500,14 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
         attacker.attributes.remove("combat_skip_next_turn")
         attacker.msg("|yYou're too busy adjusting your grip to strike this moment.|n")
         defender.msg("|y%s is distracted and doesn't strike.|n" % _combat_display_name(attacker, defender))
+        # Room echo: attacker is adjusting their grip and does not strike
+        loc = getattr(attacker, "location", None) or getattr(defender, "location", None)
+        if loc and hasattr(loc, "contents_get"):
+            for viewer in loc.contents_get(content_type="character"):
+                if viewer in (attacker, defender):
+                    continue
+                atk_v = _combat_display_name(attacker, viewer)
+                viewer.msg(f"{atk_v} adjusts their grip and doesn't strike this moment.")
         return
     # Attacker stopped or switched target: remove only this ticker (their attacks); don't end defender's combat.
     if _get_combat_target(attacker) != defender:
@@ -489,6 +525,14 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
     if getattr(attacker.db, "grappled_by", None):
         attacker.msg("You're locked in their grasp; you can't strike back.")
         defender.msg(f"{_combat_display_name(attacker, defender)} is too restrained to strike.")
+        # Room echo: attacker is too restrained to strike
+        loc = getattr(attacker, "location", None) or getattr(defender, "location", None)
+        if loc and hasattr(loc, "contents_get"):
+            for viewer in loc.contents_get(content_type="character"):
+                if viewer in (attacker, defender):
+                    continue
+                atk_v = _combat_display_name(attacker, viewer)
+                viewer.msg(f"{atk_v} struggles against a hold and can't strike back.")
         return
 
     # 1b. Stamina: exhausted characters cannot attack or defend
@@ -503,6 +547,14 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
     if not can_fight(attacker):
         attacker.msg("You're too exhausted to strike.")
         defender.msg(f"{_combat_display_name(attacker, defender)} is too exhausted to strike.")
+        # Room echo: attacker is too exhausted to strike
+        loc = getattr(attacker, "location", None) or getattr(defender, "location", None)
+        if loc and hasattr(loc, "contents_get"):
+            for viewer in loc.contents_get(content_type="character"):
+                if viewer in (attacker, defender):
+                    continue
+                atk_v = _combat_display_name(attacker, viewer)
+                viewer.msg(f"{atk_v} looks too exhausted to strike.")
         return
     spend_stamina(attacker, STAMINA_COST_ATTACK)
 
@@ -517,6 +569,14 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
     if is_ranged_weapon(weapon_key) and wielded_obj and (not getattr(wielded_obj, "has_ammo", lambda: True)()):
         attacker.msg("Click. |rempty.|n The mag is dry. |wReload|n or you're dead.")
         defender.msg(f"{_combat_display_name(attacker, defender)} pulls the trigger. Click. Empty. Your turn.")
+        # Room echo: attacker pulls the trigger on an empty weapon
+        loc = getattr(attacker, "location", None) or getattr(defender, "location", None)
+        if loc and hasattr(loc, "contents_get"):
+            for viewer in loc.contents_get(content_type="character"):
+                if viewer in (attacker, defender):
+                    continue
+                atk_v = _combat_display_name(attacker, viewer)
+                viewer.msg(f"{atk_v} pulls the trigger. Click. |rempty.|n")
         return
 
     # 3. THE MOVE SELECTION (tiered by skill: default 1–3, tier 1 +4–5, C +6)
@@ -532,6 +592,15 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
         attacker.msg(f"{_combat_display_name(defender, attacker)} is too exhausted to defend. You land a solid blow.")
         defender.msg("You're too exhausted to defend yourself. The blow lands.")
         result, attack_value = "HIT", 10
+        # Room echo: defender is too exhausted to defend
+        loc = getattr(attacker, "location", None) or getattr(defender, "location", None)
+        if loc and hasattr(loc, "contents_get"):
+            for viewer in loc.contents_get(content_type="character"):
+                if viewer in (attacker, defender):
+                    continue
+                atk_v = _combat_display_name(attacker, viewer)
+                def_v = _combat_display_name(defender, viewer)
+                viewer.msg(f"{def_v} looks too exhausted to defend as {atk_v}'s blow lands.")
     else:
         spend_stamina(defender, STAMINA_COST_DEFEND)
         result, attack_value = resolve_attack(attacker, defender, weapon_key)
@@ -556,6 +625,15 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
         else:
             attacker.msg(f"Your punch finds air. |r{def_name}|n slipped it. You're off balance.")
             defender.msg(f"{atk_name} throws. You move. They |rmiss.|n")
+        # Room echo: attacker misses defender
+        loc = getattr(attacker, "location", None) or getattr(defender, "location", None)
+        if loc and hasattr(loc, "contents_get"):
+            for viewer in loc.contents_get(content_type="character"):
+                if viewer in (attacker, defender):
+                    continue
+                atk_v = _combat_display_name(attacker, viewer)
+                def_v = _combat_display_name(defender, viewer)
+                viewer.msg(f"{atk_v} attacks {def_v} but |rmisses.|n")
 
     elif result == "PARRIED":
         def_name = _combat_display_name(defender, attacker)
@@ -572,6 +650,15 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
         else:
             attacker.msg(f"Your punch goes in. |c{def_name}|n blocks. No contact. |cParried.|n")
             defender.msg(f"{atk_name} throws. Your guard is up. The punch is turned. |cParried.|n")
+        # Room echo: defender parries the attack
+        loc = getattr(attacker, "location", None) or getattr(defender, "location", None)
+        if loc and hasattr(loc, "contents_get"):
+            for viewer in loc.contents_get(content_type="character"):
+                if viewer in (attacker, defender):
+                    continue
+                atk_v = _combat_display_name(attacker, viewer)
+                def_v = _combat_display_name(defender, viewer)
+                viewer.msg(f"{atk_v} attacks {def_v}, but {def_v} |cparries the blow.|n")
 
     elif result == "DODGED":
         def_name = _combat_display_name(defender, attacker)
@@ -591,6 +678,15 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
         else:
             attacker.msg(f"You commit. |y{def_name} slips the punch.|n You're open.")
             defender.msg(f"The punch comes. You |yroll.|n {atk_name}'s fist misses.")
+        # Room echo: defender dodges the attack
+        loc = getattr(attacker, "location", None) or getattr(defender, "location", None)
+        if loc and hasattr(loc, "contents_get"):
+            for viewer in loc.contents_get(content_type="character"):
+                if viewer in (attacker, defender):
+                    continue
+                atk_v = _combat_display_name(attacker, viewer)
+                def_v = _combat_display_name(defender, viewer)
+                viewer.msg(f"{atk_v} attacks {def_v}, but {def_v} |ydodges aside.|n")
 
     elif result in ("HIT", "CRITICAL"):
         # Defender already dead this tick (other callback ran first)? Do nothing.
@@ -650,9 +746,28 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
                 attacker.msg(f"|cYour blow lands on {eff_for_atk}'s {body_part} — {def_for_atk} pulled them in the way — but their armor absorbs it.|n")
                 defender.msg(f"|cYou pull {eff_for_def} in the way. {atk_for_def}'s strike hits them but armor takes it.|n")
                 effective_defender.msg(f"|c{def_for_eff} uses you as a shield. {atk_for_eff}'s blow hits your {body_part}; your armor takes it.|n")
+                # Room echo: attacker hits shield but armor absorbs it
+                loc = getattr(attacker, "location", None) or getattr(defender, "location", None)
+                if loc and hasattr(loc, "contents_get"):
+                    for viewer in loc.contents_get(content_type="character"):
+                        if viewer in (attacker, defender, effective_defender):
+                            continue
+                        atk_v = _combat_display_name(attacker, viewer)
+                        def_v = _combat_display_name(defender, viewer)
+                        eff_v = _combat_display_name(effective_defender, viewer)
+                        viewer.msg(f"{def_v} pulls {eff_v} into the line of fire. {atk_v}'s blow hits {eff_v}'s {body_part}, but their armor |csoaks the impact.|n")
             else:
                 attacker.msg(f"|cYour blow lands on {_combat_display_name(defender, attacker)}'s {body_part} but their armor absorbs it.|n")
                 defender.msg(f"|c{_combat_display_name(attacker, defender)}'s strike hits your {body_part}; your armor takes it.|n")
+                # Room echo: armor absorbs the hit
+                loc = getattr(attacker, "location", None) or getattr(defender, "location", None)
+                if loc and hasattr(loc, "contents_get"):
+                    for viewer in loc.contents_get(content_type="character"):
+                        if viewer in (attacker, defender):
+                            continue
+                        atk_v = _combat_display_name(attacker, viewer)
+                        def_v = _combat_display_name(defender, viewer)
+                        viewer.msg(f"{atk_v}'s blow lands on {def_v}'s {body_part}, but their armor |cabsorbs the hit.|n")
         else:
             from world.medical import apply_trauma, get_brutal_hit_flavor
             trauma_result = apply_trauma(effective_defender, body_part, damage, is_critical, weapon_key=weapon_key, weapon_obj=wielded_obj)
@@ -674,6 +789,17 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
                     weapon_key, body_part, trauma_result, eff_self, atk_for_eff, is_critical, weapon_obj=wielded_obj
                 )
                 effective_defender.msg(f"|r{def_for_eff} uses you as a shield! {atk_for_eff}'s blow hits you — {def_line_shield} {flavor_shield}".strip())
+                # Room echo: defender uses someone as a shield and they are hit
+                loc = getattr(attacker, "location", None) or getattr(defender, "location", None)
+                if loc and hasattr(loc, "contents_get"):
+                    for viewer in loc.contents_get(content_type="character"):
+                        if viewer in (attacker, defender, effective_defender):
+                            continue
+                        atk_v = _combat_display_name(attacker, viewer)
+                        def_v = _combat_display_name(defender, viewer)
+                        eff_v = _combat_display_name(effective_defender, viewer)
+                        crit_tag = "|yCRITICAL.|n " if is_critical else ""
+                        viewer.msg(f"{def_v} drags {eff_v} into the path of {atk_v}'s attack. {crit_tag}{atk_v}'s blow crashes into {eff_v}'s {body_part}.")
             else:
                 main_atk, main_def = _hit_message(
                     weapon_key, body_part, def_for_atk, atk_for_def, is_critical
@@ -683,6 +809,16 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
                 )
                 attacker.msg(f"{main_atk} {flavor_atk}".strip())
                 defender.msg(f"{main_def} {flavor_def}".strip())
+                # Room echo: straightforward damaging hit
+                loc = getattr(attacker, "location", None) or getattr(defender, "location", None)
+                if loc and hasattr(loc, "contents_get"):
+                    for viewer in loc.contents_get(content_type="character"):
+                        if viewer in (attacker, defender):
+                            continue
+                        atk_v = _combat_display_name(attacker, viewer)
+                        def_v = _combat_display_name(defender, viewer)
+                        crit_tag = "|yCRITICAL.|n " if is_critical else ""
+                        viewer.msg(f"{crit_tag}{atk_v}'s strike slams into {def_v}'s {body_part}.")
             effective_defender.at_damage(attacker, damage, body_part=body_part, weapon_key=weapon_key, weapon_obj=wielded_obj)
 
     # 6. Consume one round for ranged weapons (fired whether hit or miss)
@@ -857,7 +993,16 @@ def start_combat_ticker(attacker, target):
             v.msg(COMBAT_READY_ROOM_MSG.format(defender=_combat_display_name(target, v)))
         viewers_atk = [c for c in loc.contents_get(content_type="character") if c != attacker]
         for v in viewers_atk:
-            v.msg(COMBAT_READY_ATTACKER_ROOM_MSG.format(attacker=_combat_display_name(attacker, v), target=_combat_display_name(target, v)))
+            if v is target:
+                # From defender's own perspective: attacker is getting ready to fight *you*.
+                v.msg("|r{attacker} gets ready to fight you.|n".format(
+                    attacker=_combat_display_name(attacker, v)
+                ))
+            else:
+                v.msg(COMBAT_READY_ATTACKER_ROOM_MSG.format(
+                    attacker=_combat_display_name(attacker, v),
+                    target=_combat_display_name(target, v),
+                ))
 
     sec = random.uniform(COMBAT_START_DELAY_MIN, COMBAT_START_DELAY_MAX)
     delay(sec, _start_first_round, attacker.id, target.id)

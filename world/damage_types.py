@@ -68,6 +68,8 @@ DAMAGE_TYPE_TO_INJURY_TYPE = {
 BODY_PART_TO_REGION = {
     "head":           "head",
     "face":           "head",
+    "left eye":       "head",
+    "right eye":      "head",
     "neck":           "neck",
     "torso":          "torso",
     "back":           "torso",
