@@ -203,7 +203,8 @@ class Room(ObjectParent, DefaultRoom):
             name = obj.get_display_name(looker, **kwargs)
             short = self._name_for_you_see(name).strip()
             article = self._article(short).capitalize()
-            object_pose_parts.append(f"{article} {ROOM_DESC_OBJECT_NAME_COLOR}{short}|n is {pose}.")
+            # Do not force an 'is' here; let builders/players include it in the text if desired
+            object_pose_parts.append(f"{article} {ROOM_DESC_OBJECT_NAME_COLOR}{short}|n {pose}.")
         vehicle_pose_parts = []
         for obj, pose in vehicle_poses:
             name = obj.get_display_name(looker, **kwargs)
@@ -287,12 +288,20 @@ class Room(ObjectParent, DefaultRoom):
                     except Exception:
                         pass
                 if logged_off:
-                    pose = getattr(char.db, "sleep_place", None) or "sleeping here"
+                    pose = getattr(char.db, "sleep_place", None)
+                    # Default fallback and legacy value ("sleeping here") both become "is sleeping here"
+                    if not pose or pose.strip().lower() == "sleeping here":
+                        pose = "is sleeping here"
                 else:
-                    # Default fallback: "is standing here" so the full line reads "Name is standing here."
-                    pose = getattr(char.db, "room_pose", None)
-                    if not pose or pose.strip().lower() == "standing here":
-                        pose = "is standing here"
+                    # Temporary place (@tp) overrides normal @lp while set in this room.
+                    temp_pose = getattr(char.db, "temp_room_pose", None)
+                    if temp_pose:
+                        pose = temp_pose
+                    else:
+                        # Default fallback: "is standing here" so the full line reads "Name is standing here."
+                        pose = getattr(char.db, "room_pose", None)
+                        if not pose or pose.strip().lower() == "standing here":
+                            pose = "is standing here"
             pose = (pose or "").strip().rstrip(".")
             if pose:
                 try:
@@ -311,8 +320,8 @@ class Room(ObjectParent, DefaultRoom):
                     pass
             name = char.get_display_name(looker, **kwargs)
             if logged_off:
-                # Name in character color; "is sleeping here" in bold white
-                char_pose_parts.append(f"{ROOM_DESC_CHARACTER_NAME_COLOR}{name}|n |b|wis {pose}.|n")
+                # Name in character color; sleep-place text in bold white (caller controls verb, e.g. "is sleeping here")
+                char_pose_parts.append(f"{ROOM_DESC_CHARACTER_NAME_COLOR}{name}|n |b|w{pose}.|n")
             elif is_dead:
                 # Dead/flatlined: always "Name is <pose>."
                 char_pose_parts.append(f"{ROOM_DESC_CHARACTER_NAME_COLOR}{name}|n is {pose}.")

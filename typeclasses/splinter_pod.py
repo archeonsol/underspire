@@ -60,6 +60,9 @@ class SplinterPod(DefaultObject):
     def at_object_creation(self):
         self.db.desc = POD_DESC
         self.db.interior = None  # set in _ensure_interior
+        # Pods are fixtures: cannot be picked up and do not support @sp for non-builders.
+        self.db.immovable = True
+        self.db.allow_setplace = False
 
     def _ensure_interior(self):
         """Return this pod's single persistent interior. Creates once per pod; never duplicates."""
