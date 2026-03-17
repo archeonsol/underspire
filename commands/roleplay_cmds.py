@@ -140,13 +140,14 @@ def _run_emote(caller, text, improvise=False):
                 # Keep " .word" so first_to_third can conjugate those verbs (dot = verb tell)
                 third = first_to_third(seg.strip(), caller)
                 try:
-                    from world.language import parse_quoted_speech, process_language_for_viewer
+                    from world.language import parse_quoted_speech, process_language_for_viewer, get_speaker_language
                     third, lang_bits = parse_quoted_speech(third)
                 except Exception:
                     lang_bits = []
                 targets = find_targets_in_text(third, location.contents_get(content_type="character"), caller)
                 body_part = build_emote_for_viewer(third, viewer, targets, emitter_name)
-                for ph, lang_key, quote_text in lang_bits:
+                lang_key = get_speaker_language(caller)
+                for ph, quote_text in lang_bits:
                     try:
                         from world.language import process_language_for_viewer
                         processed = process_language_for_viewer(caller, quote_text, lang_key, viewer)
@@ -189,13 +190,14 @@ def _run_emote(caller, text, improvise=False):
         for seg in segments:
             third = first_to_third(seg.strip(), caller)
             try:
-                from world.language import parse_quoted_speech, process_language_for_viewer
+                from world.language import parse_quoted_speech, process_language_for_viewer, get_speaker_language
                 third, lang_bits = parse_quoted_speech(third)
             except Exception:
                 lang_bits = []
             targets = find_targets_in_text(third, location.contents_get(content_type="character"), caller)
             body_part = build_emote_for_viewer(third, None, targets, emitter_name)
-            for ph, lang_key, quote_text in lang_bits:
+            lang_key = get_speaker_language(caller)
+            for ph, quote_text in lang_bits:
                 try:
                     from world.language import process_language_for_viewer
                     processed = process_language_for_viewer(caller, quote_text, lang_key, None)
@@ -354,6 +356,58 @@ class CmdVoice(Command):
             caller.msg("|wYour voice|n: |w%s voice|n" % current)
         else:
             caller.msg("|wYour voice|n: not set. Use |w@voice = <text>|n.")
+
+
+class CmdLanguage(Command):
+    """
+    Set which language you speak (say/whisper/emotes). Only languages you know (have invested XP in) can be selected.
+
+    Usage:
+      language              - show current speaking language and languages you know
+      language <language>   - set speaking language (e.g. language gutter)
+    """
+    key = "language"
+    locks = "cmd:all()"
+    help_category = "General"
+
+    def func(self):
+        from world.language import (
+            resolve_language_key, get_speaker_language, get_language_percent,
+            LEARNABLE_LANGUAGE_KEYS, get_language_level_name,
+        )
+        caller = self.caller
+        if not hasattr(caller, "db"):
+            return
+        args = (self.args or "").strip()
+        # Languages this character knows: English always, plus any learnable with percent > 0
+        known = ["english"]
+        for k in LEARNABLE_LANGUAGE_KEYS:
+            if get_language_percent(caller, k) > 0:
+                known.append(k)
+        if not args:
+            current = get_speaker_language(caller)
+            # If current is not in known, reset to english (e.g. lost XP or data change)
+            if current not in known:
+                current = "english"
+                caller.db.speaking_language = "english"
+            display = current.replace("_", " ").title()
+            caller.msg("You are currently speaking |w%s|n." % display)
+            if len(known) <= 1:
+                caller.msg("Languages you know: English. Use |w@xp advance language <name>|n to learn another.")
+            else:
+                opts = [k.replace("_", " ").title() + " (" + get_language_level_name(get_language_percent(caller, k)) + ")" for k in known if k != "english"]
+                caller.msg("Use |wlanguage <name>|n to change. Languages you know: English, %s." % ", ".join(opts))
+            return
+        key = resolve_language_key(args)
+        if key is None:
+            caller.msg("Unknown language.")
+            return
+        if key not in known:
+            caller.msg("You don't know that language. Learn it with |w@xp advance language <name>|n.")
+            return
+        caller.db.speaking_language = key
+        display = key.replace("_", " ").title()
+        caller.msg("You will now speak |w%s|n. Say, whisper, and quoted speech in emotes will be heard in that language by those who know it." % display)
 
 
 def _count_pluralize(name):

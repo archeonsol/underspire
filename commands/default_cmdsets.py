@@ -105,19 +105,20 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         from commands.inventory_cmds import CmdWield, CmdUnwield, CmdFreehands, CmdInventory, CmdReload, CmdUnload, CmdCheckAmmo, CmdWear, CmdRemove, CmdStrip, CmdFrisk
         from commands.crafting_cmds import CmdSurvey, CmdRepairArmor, CmdTailor
         from commands.media_cmds import CmdCamera, CmdTuneTelevision, CmdLabel
-        from commands.roleplay_cmds import CmdTease, CmdDescribeBodypart, CmdDescribeMeAs, CmdBody, CmdVoice, CmdSdesc, CmdPending, CmdLookPlace, CmdSleepPlace, CmdWakeMsg, CmdFlatlineMsg, CmdSetPlace, CmdPose, CmdPronoun, CmdEmote, CmdNoMatch, CmdCount, CmdRecog
+        from commands.roleplay_cmds import CmdTease, CmdDescribeBodypart, CmdDescribeMeAs, CmdBody, CmdVoice, CmdLanguage, CmdSdesc, CmdPending, CmdLookPlace, CmdSleepPlace, CmdWakeMsg, CmdFlatlineMsg, CmdSetPlace, CmdPose, CmdPronoun, CmdEmote, CmdNoMatch, CmdCount, CmdRecog
         from commands.roleplay_cmds import CmdSit, CmdLieOnTable, CmdGetOffTable
         from commands.performance_cmds import CmdPerformance
         from commands.death_cmds import CmdGoOOC, CmdReturnIC, CmdEnterPod, CmdLeavePod, CmdSplinterMe
         from commands.vehicle_cmds import CmdEnterVehicle, CmdExitVehicle, CmdStartEngine, CmdStopEngine, CmdShutoffEngine, CmdDrive, CmdVehicleStatus, CmdRepairPart
         from commands.staff_cmds import (
-            CmdStats, CmdXp, CmdGiveXp, CmdStaffSheet, CmdStaffSetStat, CmdStaffSetSkill,
+            CmdStats, CmdGiveXp, CmdStaffSheet, CmdStaffSetStat, CmdStaffSetSkill,
             CmdCreateItem, CmdTypeclasses, CmdSpawnItem, CmdSpawnArmor, CmdSpawnVehicle, CmdSpawnMedical, CmdSpawnOR,
             CmdSpawnCreature, CmdCreatureSet, CmdDespawn, CmdNpc, CmdMakeNpc, CmdNpcSet,
             CmdGoto, CmdGotoRoom, CmdSummon, CmdSetVoid, CmdVoid, CmdRelease, CmdBoot, CmdFind, CmdAnnounce, CmdRestore, CmdDebugKill,
             CmdSpawnSeat, CmdSpawnBed, CmdSpawnPod, CmdSpawnCamera, CmdSpawnTelevision,
             CmdEmoteDebug, CmdDamageVehicle,
         )
+        from commands.player_cmds import CmdXp
         from commands.builder_commands import (
             CmdTag, CmdHere, CmdListCmds, CmdCloneSpawn, CmdDig, CmdDesc,
             CmdSetAttr, CmdName, CmdOpen, CmdDestroy,
@@ -184,6 +185,7 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdDescribeMeAs())
         self.add(CmdBody())
         self.add(CmdVoice())
+        self.add(CmdLanguage())
         self.add(CmdSdesc())
         self.add(CmdPending())
         self.add(CmdLookPlace())

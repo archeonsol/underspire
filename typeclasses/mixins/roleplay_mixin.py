@@ -27,20 +27,21 @@ def _feed_room_cameras(location, speaker, message, improvise):
 
 
 def _at_say_whisper_overhear(location, speaker, message, receivers):
-    """Send garbled whisper overhear to other characters in the room."""
+    """Send whisper overhear to other characters; they hear it in speaker's language (garbled by their skill)."""
     if not location or not receivers:
         return
     try:
-        from evennia.contrib.rpg.rpsystem.rplanguage import obfuscate_whisper
+        from world.language import get_speaker_language, process_language_for_viewer
         exclude = make_iter(receivers)
         exclude = list(exclude) + [speaker]
         chars_here = location.contents_get(content_type="character")
+        lang_key = get_speaker_language(speaker)
         for viewer in chars_here:
             if viewer in exclude or viewer == speaker:
                 continue
-            garbled = obfuscate_whisper(message, level=0.6)
+            heard = process_language_for_viewer(speaker, message, lang_key, viewer)
             obj_name = speaker.get_display_name(viewer)
-            line = '%s whispers something to someone... "%s"' % (obj_name, garbled)
+            line = '%s whispers something to someone... "%s"' % (obj_name, heard)
             viewer.msg(text=(line, {"type": "whisper"}), from_obj=speaker)
     except Exception as err:
         logger.log_trace("roleplay_mixin._at_say_whisper_overhear: %s" % err)
@@ -169,20 +170,49 @@ class RoleplayMixin:
 
     def at_say(self, message, msg_self=None, msg_location=None, receivers=None, msg_receivers=None, **kwargs):
         """
-        Say (and whisper) hook. For room say, optionally show voice to listeners who pass perception check.
+        Say (and whisper) hook. For room say, optionally show voice; language garbling applied per viewer.
         """
         from world.voice import get_voice_phrase, get_speaking_tag, voice_perception_check
 
-        # Whisper or explicit receivers: use default behavior, then add overhear obfuscation for whisper
+        # Whisper or explicit receivers: send per-receiver with language processing, then overhear
         if kwargs.get("whisper", False) or receivers:
-            super().at_say(
-                message, msg_self=msg_self, msg_location=msg_location,
-                receivers=receivers, msg_receivers=msg_receivers, **kwargs
-            )
-            if kwargs.get("whisper", False) and receivers:
-                location = self.location
-                if location:
-                    _at_say_whisper_overhear(location, self, message, receivers)
+            from world.language import get_speaker_language, process_language_for_viewer
+            custom_mapping = kwargs.get("mapping", {})
+            location = self.location
+            msg_type = "say"
+            lang_key = get_speaker_language(self)
+            msg_receivers = msg_receivers or '{object} whispers: "|n{speech}|n"'
+            if msg_self:
+                self_mapping = {
+                    "self": "You",
+                    "object": self.get_display_name(self),
+                    "location": location.get_display_name(self) if location else None,
+                    "receiver": None,
+                    "all_receivers": None,
+                    "speech": message,
+                }
+                self_mapping.update(custom_mapping)
+                template = msg_self if isinstance(msg_self, str) else 'You whisper: "|n{speech}|n"'
+                self.msg(text=(template.format_map(self_mapping), {"type": msg_type}), from_obj=self)
+            if receivers and msg_receivers:
+                all_recv_names = ", ".join(r.get_display_name(r) for r in make_iter(receivers))
+                for receiver in make_iter(receivers):
+                    speech = process_language_for_viewer(self, message, lang_key, receiver)
+                    receiver_mapping = {
+                        "self": "You",
+                        "object": self.get_display_name(receiver),
+                        "location": location.get_display_name(receiver) if location else None,
+                        "receiver": receiver.get_display_name(receiver),
+                        "all_receivers": all_recv_names,
+                        "speech": speech,
+                    }
+                    receiver_mapping.update(custom_mapping)
+                    receiver.msg(
+                        text=(msg_receivers.format_map(receiver_mapping), {"type": msg_type}),
+                        from_obj=self,
+                    )
+            if kwargs.get("whisper", False) and receivers and location:
+                _at_say_whisper_overhear(location, self, message, receivers)
             return
 
         custom_mapping = kwargs.get("mapping", {})
@@ -190,6 +220,7 @@ class RoleplayMixin:
         msg_type = "say"
         voice_phrase = get_voice_phrase(self)
         improvise = getattr(self.ndb, "performance_improvising", False)
+        from world.language import get_speaker_language, process_language_for_viewer
 
         if msg_self:
             self_mapping = {
@@ -210,16 +241,18 @@ class RoleplayMixin:
         if not location:
             return
 
-        # Room say: send to each character in location (except self) with optional voice
+        lang_key = get_speaker_language(self)
+        # Room say: send to each character in location (except self) with language per viewer
         chars_here = location.contents_get(content_type="character")
         for viewer in make_iter(chars_here):
             if viewer == self:
                 continue
+            speech = process_language_for_viewer(self, message, lang_key, viewer)
             obj_name = self.get_display_name(viewer)
             if voice_phrase and voice_perception_check(viewer, self):
-                line = '%s says in a %s, "*speaking in a %s* %s"' % (obj_name, voice_phrase, voice_phrase, message)
+                line = '%s says in a %s, "*speaking in a %s* %s"' % (obj_name, voice_phrase, voice_phrase, speech)
             else:
-                line = '%s says, "%s"' % (obj_name, message)
+                line = '%s says, "%s"' % (obj_name, speech)
             if improvise:
                 line = "|w%s|n" % line
             viewer.msg(text=(line, {"type": msg_type}), from_obj=self)

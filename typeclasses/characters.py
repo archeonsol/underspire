@@ -282,7 +282,9 @@ class Character(RoleplayMixin, MedicalMixin, RPGCharacterMixin, DefaultCharacter
         go_shard_awakening = getattr(self.db, "_suppress_become_message", False)
         if go_shard_awakening:
             try:
-                del self.db["_suppress_become_message"]
+                # DbHolder supports attribute-style deletion, not item-style.
+                if hasattr(self.db, "_suppress_become_message"):
+                    del self.db._suppress_become_message
             except Exception as err:
                 logger.log_trace("characters.at_post_puppet suppress_become_message: %s" % err)
             # Do what DefaultObject.at_post_puppet does except the msg("You become ...")

@@ -111,6 +111,7 @@ from commands.roleplay_cmds import (
     CmdDescribeBodypart,
     CmdDescribeMeAs,
     CmdVoice,
+    CmdLanguage,
     CmdBody,
     CmdSdesc,
     CmdPending,
@@ -185,7 +186,6 @@ from commands.multipuppet_cmds import (
 # staff_cmds
 from commands.staff_cmds import (
     CmdStats,
-    CmdXp,
     CmdGiveXp,
     CmdStaffSheet,
     CmdStaffSetStat,
@@ -222,6 +222,9 @@ from commands.staff_cmds import (
     CmdEmoteDebug,
     CmdDamageVehicle,
 )
+
+# player_cmds
+from commands.player_cmds import CmdXp
 
 __all__ = [
     "ADMIN_LOCK",
@@ -310,6 +313,7 @@ __all__ = [
     "CmdDescribeBodypart",
     "CmdDescribeMeAs",
     "CmdVoice",
+    "CmdLanguage",
     "CmdBody",
     "CmdSdesc",
     "CmdPending",
