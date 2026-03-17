@@ -193,14 +193,19 @@ class CmdRoute(Command):
 
     Usage:
         route via <router>
+        route back
 
-    Opens an interactive menu showing all access points (rooms) connected to
-    the specified router. You can browse devices in each access point and
-    connect to their Matrix interface, creating ephemeral vestibule/interface rooms.
+    route via <router> - Opens an interactive menu showing all access points (rooms)
+                         connected to the specified router. You can browse devices
+                         in each access point and connect to their Matrix interface.
+
+    route back - Exit a device interface and return to the router that device is
+                 currently connected to. Works from vestibule or interface rooms.
 
     Examples:
         route via Cortex Router
         route via downtown_router
+        route back
     """
 
     key = "route"
@@ -217,18 +222,25 @@ class CmdRoute(Command):
             return
 
         if not self.args.strip():
-            caller.msg("Usage: route via <router>")
+            caller.msg("Usage: route via <router> | route back")
+            return
+
+        # Parse command
+        args = self.args.strip().lower()
+
+        # Handle "route back" - exit device interface
+        if args in ("back", "exit", "return"):
+            self.route_back(caller)
             return
 
         # Parse "via <router>" syntax
-        args = self.args.strip()
-        if args.lower().startswith("via "):
+        if args.startswith("via "):
             router_name = args[4:].strip()
         else:
             router_name = args
 
         if not router_name:
-            caller.msg("Usage: route via <router>")
+            caller.msg("Usage: route via <router> | route back")
             return
 
         # Search for router in current location
@@ -257,6 +269,73 @@ class CmdRoute(Command):
             startnode_input=("", {"router": router}),
             cmdset_mergetype="Union",
         )
+
+    def route_back(self, caller):
+        """
+        Exit a device interface and return to the router.
+
+        Traces: interface/vestibule → parent_object → location → router
+        """
+        room = caller.location
+        if not room:
+            caller.msg("You are nowhere.")
+            return
+
+        # Check if we're in a device interface or vestibule
+        parent_device = getattr(room.db, 'parent_object', None)
+        if not parent_device:
+            caller.msg("You are not in a device interface. Use this command from within a device's vestibule or interface room.")
+            return
+
+        # Get the device's current physical location
+        device_location = parent_device.location
+        if not device_location:
+            caller.msg("|rError: Device has no physical location. Connection lost.|n")
+            return
+
+        # Get the router for this location
+        router_dbref = getattr(device_location.db, 'network_router', None)
+        if not router_dbref:
+            caller.msg("|rError: Device's location has no router connection.|n")
+            return
+
+        # Load the router
+        try:
+            router = Router.objects.get(pk=router_dbref)
+        except Router.DoesNotExist:
+            caller.msg("|rError: Router no longer exists.|n")
+            return
+
+        # Check if router is online
+        if not router.db.online:
+            caller.msg(f"|rConnection lost: {router.key} is offline.|n")
+            return
+
+        # Get router's location
+        router_location = router.location
+        if not router_location:
+            caller.msg("|rError: Router has no physical location.|n")
+            return
+
+        # Announce departure
+        caller.msg(f"|cClosing connection to {parent_device.key}...|n")
+        room.msg_contents(
+            f"{caller.key} disconnects and fades into the data stream.",
+            exclude=[caller]
+        )
+
+        # Move to router's location
+        caller.move_to(router_location, quiet=True)
+
+        # Announce arrival
+        caller.msg(f"|gConnection closed. Returned to {router.key}.|n")
+        router_location.msg_contents(
+            f"{caller.key} materializes from a device connection.",
+            exclude=[caller]
+        )
+
+        # Show the router location
+        caller.execute_cmd("look")
 
 
 # Router Access Menu Nodes are in commands/matrix_menus.py
