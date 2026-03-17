@@ -86,22 +86,16 @@ class DiveRig(Seat, NetworkedObject):
         if avatar_dbref:
             try:
                 avatar = MatrixAvatar.objects.get(pk=avatar_dbref)
-                character.msg(f"DEBUG: Found avatar by dbref #{avatar_dbref}: {avatar}")
             except MatrixAvatar.DoesNotExist:
                 # Avatar was deleted
-                character.msg("DEBUG: Avatar no longer exists, clearing")
                 character.db.matrix_avatar_dbref = None
-        else:
-            character.msg("DEBUG: No avatar dbref found")
 
         # Determine if we need to respawn avatar
         needs_respawn = False
         if avatar:
-            character.msg(f"DEBUG: Avatar location: {avatar.location}")
             # Check if avatar is dead
             if getattr(avatar.db, 'dead', False):
                 needs_respawn = True
-                character.msg("DEBUG: Avatar is dead, respawning")
                 # Dump inventory into the room before deleting
                 if avatar.location:
                     for item in avatar.contents:
@@ -112,7 +106,6 @@ class DiveRig(Seat, NetworkedObject):
             # Check if avatar's location still exists
             elif not avatar.location or not avatar.location.pk:
                 needs_respawn = True
-                character.msg("DEBUG: Avatar location vanished, respawning")
                 # Location vanished, respawn at entry point
                 avatar.location = target_node
 
@@ -190,14 +183,8 @@ class DiveRig(Seat, NetworkedObject):
         # Get the account and session from avatar (since that's what's currently puppeted)
         account = avatar.account if hasattr(avatar, 'account') else None
 
-        # DEBUG: Check location before jack_out
-        avatar.msg(f"DEBUG: Avatar location before jack_out: {avatar.location}")
-
         # Jack out the avatar (handles consequences based on severity)
         avatar.jack_out(reason=reason, severity=severity)
-
-        # DEBUG: Check location after jack_out
-        avatar.msg(f"DEBUG: Avatar location after jack_out: {avatar.location}")
 
         # Don't clear the reference - avatar persists for reconnection
         # character.db.matrix_avatar stays set
@@ -208,21 +195,8 @@ class DiveRig(Seat, NetworkedObject):
             sessions = avatar.sessions.all()
             session = sessions[0] if sessions else None
             if session:
-                # DEBUG: Check location before puppet switch
-                character.msg(f"DEBUG: Avatar location before puppet switch: {avatar.location}")
-
-                # Save avatar location before puppet switch (Evennia clears it)
-                saved_location = avatar.location
-
                 account.puppet_object(session, character)
                 character.msg("|rJacked out.|n")
-
-                # Restore avatar location after puppet switch
-                if saved_location:
-                    avatar.location = saved_location
-
-                # DEBUG: Check location after puppet switch
-                character.msg(f"DEBUG: Avatar location after puppet switch: {avatar.location}")
                 character.execute_cmd("look")
 
         # Show message to meatspace room where character's body is

@@ -33,6 +33,14 @@ class MatrixAvatar(DefaultCharacter):
         self.db.entry_device = None
         self.db.idle = False
 
+    def at_post_unpuppet(self, account=None, session=None, **kwargs):
+        """
+        When unpuppeting the avatar (jacking out), keep it in its current location.
+        Do NOT set location to None - avatar stays where it is in the Matrix.
+        """
+        # Avatar stays in place - location is preserved for reconnection
+        pass
+
     def check_connection(self):
         """
         Verify the physical connection to meatspace is still valid.
