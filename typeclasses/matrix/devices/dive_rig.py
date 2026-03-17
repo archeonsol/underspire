@@ -6,6 +6,7 @@ Physical devices that provide Matrix connectivity and interfaces.
 DiveRig - Reclined chair for jacking into the Matrix (combines Seat + NetworkedObject)
 """
 
+from evennia.utils import delay
 from typeclasses.seats import Seat
 from typeclasses.matrix.objects import NetworkedObject
 from typeclasses.matrix.avatars import MatrixAvatar, JACKOUT_FORCED, JACKOUT_EMERGENCY
@@ -140,21 +141,33 @@ class DiveRig(Seat, NetworkedObject):
             avatar.db.entry_device = self
             avatar.db.idle = False
 
-        # Show jack-in message to character and room
+        # Staged jack-in sequence
         character.msg("|gJacking in...|n")
         character.location.msg_contents(
             f"{character.name} {self.db.jack_in_message}.",
             exclude=character
         )
 
-        # Switch puppet to avatar
+        # Stage 1: After 1 second, character loses consciousness
+        delay(1, self._jack_in_stage1, character, avatar)
+
+        return True
+
+    def _jack_in_stage1(self, character, avatar):
+        """Stage 1: Character loses consciousness in meatspace."""
+        character.db.conscious = False
+        character.msg("|cThe room seems to be sucked out of existence...|n")
+
+        # Stage 2: After another second, puppet swap
+        delay(1, self._jack_in_stage2, character, avatar)
+
+    def _jack_in_stage2(self, character, avatar):
+        """Stage 2: Switch puppet to avatar."""
         account = character.account
         if account:
             session = character.sessions.all()[0] if character.sessions.all() else None
             if session:
                 account.puppet_object(session, avatar)
-
-        return True
 
     def jack_out_character(self, character, severity=0, reason="Disconnecting"):
         """
@@ -189,6 +202,27 @@ class DiveRig(Seat, NetworkedObject):
         # Don't clear the reference - avatar persists for reconnection
         # character.db.matrix_avatar stays set
 
+        # Staged jack-out sequence
+        # Stage 1: After 1 second, show transition message
+        delay(1, self._jack_out_stage1, character, avatar, severity, account)
+
+    def _jack_out_stage1(self, character, avatar, severity, account):
+        """Stage 1: Avatar becomes unconscious, show transition message."""
+        avatar.db.conscious = False
+
+        # Different messages based on severity
+        if severity >= JACKOUT_FORCED:
+            avatar.msg("|rYou feel your consciousness being violently ripped back through the Matrix!|n")
+        elif severity >= JACKOUT_EMERGENCY:
+            avatar.msg("|yYou feel your awareness being urgently pulled back through the Matrix...|n")
+        else:
+            avatar.msg("|cYou feel your awareness being drawn back through the Matrix and into your body.|n")
+
+        # Stage 2: After another second, puppet swap
+        delay(1, self._jack_out_stage2, character, avatar, account)
+
+    def _jack_out_stage2(self, character, avatar, account):
+        """Stage 2: Switch puppet back to character."""
         # Switch puppet back to character
         # Session is attached to avatar, not character
         if account:
@@ -196,8 +230,13 @@ class DiveRig(Seat, NetworkedObject):
             session = sessions[0] if sessions else None
             if session:
                 account.puppet_object(session, character)
-                character.msg("|rJacked out.|n")
-                character.execute_cmd("look")
+
+                # Stage 3: After another second, regain consciousness
+                delay(1, self._jack_out_stage3, character)
+
+    def _jack_out_stage3(self, character):
+        """Stage 3: Character regains consciousness in meatspace."""
+        character.db.conscious = True
 
         # Show message to meatspace room where character's body is
         if character.location:
