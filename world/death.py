@@ -418,6 +418,19 @@ def make_permanent_death(character, attacker=None, reason="executed"):
     # Convert to corpse (swap typeclass); key by pronoun so "male corpse", "female corpse", "neuter corpse"
     pronoun = getattr(character.db, "pronoun", None) or "neutral"
     corpse_key = CORPSE_KEY_BY_PRONOUN.get(pronoun, "neuter corpse")
+    # Capture per-viewer display name *before* we swap typeclass so execute/death
+    # messages can show the recognizable/sdesc name instead of the generic corpse key.
+    predeath_names_by_viewer = {}
+    if loc and hasattr(loc, "contents_get"):
+        for v in loc.contents_get(content_type="character"):
+            if v == character:
+                continue
+            try:
+                predeath_names_by_viewer[v] = (
+                    character.get_display_name(v) if hasattr(character, "get_display_name") else name
+                )
+            except Exception:
+                predeath_names_by_viewer[v] = name
     try:
         character.swap_typeclass("typeclasses.corpse.Corpse", clean_attributes=False, no_default=True)
         character.db.original_name = name
@@ -472,20 +485,38 @@ def make_permanent_death(character, attacker=None, reason="executed"):
                 attacker_msg = EXECUTE_ATTACKER_MSG.get(weapon_key, EXECUTE_ATTACKER_MSG["fists"])
                 room_msg = EXECUTE_ROOM_MSG.get(weapon_key, EXECUTE_ROOM_MSG["fists"])
                 if hasattr(attacker, "msg"):
-                    name_for_attacker = character.get_display_name(attacker) if hasattr(character, "get_display_name") else name
+                    # For the attacker, keep using their personalized view of the victim.
+                    name_for_attacker = predeath_names_by_viewer.get(
+                        attacker,
+                        character.get_display_name(attacker) if hasattr(character, "get_display_name") else name,
+                    )
                     attacker.msg(attacker_msg.format(name=name_for_attacker))
                 for v in loc.contents_get(content_type="character"):
                     if v in (character, attacker):
                         continue
-                    v.msg(room_msg.format(
-                        attacker=attacker.get_display_name(v) if hasattr(attacker, "get_display_name") else attacker.name,
-                        name=character.get_display_name(v) if hasattr(character, "get_display_name") else name,
-                    ))
+                    # For room viewers, use the pre-death recognizable name if we have it,
+                    # falling back to current display name/canonical name.
+                    victim_name_for_viewer = predeath_names_by_viewer.get(
+                        v,
+                        character.get_display_name(v) if hasattr(character, "get_display_name") else name,
+                    )
+                    attacker_name_for_viewer = (
+                        attacker.get_display_name(v) if hasattr(attacker, "get_display_name") else attacker.name
+                    )
+                    v.msg(
+                        room_msg.format(
+                            attacker=attacker_name_for_viewer,
+                            name=victim_name_for_viewer,
+                        )
+                    )
             else:
                 for v in loc.contents_get(content_type="character"):
                     if v == character:
                         continue
-                    n = character.get_display_name(v) if hasattr(character, "get_display_name") else name
+                    n = predeath_names_by_viewer.get(
+                        v,
+                        character.get_display_name(v) if hasattr(character, "get_display_name") else name,
+                    )
                     v.msg("|r%s has slipped away. No pulse. No return. The body is still.|n" % n)
     except Exception as e:
         if loc and hasattr(loc, "contents_get"):

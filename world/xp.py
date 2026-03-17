@@ -97,8 +97,7 @@ def _stat_level(character, stat_key):
     stats = getattr(character.db, "stats", None) or {}
     val = stats.get(stat_key, 0)
     if isinstance(val, int):
-        if 0 <= val <= 150:
-            val = min(MAX_STAT_LEVEL, val * 2)  # legacy 0-150 scale -> 0-300
+        # Stored in DB is always 0-300; no legacy scale conversion (would double new writes).
         return max(0, min(MAX_STAT_LEVEL, val))
     lo, hi = letter_to_level_range(str(val).upper() if val else "U", MAX_STAT_LEVEL)
     return (lo + hi) // 2
@@ -129,8 +128,7 @@ def _stat_cap_level(character, stat_key):
     caps = getattr(character.db, "stat_caps", None) or {}
     val = caps.get(stat_key, MAX_STAT_LEVEL)
     if isinstance(val, int):
-        if 0 <= val <= 150:
-            val = val * 2
+        # Cap in DB is always 0-300; no legacy scale conversion.
         return max(0, min(MAX_STAT_LEVEL, val))
     lo, hi = letter_to_level_range(str(val).upper() if val else "A", MAX_STAT_LEVEL)
     return hi
