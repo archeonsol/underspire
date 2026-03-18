@@ -6,7 +6,7 @@ Mixins providing shared functionality for Matrix-related classes.
 NetworkedMixin - Provides Matrix connectivity for both objects and items
 """
 
-from world.utils import get_containing_room
+from world.utils import get_containing_room, room_has_network_coverage
 from .matrix_id import MatrixIdMixin
 
 
@@ -189,20 +189,13 @@ class NetworkedMixin(MatrixIdMixin):
             Router: The router this device connects through, or None if not connected
         """
         room = get_containing_room(self)
-        if not room:
+        if not room or not room_has_network_coverage(room):
             return None
 
-        # Get router dbref from room
-        router_dbref = getattr(room.db, 'network_router', None)
-        if not router_dbref:
-            return None
-
-        # Look up router by dbref
+        # Get router from room
+        router_dbref = room.db.network_router
         from typeclasses.matrix.objects import Router
-        try:
-            return Router.objects.get(pk=router_dbref)
-        except Router.DoesNotExist:
-            return None
+        return Router.objects.get(pk=router_dbref)
 
 
 

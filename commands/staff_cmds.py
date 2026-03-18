@@ -9,6 +9,8 @@ from commands.roleplay_cmds import CmdPending
 from evennia.commands.default.account import CmdCharCreate, CmdCharDelete
 from evennia.utils import logger
 from evennia.utils.evtable import EvTable
+from evennia.utils.evmore import EvMore
+from world.utils import get_containing_room
 
 
 class CmdStats(Command):
@@ -415,7 +417,7 @@ class CmdGoto(Command):
         target = caller.search(args, global_search=True)
         if not target:
             return
-        loc = getattr(target, "location", None)
+        loc = target.location
         if not loc:
             caller.msg("That character has no location.")
             return
@@ -430,6 +432,7 @@ class CmdGotoRoom(Command):
     Usage:
       @gotoroom #123
       @gotoroom Room Name
+      @gotoroom <object>  (teleports to containing room)
     """
 
     key = "@gotoroom"
@@ -437,39 +440,22 @@ class CmdGotoRoom(Command):
     help_category = "Staff"
 
     def func(self):
-        from evennia.objects.objects import DefaultRoom
-        from evennia.utils.search import search_object
-
         caller = self.caller
         args = (self.args or "").strip()
         if not args:
             caller.msg("Usage: @gotoroom <#dbref> or <exact room name>")
             return
 
-        targets = []
-
-        # Try dbref first (#N or plain integer)
-        raw = args.lstrip()
-        if raw.startswith("#"):
-            raw = raw[1:]
-        if raw.isdigit():
-            dbid = int(raw)
-            targets = search_object(dbid)
-        else:
-            # Exact key match on rooms
-            all_matches = search_object(args)
-            for obj in all_matches:
-                if isinstance(obj, DefaultRoom) and (obj.key or "").strip().lower() == args.strip().lower():
-                    targets.append(obj)
-
-        if not targets:
-            caller.msg(f"No room found for '{args}'. Use a #dbref or exact room name.")
-            return
-        if len(targets) > 1:
-            caller.msg(f"Multiple rooms matched '{args}'. Please use a #dbref.")
+        # Use caller.search which handles dbrefs, names, etc.
+        target = caller.search(args, global_search=True)
+        if not target:
             return
 
-        dest = targets[0]
+        # get_containing_room handles both rooms (returns self) and objects (walks up)
+        dest = get_containing_room(target)
+        if not dest:
+            caller.msg("Could not find containing room for that object.")
+            return
         caller.move_to(dest)
         caller.msg(f"|gYou teleport to room: {dest.get_display_name(caller)}|n")
 
@@ -638,28 +624,52 @@ class CmdBoot(Command):
 
 class CmdFind(Command):
     """
-    Find where a character is (room name and id). Builder+.
-    Usage: @find <character>
+    Find where an object or character is (room name and id). Builder+.
+    Shows all matches if multiple objects have similar names.
+    Usage: @find <search term>
     """
     key = "@find"
     locks = "cmd:perm(Builder)"
     help_category = "Staff"
 
     def func(self):
+        from evennia.utils.search import search_object
+
         caller = self.caller
         args = (self.args or "").strip()
         if not args:
-            caller.msg("Usage: @find <character>")
+            caller.msg("Usage: @find <search term>")
             return
-        target = caller.search(args, global_search=True)
-        if not target:
+
+        # Use search_object with exact=False for partial matching
+        matches = search_object(args, exact=False)
+
+        if not matches:
+            caller.msg(f"No objects found matching '{args}'.")
             return
-        loc = getattr(target, "location", None)
-        if not loc:
-            caller.msg("{} has no location.".format(target.name))
-            return
-        voided = " |r[VOIDED]|n" if getattr(target.db, "voided", False) else ""
-        caller.msg("|w{}|n is at: |w{}|n (#{}){}".format(target.name, loc.name or loc.key, getattr(loc, "id", "?"), voided))
+
+        # Build results for all matches
+        results = []
+        for obj in matches:
+            loc = get_containing_room(obj)
+            if not loc:
+                loc_text = "|rNo location|n"
+            else:
+                loc_text = f"|w{loc.name or loc.key}|n (#{getattr(loc, 'id', '?')})"
+
+            voided = " |r[VOIDED]|n" if getattr(getattr(obj, "db", None), "voided", False) else ""
+            obj_name = getattr(obj, "name", getattr(obj, "key", str(obj)))
+            obj_id = getattr(obj, "id", "?")
+
+            results.append(f"|w{obj_name}|n (#{obj_id}): {loc_text}{voided}")
+
+        # Use EvMore for pagination if more than 1 result
+        if len(results) == 1:
+            caller.msg(results[0])
+        else:
+            header = f"Found {len(results)} matches for '{args}':\n"
+            output = header + "\n".join(f"  {i}. {result}" for i, result in enumerate(results, 1))
+            EvMore(caller, output, always_page=True)
 
 
 class CmdAnnounce(Command):
