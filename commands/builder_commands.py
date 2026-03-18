@@ -655,6 +655,12 @@ class CmdMatrixLink(Command):
             caller.msg("You are nowhere.")
             return
 
+        # Prevent mlinking MatrixNodes
+        from typeclasses.matrix.rooms import MatrixNode
+        if isinstance(loc, MatrixNode):
+            caller.msg("|rCannot mlink MatrixNodes.|n Matrix nodes don't need access point IDs - they are destinations, not entry points.")
+            return
+
         # View current router
         if not args and not clear:
             current_dbref = getattr(loc.db, 'network_router', None)
@@ -665,6 +671,13 @@ class CmdMatrixLink(Command):
                     online = getattr(router.db, 'online', False)
                     status = "|g[ONLINE]|n" if online else "|r[OFFLINE]|n"
                     caller.msg(f"This room is linked to router: |w{router.key}|n (#{router.id}) {status}")
+
+                    # Show AP Matrix ID if available
+                    matrix_id = loc.get_matrix_id() if hasattr(loc, 'get_matrix_id') else None
+                    if matrix_id:
+                        caller.msg(f"Access Point ID: |m{matrix_id}|n")
+                    else:
+                        caller.msg("Access Point ID: |x(not yet assigned)|n")
                 except ObjectDB.DoesNotExist:
                     caller.msg(f"This room is linked to a router that no longer exists (#{current_dbref}).")
                     caller.msg("Use |wmlink/clear|n to remove the broken link.")
@@ -699,6 +712,13 @@ class CmdMatrixLink(Command):
 
         router = results[0]
         loc.db.network_router = router.pk  # Store dbref, not name
+
+        # Force Matrix ID assignment for this access point
+        matrix_id = loc.get_matrix_id() if hasattr(loc, 'get_matrix_id') else None
+
         online = getattr(router.db, 'online', False)
         status = "|g[ONLINE]|n" if online else "|r[OFFLINE]|n"
         caller.msg(f"Room linked to router |w{router.key}|n (#{router.id}) {status}. Networked devices here will use this router.")
+
+        if matrix_id:
+            caller.msg(f"Access Point ID assigned: |m{matrix_id}|n")

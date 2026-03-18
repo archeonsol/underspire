@@ -10,6 +10,7 @@ from evennia.objects.objects import DefaultRoom, DefaultExit
 from evennia.utils.utils import compress_whitespace, iter_to_str
 
 from .objects import ObjectParent
+from typeclasses.matrix.mixins.matrix_id import MatrixIdMixin
 
 
 # Substring that indicates the stock Evennia welcome desc (replace with our default)
@@ -67,7 +68,7 @@ def _is_bed(obj):
         return False
 
 
-class Room(ObjectParent, DefaultRoom):
+class Room(MatrixIdMixin, ObjectParent, DefaultRoom):
     """
     Rooms are like any Object, except their location is None
     (which is default). Look output: room name (colored), desc, "You see a X, a Y.",
@@ -76,6 +77,12 @@ class Room(ObjectParent, DefaultRoom):
 
     # In-character, non-descript default when room has no custom desc
     default_description = "A place. Nothing much to note."
+
+    def _should_have_matrix_id(self):
+        """
+        Rooms only need Matrix IDs when they're access points (mlinked to a router).
+        """
+        return self.db.network_router is not None
 
     def msg_contents(self, text=None, exclude=None, from_obj=None, mapping=None,
                      raise_funcparse_errors=False, **kwargs):

@@ -47,6 +47,18 @@ class MatrixIdMixin:
             pass
         return super().at_object_delete()
 
+    def _should_have_matrix_id(self):
+        """
+        Check if this object should have a Matrix ID.
+
+        Override in subclasses to control ID assignment criteria.
+        Base implementation allows all objects to have IDs.
+
+        Returns:
+            bool: True if object should have Matrix ID, False otherwise
+        """
+        return True
+
     def get_matrix_id(self):
         """
         Get this object's Matrix ID.
@@ -55,10 +67,14 @@ class MatrixIdMixin:
         Always checks registry as single source of truth.
 
         Returns:
-            str or None: The Matrix ID with prefix (e.g., "^3K7MQ5"), or None if object has no database ID
+            str or None: The Matrix ID with prefix (e.g., "^3K7MQ5"), or None if object shouldn't have one
         """
         # Don't assign IDs to objects without a database ID
         if not self.pk:
+            return None
+
+        # Check if this object should have a Matrix ID
+        if not self._should_have_matrix_id():
             return None
 
         # Check registry for existing ID
