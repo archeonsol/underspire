@@ -40,6 +40,7 @@ class MatrixAvatar(RoleplayMixin, FurnitureMixin, DefaultCharacter):
     Attributes:
         entry_device (DiveRig): The rig this avatar is connected through
         dead (bool): Whether this avatar has been killed
+        proxy_router (Router): Optional proxy tunnel router (persists across sessions)
     """
 
     def at_object_creation(self):
@@ -47,6 +48,7 @@ class MatrixAvatar(RoleplayMixin, FurnitureMixin, DefaultCharacter):
         super().at_object_creation()
         self.db.entry_device = None
         self.db.dead = False
+        self.db.proxy_router = None  # Persistent proxy tunnel location
 
     def get_controlling_character(self):
         """
@@ -76,6 +78,26 @@ class MatrixAvatar(RoleplayMixin, FurnitureMixin, DefaultCharacter):
         if char and hasattr(char, 'get_display_stat'):
             return char.get_display_stat(stat_name)
         return 0
+
+    def handle_proxy_disconnect(self):
+        """
+        Called when the proxy router goes offline.
+
+        Triggers emergency jackout with specific message about proxy tunnel collapse.
+        """
+        rig = self.db.entry_device
+        if not rig or not hasattr(rig, 'disconnect'):
+            return
+
+        char = self.get_controlling_character()
+        if not char:
+            return
+
+        # Clear the proxy since it's no longer valid
+        self.db.proxy_router = None
+
+        # Emergency jackout
+        rig.disconnect(char, severity=JACKOUT_EMERGENCY, reason="Proxy tunnel collapsed")
 
     def get_skill_level(self, skill_key):
         """Delegate to controlling character's skills."""

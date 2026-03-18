@@ -1,3 +1,4 @@
+
 # Programs
 
 Deckers need to 'craft' programs in advance and run on a 'potion-like' system of deploying them? Psionic folks can conjure programs at-will.
@@ -36,3 +37,5 @@ asdf.exe (program)
 - wedge.exe (I dunno. whatever to add yourself to the ACL)
 - dewedge.exe (remove acl)
 asdf.enc (encryption key?)
+cmd.exe (pull up op menu as acl 1-9 override, depending on skill of crafter)
+sudo.exe (pull up op menu as acl 10 override)

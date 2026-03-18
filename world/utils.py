@@ -90,3 +90,66 @@ def room_has_network_coverage(room):
         return getattr(router.db, 'online', False)
     except Router.DoesNotExist:
         return False
+
+
+def get_networked_devices(room):
+    """
+    Get all networked devices in a room (recursively searching contents).
+
+    Args:
+        room: The room object to search
+
+    Returns:
+        list: List of NetworkedMixin objects found in the room
+
+    Examples:
+        >>> devices = get_networked_devices(my_room)
+        >>> len(devices)
+        3
+    """
+    from typeclasses.matrix.mixins import NetworkedMixin
+
+    devices = []
+
+    def find_devices_recursive(container):
+        """Recursively search container and inventory for networked devices."""
+        for obj in container.contents:
+            if isinstance(obj, NetworkedMixin):
+                devices.append(obj)
+            # Also search this object's contents (inventory, containers, etc.)
+            if hasattr(obj, 'contents'):
+                find_devices_recursive(obj)
+
+    if room:
+        find_devices_recursive(room)
+
+    return devices
+
+
+def get_router_access_points(router):
+    """
+    Get all rooms (access points) linked to a specific router.
+
+    Args:
+        router: The Router object
+
+    Returns:
+        list: List of Room objects linked to this router
+
+    Examples:
+        >>> aps = get_router_access_points(my_router)
+        >>> len(aps)
+        5
+    """
+    from typeclasses.rooms import Room
+
+    if not router:
+        return []
+
+    linked_rooms = []
+    for room in Room.objects.all():
+        room_router_pk = getattr(room.db, 'network_router', None)
+        if room_router_pk == router.pk:
+            linked_rooms.append(room)
+
+    return linked_rooms

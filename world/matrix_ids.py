@@ -11,12 +11,11 @@ The registry is stored on a persistent global script for easy access.
 """
 
 import random
-import string
 from evennia import DefaultScript
 from evennia.utils import search
 
 
-# Base32 alphabet (excludes 0, 1, 8, 9 to avoid confusion with O, I, B, g)
+# Standard Base32 alphabet (avoids 0,1,8,9 confusion with O,I,B,g by design)
 BASE32_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
 ID_LENGTH = 6
 ID_PREFIX = "^"
@@ -41,12 +40,18 @@ def get_registry_script():
         script.db.id_to_dbref = {}  # {"3K7MQ5": 123, ...}
         script.db.dbref_to_id = {}  # {123: "3K7MQ5", ...}
     else:
+        if len(script) > 1:
+            from evennia.utils import logger
+            logger.log_warn(
+                f"Multiple matrix_id_registry scripts found ({len(script)})! "
+                "Using first one. This should not happen."
+            )
         script = script[0]
 
-    # Ensure attributes exist
-    if not hasattr(script.db, 'id_to_dbref'):
+    # Ensure attributes exist and are not None
+    if not script.db.id_to_dbref:
         script.db.id_to_dbref = {}
-    if not hasattr(script.db, 'dbref_to_id'):
+    if not script.db.dbref_to_id:
         script.db.dbref_to_id = {}
 
     return script

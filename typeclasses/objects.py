@@ -27,8 +27,8 @@ class ObjectParent:
         Override save to validate key before saving to database.
         This catches all renames including @name, buname, and direct key assignment.
         """
-        # Validate and fix key before saving (don't auto-save since we're already saving)
-        if hasattr(self, 'key'):
+        # Only validate on existing objects to avoid issues during creation
+        if self.pk and hasattr(self, 'key'):
             self._fix_reserved_key_prefix(auto_save=False)
 
         # Call parent save

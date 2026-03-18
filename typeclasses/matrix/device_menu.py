@@ -280,6 +280,7 @@ def start_device_menu(caller, device, from_matrix=False):
         "from_matrix": from_matrix
     }
 
+    from typeclasses.matrix.menu_formatters import get_matrix_formatters
     EvMenu(
         caller,
         "typeclasses.matrix.device_menu",
@@ -287,5 +288,6 @@ def start_device_menu(caller, device, from_matrix=False):
         startnode_input=("", menu_data),
         cmd_on_exit=None,
         persistent=False,
+        **get_matrix_formatters(),
         **menu_data
     )

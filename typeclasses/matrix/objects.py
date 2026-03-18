@@ -83,7 +83,6 @@ class Router(MatrixObject):
 
     Attributes:
         online (bool): Whether the router is currently operational
-        linked_rooms (list): List of room references using this router (for monitoring)
     """
 
     def at_object_creation(self):
@@ -92,7 +91,6 @@ class Router(MatrixObject):
 
         self.db.object_type = "router"
         self.db.online = True  # Default to online
-        self.db.linked_rooms = []  # Track which rooms use this router
         self.db.is_portable = False  # Routers can't be picked up
 
         # Lock it so it can't be picked up
@@ -101,8 +99,6 @@ class Router(MatrixObject):
     def set_online(self, online=True):
         """
         Set the router online or offline.
-
-        When a router goes offline, all devices using it lose connectivity.
 
         Args:
             online (bool): True to bring online, False to take offline
@@ -115,7 +111,6 @@ class Router(MatrixObject):
                 self.location.msg_contents(f"{self.key} comes online with a soft hum.")
             else:
                 self.location.msg_contents(f"{self.key} goes offline. Network connectivity lost.")
-                # TODO: Notify/disconnect any devices using this router
 
     def get_status(self):
         """

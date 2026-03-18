@@ -221,3 +221,11 @@ Following connection hops backward:
 - **Tools create depth**: Programs like Trace and Probe aren't default commands - you need the right tools
 - **Physical/virtual interplay**: Moving a device in meatspace affects Matrix navigation
 - **Security through obscurity works (somewhat)**: Devices aren't automatically visible - someone needs to scan for them
+
+
+as a decker there are up to three routers that you need to worry about:
+the one your rig is connected to,
+the one you are using as a proxy (if you have one, eventually this will be a skill-check so you need decking skill),
+the one that a device is connected to (if you are accessing the device),
+
+if you go to a router you will get an option to return back to your home router. if you are using a proxy you will wind up there and you can close the proxy then run it again.... (so if you put your proxy in a dumb place good luck. you gotta go back there to close it)
