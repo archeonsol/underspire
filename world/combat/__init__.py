@@ -19,6 +19,9 @@ from .utils import (  # noqa
     combat_display_name,
 )
 
+# Public data definitions (used by commands, etc)
+from .weapon_definitions import WEAPON_HANDS  # noqa: E402,F401
+
 # Backwards-compatible aliases for legacy imports that expect private helpers
 _get_combat_target = get_combat_target
 _set_combat_target = set_combat_target

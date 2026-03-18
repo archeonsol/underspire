@@ -150,14 +150,31 @@ def _resolve_creature_attack(creature, target):
             return True, 99
     except ImportError:
         pass
-    _, attack_value = creature.roll_check(["strength"], "unarmed", modifier=0)
     try:
+        from world.combat.rolls import DEFAULT_CFG, combat_rating, opposed_probability, quality_value
         from world.skills import DEFENSE_SKILL, SKILL_STATS
+        cfg = DEFAULT_CFG
+
+        # Creature attack rating: use its unarmed skill (creatures typically override get_skill_level).
+        atk_rating = combat_rating(creature, ["strength"], "unarmed", modifier=0, cfg=cfg)
+
         defense_stats = SKILL_STATS.get(DEFENSE_SKILL, ["agility", "perception"])
-        _, defense_value = target.roll_check(defense_stats, DEFENSE_SKILL, modifier=0)
-    except ImportError:
-        defense_value = 0
-    return (defense_value < attack_value, attack_value)
+        def_rating = combat_rating(target, defense_stats, DEFENSE_SKILL, modifier=0, cfg=cfg)
+
+        p_hit = opposed_probability(atk_rating, def_rating, cfg=cfg, bias=0.0)
+        hit = random.random() < p_hit
+        atk_value = quality_value(atk_rating, def_rating, cfg=cfg)
+        return hit, atk_value
+    except Exception:
+        # Legacy fallback
+        _, attack_value = creature.roll_check(["strength"], "unarmed", modifier=0)
+        try:
+            from world.skills import DEFENSE_SKILL, SKILL_STATS
+            defense_stats = SKILL_STATS.get(DEFENSE_SKILL, ["agility", "perception"])
+            _, defense_value = target.roll_check(defense_stats, DEFENSE_SKILL, modifier=0)
+        except ImportError:
+            defense_value = 0
+        return (defense_value < attack_value, attack_value)
 
 
 # Default miss message if move spec has no msg_miss

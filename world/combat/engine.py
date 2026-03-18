@@ -131,6 +131,10 @@ def _defender_parry_skill(defender):
     if not wielded or getattr(wielded, "location", None) != defender:
         return "unarmed"
     def_key = get_weapon_key(wielded)
+    # If you're holding a ranged weapon (pistol/rifle/etc), you can't effectively parry.
+    # Fall back to dodge-only reactions in this exchange.
+    if def_key and is_ranged_weapon(def_key):
+        return None
     if def_key and def_key in MELEE_WEAPON_KEYS:
         return WEAPON_KEY_TO_SKILL.get(def_key, "unarmed")
     return "unarmed"
@@ -140,24 +144,31 @@ def resolve_attack(attacker, defender, weapon_key="fists"):
     atk_stance = attacker.db.combat_stance or "balanced"
     def_stance = defender.db.combat_stance or "balanced"
 
-    atk_mod = 0
-    def_mod = 0
+    atk_stance_mod = 0
+    def_stance_mod = 0
     if atk_stance == "aggressive":
-        atk_mod = 20
+        atk_stance_mod = 10
     elif atk_stance == "defensive":
-        atk_mod = -25
+        atk_stance_mod = -12
     if def_stance == "aggressive":
-        def_mod = -20
+        def_stance_mod = -10
     elif def_stance == "defensive":
-        def_mod = 25
+        def_stance_mod = 12
+
+    atk_trauma_mod = 0
+    def_trauma_mod = 0
+    atk_mod = atk_stance_mod
+    def_mod = def_stance_mod
 
     try:
         from world.medical import get_trauma_combat_modifiers
 
         t_atk, t_def = get_trauma_combat_modifiers(attacker)
-        atk_mod += t_atk
+        atk_trauma_mod = int(t_atk or 0)
+        atk_mod += atk_trauma_mod
         t_def_atk, t_def_def = get_trauma_combat_modifiers(defender)
-        def_mod += t_def_def
+        def_trauma_mod = int(t_def_def or 0)
+        def_mod += def_trauma_mod
     except Exception as e:
         from evennia.utils import logger
 
@@ -165,49 +176,210 @@ def resolve_attack(attacker, defender, weapon_key="fists"):
 
     attack_skill = WEAPON_KEY_TO_SKILL.get(weapon_key, "unarmed")
     attack_stats = SKILL_STATS.get(attack_skill, ["strength", "agility"])
-    success_level, attack_value = attacker.roll_check(attack_stats, attack_skill, modifier=atk_mod)
+    try:
+        from world.combat.rolls import (
+            load_cfg,
+            combat_rating,
+            opposed_probability,
+            quality_value,
+            combat_debug_snapshot,
+        )
+    except Exception:
+        # Fallback: old behavior if rolls module can't be imported for any reason.
+        success_level, attack_value = attacker.roll_check(attack_stats, attack_skill, modifier=atk_mod)
+        if success_level == "Failure":
+            return "MISS", attack_value
+        defense_stats = SKILL_STATS.get(DEFENSE_SKILL, ["agility", "perception"])
+        _def_level, defense_value = defender.roll_check(defense_stats, DEFENSE_SKILL, modifier=def_mod)
 
-    if success_level == "Failure":
-        return "MISS", attack_value
+        parry_value = None
+        if weapon_key in MELEE_WEAPON_KEYS:
+            parry_skill = _defender_parry_skill(defender)
+            if parry_skill:
+                parry_stats = SKILL_STATS.get(parry_skill, ["agility", "strength"])
+                _parry_level, parry_value = defender.roll_check(
+                    parry_stats,
+                    parry_skill,
+                    modifier=def_mod - PARRY_PENALTY,
+                )
+
+        # Single defense resolution: pick the stronger defense and apply it once.
+        # (Avoids stacking "parry then dodge" into two separate negation chances.)
+        if parry_value is not None and parry_value >= defense_value:
+            if parry_value > attack_value:
+                return "PARRIED", attack_value
+        else:
+            if defense_value >= attack_value:
+                return "DODGED", attack_value
+        if success_level == "Critical Success":
+            norm = (max(ROLL_MIN, min(ROLL_MAX, attack_value)) - ROLL_MIN) / (ROLL_MAX - ROLL_MIN)
+            crit_chance = 0.04 + 0.11 * norm
+            if random.random() < crit_chance:
+                return "CRITICAL", attack_value
+        return "HIT", attack_value
+
+    cfg = load_cfg()
+
+    atk_rating = combat_rating(attacker, attack_stats, attack_skill, modifier=atk_mod, cfg=cfg)
+
+    # --- Reaction resolution (System 2: logistic opposed checks) ---
+    defense_stats = SKILL_STATS.get(DEFENSE_SKILL, ["agility", "perception"])
+    dodge_rating = combat_rating(defender, defense_stats, DEFENSE_SKILL, modifier=def_mod, cfg=cfg)
+
+    # Single defense resolution: compute both (if applicable), pick the better rating, roll once.
+    best_kind = "dodge"
+    best_rating = dodge_rating
+    best_bias = -cfg.dodge_bias
 
     if weapon_key in MELEE_WEAPON_KEYS:
         parry_skill = _defender_parry_skill(defender)
-        parry_stats = SKILL_STATS.get(parry_skill, ["agility", "strength"])
-        _parry_level, parry_value = defender.roll_check(
-            parry_stats,
-            parry_skill,
-            modifier=def_mod - PARRY_PENALTY,
+        if parry_skill:
+            parry_stats = SKILL_STATS.get(parry_skill, ["agility", "strength"])
+            parry_rating = combat_rating(
+                defender, parry_stats, parry_skill, modifier=(def_mod - PARRY_PENALTY), cfg=cfg
+            )
+            if parry_rating >= best_rating:
+                best_kind = "parry"
+                best_rating = parry_rating
+                best_bias = -cfg.parry_bias
+
+    p_defend = 1.0 - opposed_probability(atk_rating, best_rating, cfg=cfg, bias=best_bias)
+    if random.random() < p_defend:
+        atk_quality = quality_value(atk_rating, best_rating, cfg=cfg)
+        outcome = "PARRIED" if best_kind == "parry" else "DODGED"
+        _maybe_emit_combat_debug(
+            attacker,
+            defender,
+            combat_debug_snapshot(
+                cfg=cfg,
+                attack_skill=attack_skill,
+                defense_skill=DEFENSE_SKILL,
+                atk_mod=atk_mod,
+                def_mod=def_mod,
+                atk_stance_mod=atk_stance_mod,
+                atk_trauma_mod=atk_trauma_mod,
+                def_stance_mod=def_stance_mod,
+                def_trauma_mod=def_trauma_mod,
+                attacker_rating=atk_rating,
+                dodge_rating=dodge_rating,
+                parry_skill=parry_skill if weapon_key in MELEE_WEAPON_KEYS else None,
+                parry_rating=parry_rating if (weapon_key in MELEE_WEAPON_KEYS and parry_skill) else None,
+                best_kind=best_kind,
+                best_rating=best_rating,
+                p_defend=p_defend,
+                outcome=outcome,
+                quality=atk_quality,
+            ),
         )
-        if parry_value > attack_value:
-            return "PARRIED", attack_value
+        return outcome, atk_quality, atk_rating
 
-    defense_stats = SKILL_STATS.get(DEFENSE_SKILL, ["agility", "perception"])
-    def_level, defense_value = defender.roll_check(defense_stats, DEFENSE_SKILL, modifier=def_mod)
+    # Hit: quality is relative to the best available defense in this exchange.
+    atk_quality = quality_value(atk_rating, best_rating, cfg=cfg)
+    # Crit chance scales with quality (1..100) to preserve downstream intent.
+    norm = (max(ROLL_MIN, min(ROLL_MAX, atk_quality)) - ROLL_MIN) / (ROLL_MAX - ROLL_MIN)
+    crit_chance = 0.04 + 0.11 * norm
+    if random.random() < crit_chance and atk_quality >= 80:
+        outcome = "CRITICAL"
+    else:
+        outcome = "HIT"
+    _maybe_emit_combat_debug(
+        attacker,
+        defender,
+        combat_debug_snapshot(
+            cfg=cfg,
+            attack_skill=attack_skill,
+            defense_skill=DEFENSE_SKILL,
+            atk_mod=atk_mod,
+            def_mod=def_mod,
+            atk_stance_mod=atk_stance_mod,
+            atk_trauma_mod=atk_trauma_mod,
+            def_stance_mod=def_stance_mod,
+            def_trauma_mod=def_trauma_mod,
+            attacker_rating=atk_rating,
+            dodge_rating=dodge_rating,
+            parry_skill=parry_skill if weapon_key in MELEE_WEAPON_KEYS else None,
+            parry_rating=parry_rating if (weapon_key in MELEE_WEAPON_KEYS and parry_skill) else None,
+            best_kind=best_kind,
+            best_rating=best_rating,
+            p_defend=p_defend,
+            outcome=outcome,
+            quality=atk_quality,
+            crit_chance=crit_chance,
+        ),
+    )
+    return outcome, atk_quality, atk_rating
 
-    if defense_value >= attack_value:
-        return "DODGED", attack_value
 
-    if success_level == "Critical Success":
-        norm = (max(ROLL_MIN, min(ROLL_MAX, attack_value)) - ROLL_MIN) / (ROLL_MAX - ROLL_MIN)
-        crit_chance = 0.04 + 0.11 * norm
-        if random.random() < crit_chance:
-            return "CRITICAL", attack_value
+def _maybe_emit_combat_debug(attacker, defender, line: str):
+    """
+    If enabled, emit a debug line to staff in the room (and attacker/defender if they are staff).
+    """
+    try:
+        from django.conf import settings  # type: ignore
 
-    return "HIT", attack_value
+        if not getattr(settings, "COMBAT_DEBUG_ROLLS", False):
+            return
+    except Exception:
+        return
+
+    loc = getattr(attacker, "location", None) or getattr(defender, "location", None)
+    if not loc or not hasattr(loc, "contents_get"):
+        return
+
+    def _is_staff(obj) -> bool:
+        if not obj:
+            return False
+        # Evennia: check_permstring is the common interface.
+        if hasattr(obj, "check_permstring"):
+            try:
+                return bool(obj.check_permstring("Builder"))
+            except Exception:
+                pass
+        # Fallback: explicit tag/attr for custom setups.
+        return bool(getattr(getattr(obj, "db", None), "combat_debug", False))
+
+    for viewer in loc.contents_get(content_type="character"):
+        if _is_staff(viewer):
+            try:
+                viewer.msg(f"|w[combat-debug]|n {line}")
+            except Exception:
+                pass
 
 
-def _check_body_shield(defender, attack_value):
+def _check_body_shield(defender, attack_value, attacker_rating=None):
     BODY_SHIELD_PENALTY = 15
     effective_defender = defender
     hit_shield = False
     shield = getattr(defender.db, "grappling", None)
     if shield and getattr(shield, "db", None) and getattr(shield, "at_damage", None):
         try:
-            def_roll = defender.roll_check(["agility", "perception"], "evasion", modifier=0)
-            shield_value = def_roll[1] if isinstance(def_roll, (tuple, list)) else 0
-            if shield_value >= attack_value + BODY_SHIELD_PENALTY:
-                hit_shield = True
-                effective_defender = shield
+            # System 2 body-shield: if the defender can "catch" the attack with the shield-body,
+            # redirect damage. We treat this as a (slightly penalized) evasion-style reaction.
+            try:
+                from world.combat.rolls import (
+                    load_cfg,
+                    combat_rating,
+                    opposed_probability,
+                )
+                from world.skills import SKILL_STATS, DEFENSE_SKILL
+                cfg = load_cfg()
+                # If attacker_rating wasn't provided, fall back to an estimate from quality.
+                attacker_pressure = float(attacker_rating) if attacker_rating is not None else float(attack_value) * 5.0
+
+                defense_stats = SKILL_STATS.get(DEFENSE_SKILL, ["agility", "perception"])
+                shield_rating = combat_rating(defender, defense_stats, DEFENSE_SKILL, modifier=-BODY_SHIELD_PENALTY, cfg=cfg)
+                # If defender would "win" against the incoming pressure, the shield catches the hit.
+                p_catch = 1.0 - opposed_probability(attacker_pressure, shield_rating, cfg=cfg, bias=cfg.body_shield_bias)
+                if random.random() < p_catch:
+                    hit_shield = True
+                    effective_defender = shield
+            except Exception:
+                # Legacy fallback: old numeric compare against the defender's roll_check
+                def_roll = defender.roll_check(["agility", "perception"], "evasion", modifier=0)
+                shield_value = def_roll[1] if isinstance(def_roll, (tuple, list)) else 0
+                if shield_value >= attack_value + BODY_SHIELD_PENALTY:
+                    hit_shield = True
+                    effective_defender = shield
         except Exception as e:
             from evennia import logger
 
@@ -320,7 +492,7 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
             f"{combat_display_name(defender, attacker)} is too exhausted to defend. You land a solid blow."
         )
         defender.msg("You're too exhausted to defend yourself. The blow lands.")
-        result, attack_value = "HIT", 10
+        result, attack_value, attacker_rating = "HIT", 10, None
         loc = getattr(attacker, "location", None) or getattr(defender, "location", None)
         if loc and hasattr(loc, "contents_get"):
             for viewer in loc.contents_get(content_type="character"):
@@ -331,7 +503,12 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
                 viewer.msg(f"{def_v} looks too exhausted to defend as {atk_v}'s blow lands.")
     else:
         spend_stamina(defender, STAMINA_COST_DEFEND)
-        result, attack_value = resolve_attack(attacker, defender, weapon_key)
+        resolved = resolve_attack(attacker, defender, weapon_key)
+        attacker_rating = None
+        if isinstance(resolved, (tuple, list)) and len(resolved) >= 3:
+            result, attack_value, attacker_rating = resolved[0], resolved[1], resolved[2]
+        else:
+            result, attack_value = resolved
 
     move_name = attack_move["name"]
     if result == "MISS":
@@ -393,7 +570,7 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
         if (defender.db.current_hp or 0) <= 0:
             _remove_both_combat_tickers(attacker, defender)
             return
-        effective_defender, hit_shield = _check_body_shield(defender, attack_value)
+        effective_defender, hit_shield = _check_body_shield(defender, attack_value, attacker_rating=attacker_rating)
         body_part, multiplier = _body_part_and_multiplier(attack_value)
         base = attack_move["damage"]
         if result == "CRITICAL":
