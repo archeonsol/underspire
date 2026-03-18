@@ -46,11 +46,11 @@ def get_weapon_key(obj):
 
 
 def get_damage_type_for_weapon(weapon_obj):
-    """Return damage type for this weapon; use db.damage_type if set, else from weapon_key via world.damage_types."""
+    """Return damage type for this weapon; use db.damage_type if set, else from weapon_key via world.combat.damage_types."""
     if weapon_obj is None:
         return "impact"
     try:
-        from world.damage_types import get_damage_type
+        from world.combat.damage_types import get_damage_type
         return get_damage_type(get_weapon_key(weapon_obj), weapon_obj)
     except Exception:
         return "impact"
@@ -82,7 +82,7 @@ class CombatWeapon(DefaultObject):
 
     def _apply_weapon_template_defaults(self):
         """
-        Populate this object's damage_type, weapon_tier, and desc from world.weapon_tiers
+        Populate this object's damage_type, weapon_tier, and desc from world.combat.weapon_tiers
         based on db.weapon_key and db.weapon_template (or key as a fallback).
         This makes spawning e.g. 'Scrap Knife' immediately use the Scrap Knife template.
         """
@@ -91,7 +91,7 @@ class CombatWeapon(DefaultObject):
         if not weapon_key or not template_name:
             return
         try:
-            from world.weapon_tiers import find_weapon_template
+            from world.combat.weapon_tiers import find_weapon_template
         except Exception:
             return
         entry, tier = find_weapon_template(weapon_key, template_name)

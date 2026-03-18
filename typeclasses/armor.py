@@ -6,7 +6,7 @@ Uses world.armor_levels for full damage type list (physical + fire, radiation).
 """
 from typeclasses.clothing import Clothing
 from world.medical import BODY_PARTS
-from world.damage_types import DAMAGE_TYPES
+from world.combat.damage_types import DAMAGE_TYPES
 
 try:
     from world.armor_levels import ALL_ARMOR_DAMAGE_TYPES

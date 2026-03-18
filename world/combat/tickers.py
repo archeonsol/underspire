@@ -7,7 +7,7 @@ from evennia.utils import delay
 
 from .utils import get_object_by_id, get_combat_target, set_combat_target, combat_display_name
 from .engine import execute_combat_turn
-from world.weapon_definitions import COMBAT_READY_ATTACKER_MSG
+from world.combat.weapon_definitions import COMBAT_READY_ATTACKER_MSG
 
 COMBAT_INTERVAL = 5
 COMBAT_STAGGER = COMBAT_INTERVAL / 2.0

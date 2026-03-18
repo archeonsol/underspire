@@ -247,16 +247,16 @@ INJURY_SEVERITY_PLURAL = {
     "trauma": {1: "abrasions", 2: "areas of bruising", 3: "heavy impact trauma", 4: "areas of severe trauma"},
     "arcane": {1: "minor arcane burns", 2: "arcane wounds", 3: "severe arcane wounds", 4: "critical arcane wounds"},
 }
-# Injury type resolved via world.damage_types.get_damage_type -> DAMAGE_TYPE_TO_INJURY_TYPE
+# Injury type resolved via world.combat.damage_types.get_damage_type -> DAMAGE_TYPE_TO_INJURY_TYPE
 def _injury_type_for_weapon(weapon_key, weapon_obj=None):
-    from world.damage_types import get_damage_type, DAMAGE_TYPE_TO_INJURY_TYPE
+    from world.combat.damage_types import get_damage_type, DAMAGE_TYPE_TO_INJURY_TYPE
     return DAMAGE_TYPE_TO_INJURY_TYPE.get(get_damage_type(weapon_key, weapon_obj), "trauma")
 
 
 def _pronoun_sub_poss(character):
     """Return (Sub, poss) for third-person: He/his, She/her, They/their."""
     key = (getattr(character.db, "pronoun", None) or "neutral").lower()
-    from world.emote import PRONOUN_MAP
+    from world.rpg.emote import PRONOUN_MAP
     sub, poss, _ = PRONOUN_MAP.get(key, PRONOUN_MAP["neutral"])
     return (sub or "They").capitalize(), (poss or "their")
 
@@ -264,7 +264,7 @@ def _pronoun_sub_poss(character):
 def _pronoun_verb_has_have(character):
     """Return 'have' for they/neutral, 'has' for he/she (subject-verb agreement)."""
     key = (getattr(character.db, "pronoun", None) or "neutral").lower()
-    from world.emote import PRONOUN_MAP
+    from world.rpg.emote import PRONOUN_MAP
     sub, _, _ = PRONOUN_MAP.get(key, PRONOUN_MAP["neutral"])
     return "have" if (sub or "they").lower() == "they" else "has"
 
@@ -445,7 +445,7 @@ def apply_trauma(character, body_part, damage, is_critical=False, weapon_key="fi
     Base rates kept low so trauma feels serious. Re-hit same area increases severity.
     Returns dict: { "organ": ..., "fracture": ..., "bleeding": ... } for combat messaging.
     """
-    from world.damage_types import get_damage_type, get_trauma_multipliers
+    from world.combat.damage_types import get_damage_type, get_trauma_multipliers
     _ensure_medical_db(character)
     damage_type = get_damage_type(weapon_key, weapon_obj)
     bleed_mult, fracture_mult, organ_mult = get_trauma_multipliers(damage_type, body_part or "torso")
@@ -517,7 +517,7 @@ def get_brutal_hit_flavor(weapon_key, body_part, trauma_result, defender_name, a
     Short trauma lines with hit location. One phrase per type.
     Uses damage type (slashing/impact/penetrating/burn/freeze/arc/void) for flavor. Returns (attacker_msg, defender_msg).
     """
-    from world.damage_types import get_damage_type
+    from world.combat.damage_types import get_damage_type
     if not trauma_result:
         return "", ""
     damage_type = get_damage_type(weapon_key, weapon_obj)
@@ -920,7 +920,7 @@ def get_ht_summary(character, first_person=True):
     One-line health summary for the ht command: condition, rested, recovering.
     first_person: True = "You are ..."; False = use character's pronouns (He/She/They is ...).
     """
-    from world.emote import PRONOUN_MAP
+    from world.rpg.emote import PRONOUN_MAP
     from world.death import is_flatlined, is_permanently_dead
 
     mx_hp = getattr(character, "max_hp", 100) or 100
@@ -978,7 +978,7 @@ def get_ht_summary(character, first_person=True):
 
     # Recovering: stamina recovery condition (only for self); base moderately, combat/injury/bleeding down, sitting/lying up
     try:
-        from world.stamina import get_stamina_recovery_label
+        from world.rpg.stamina import get_stamina_recovery_label
         recovering = get_stamina_recovery_label(character)
     except Exception:
         recovering = "recovering moderately"

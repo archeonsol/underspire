@@ -5,9 +5,9 @@ import random
 from world.medical import BODY_PARTS, apply_trauma, get_brutal_hit_flavor
 from world.skills import SKILL_STATS, WEAPON_KEY_TO_SKILL, DEFENSE_SKILL
 from world.ammo import is_ranged_weapon
-from world.weapon_definitions import WEAPON_DATA
-from world.combat_messages import hit_message
-from world.damage_types import get_damage_type
+from world.combat.weapon_definitions import WEAPON_DATA
+from world.combat_messages import hit_message, get_result_messages
+from world.combat.damage_types import get_damage_type
 from world.armor import (
     get_armor_protection_for_location,
     compute_armor_reduction,
@@ -15,7 +15,7 @@ from world.armor import (
 )
 
 try:
-    from world.stamina import (
+    from world.rpg.stamina import (
         is_exhausted,
         spend_stamina,
         can_fight,
@@ -58,7 +58,7 @@ def _allowed_attack_indices(skill_level):
 
 def _weapon_attack_table(weapon_key, weapon_obj, skill_level):
     try:
-        from world.weapon_tiers import get_weapon_tier, find_weapon_template
+        from world.combat.weapon_tiers import get_weapon_tier, find_weapon_template
     except Exception:
         return WEAPON_DATA.get(weapon_key, WEAPON_DATA["fists"])
 
@@ -337,78 +337,58 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
     if result == "MISS":
         def_name = combat_display_name(defender, attacker)
         atk_name = combat_display_name(attacker, defender)
-        if weapon_key == "knife":
-            attacker.msg(f"You lunge. |r{def_name}|n is gone. The blade cuts air. You're open.")
-            defender.msg(f"{atk_name} thrusts. You're already moving. The knife misses. They |rmiss.|n")
-        elif weapon_key == "long_blade":
-            attacker.msg(f"You swing. |r{def_name}|n steps clear. Your edge finds nothing. You're exposed.")
-            defender.msg(f"The blade comes. You're not there. It passes. {atk_name} |rmiss.|n")
-        elif weapon_key == "blunt":
-            attacker.msg(f"You swing. |r{def_name}|n reads it and moves. Your weapon hits empty. You're open.")
-            defender.msg(f"{atk_name} winds up. You're gone before it lands. They |rmiss.|n")
-        elif weapon_key in ("sidearm", "longarm", "automatic"):
-            attacker.msg(f"You fire. |r{def_name}|n isn't there. The round goes wide. Miss.")
-            defender.msg(f"The shot cracks past. You moved. They |rmiss.|n")
-        else:
-            attacker.msg(f"Your punch finds air. |r{def_name}|n slipped it. You're off balance.")
-            defender.msg(f"{atk_name} throws. You move. They |rmiss.|n")
+        templates = get_result_messages("MISS", weapon_key, wielded_obj, move_name=move_name)
+        atk_line = templates.get("attacker") or "You attack {defender} but |rmiss.|n"
+        def_line = templates.get("defender") or "{attacker} attacks, but you slip the blow. |rMiss.|n"
+        attacker.msg(atk_line.format(attacker=atk_name, defender=def_name))
+        defender.msg(def_line.format(attacker=atk_name, defender=def_name))
         loc = getattr(attacker, "location", None) or getattr(defender, "location", None)
         if loc and hasattr(loc, "contents_get"):
+            room_tpl = templates.get("room") or "{attacker} attacks {defender} but |rmisses.|n"
             for viewer in loc.contents_get(content_type="character"):
                 if viewer in (attacker, defender):
                     continue
                 atk_v = combat_display_name(attacker, viewer)
                 def_v = combat_display_name(defender, viewer)
-                viewer.msg(f"{atk_v} attacks {def_v} but |rmisses.|n")
+                viewer.msg(room_tpl.format(attacker=atk_v, defender=def_v))
     elif result == "PARRIED":
         def_name = combat_display_name(defender, attacker)
         atk_name = combat_display_name(attacker, defender)
-        if weapon_key == "knife":
-            attacker.msg(f"You thrust. |c{def_name}|n meets it. Steel on steel. Your blade is turned. |cParried.|n")
-            defender.msg(f"The knife comes in. You block. The blade goes wide. |cParried.|n")
-        elif weapon_key == "long_blade":
-            attacker.msg(f"Your blade comes down. |c{def_name}|n catches it. Impact. They shove it aside. |cParried.|n")
-            defender.msg(f"The edge falls. You meet it. You turn the blow. |cParried.|n")
-        elif weapon_key == "blunt":
-            attacker.msg(f"You swing. |c{def_name}|n blocks. Your strike slides off. |cParried.|n")
-            defender.msg(f"{atk_name} swings. You block. The blow goes wide. |cParried.|n")
-        else:
-            attacker.msg(f"Your punch goes in. |c{def_name}|n blocks. No contact. |cParried.|n")
-            defender.msg(f"{atk_name} throws. Your guard is up. The punch is turned. |cParried.|n")
+        templates = get_result_messages("PARRIED", weapon_key, wielded_obj, move_name=move_name)
+        atk_line = templates.get("attacker") or "Your strike is |cturned aside|n by {defender}'s guard."
+        def_line = templates.get("defender") or "You meet {attacker}'s strike and |cturn it aside.|n"
+        attacker.msg(atk_line.format(attacker=atk_name, defender=def_name))
+        defender.msg(def_line.format(attacker=atk_name, defender=def_name))
         loc = getattr(attacker, "location", None) or getattr(defender, "location", None)
         if loc and hasattr(loc, "contents_get"):
+            room_tpl = templates.get("room") or (
+                "{attacker} attacks {defender}, but {defender} |cparries the blow.|n"
+            )
             for viewer in loc.contents_get(content_type="character"):
                 if viewer in (attacker, defender):
                     continue
                 atk_v = combat_display_name(attacker, viewer)
                 def_v = combat_display_name(defender, viewer)
-                viewer.msg(f"{atk_v} attacks {def_v}, but {def_v} |cparries the blow.|n")
+                viewer.msg(room_tpl.format(attacker=atk_v, defender=def_v))
     elif result == "DODGED":
         def_name = combat_display_name(defender, attacker)
         atk_name = combat_display_name(attacker, defender)
-        if weapon_key == "knife":
-            attacker.msg(f"You go for the gut. |y{def_name} rolls.|n The blade misses. You're exposed.")
-            defender.msg(f"You see the lunge. You |yroll.|n The knife passes. You're still up.")
-        elif weapon_key == "long_blade":
-            attacker.msg(f"Downstroke. |y{def_name} slips it.|n Your edge hits nothing. You're open.")
-            defender.msg(f"The blade drops. You |yroll clear.|n It misses. You're still standing.")
-        elif weapon_key == "blunt":
-            attacker.msg(f"You put your weight into it. |y{def_name} is gone.|n The blow finds air. You're exposed.")
-            defender.msg(f"You see it coming. You |yroll.|n The weapon misses. That would have broken you.")
-        elif weapon_key in ("sidearm", "longarm", "automatic"):
-            attacker.msg(f"You squeeze. |y{def_name} is already moving.|n The round goes where they were. Miss.")
-            defender.msg(f"Muzzle flash. You |ydive.|n The shot goes past. You're still breathing.")
-        else:
-            attacker.msg(f"You commit. |y{def_name} slips the punch.|n You're open.")
-            defender.msg(f"The punch comes. You |yroll.|n {atk_name}'s fist misses.")
+        templates = get_result_messages("DODGED", weapon_key, wielded_obj, move_name=move_name)
+        atk_line = templates.get("attacker") or "You swing for {defender}, but they're already moving. |yDodge.|n"
+        def_line = templates.get("defender") or "You move as {attacker} strikes, and the blow |ymisses.|n"
+        attacker.msg(atk_line.format(attacker=atk_name, defender=def_name))
+        defender.msg(def_line.format(attacker=atk_name, defender=def_name))
         loc = getattr(attacker, "location", None) or getattr(defender, "location", None)
         if loc and hasattr(loc, "contents_get"):
+            room_tpl = templates.get("room") or (
+                "{attacker} attacks {defender}, but {defender} |ydodges aside.|n"
+            )
             for viewer in loc.contents_get(content_type="character"):
                 if viewer in (attacker, defender):
                     continue
                 atk_v = combat_display_name(attacker, viewer)
                 def_v = combat_display_name(defender, viewer)
-                viewer.msg(f"{atk_v} attacks {def_v}, but {def_v} |ydodges aside.|n")
+                viewer.msg(room_tpl.format(attacker=atk_v, defender=def_v))
     elif result in ("HIT", "CRITICAL"):
         if (defender.db.current_hp or 0) <= 0:
             _remove_both_combat_tickers(attacker, defender)
@@ -503,6 +483,8 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
                     eff_for_atk,
                     atk_for_eff,
                     is_critical,
+                    weapon_obj=wielded_obj,
+                    move_name=move_name,
                 )
                 eff_self = combat_display_name(effective_defender, effective_defender)
                 flavor_atk, flavor_shield = get_brutal_hit_flavor(
@@ -536,6 +518,8 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
                     def_for_atk,
                     atk_for_def,
                     is_critical,
+                    weapon_obj=wielded_obj,
+                    move_name=move_name,
                 )
                 flavor_atk, flavor_def = get_brutal_hit_flavor(
                     weapon_key,

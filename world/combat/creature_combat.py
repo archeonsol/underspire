@@ -145,7 +145,7 @@ def _resolve_creature_attack(creature, target):
     Returns (hit: bool, attack_value: int).
     """
     try:
-        from world.stamina import is_exhausted
+        from world.rpg.stamina import is_exhausted
         if is_exhausted(target):
             return True, 99
     except ImportError:
@@ -229,7 +229,7 @@ def execute_creature_move(creature, target, move_key, move_spec=None):
 
     # Armor: same reduction as regular combat
     try:
-        from world.damage_types import get_damage_type
+        from world.combat.damage_types import get_damage_type
         from world.armor import (
             get_armor_protection_for_location,
             compute_armor_reduction,

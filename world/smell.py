@@ -17,7 +17,7 @@ Rooms can define:
 from typing import Optional
 import time
 
-from world.xp import _stat_display_level
+from world.rpg.xp import _stat_display_level
 from evennia.scripts.scripts import DefaultScript
 
 
@@ -51,7 +51,7 @@ def get_effective_charisma_display(character) -> int:
     """
     Return effective Charisma display including temporary modifiers (buffs).
 
-    Base: world.xp._stat_display_level(character, "charisma") -> 0–150
+    Base: world.rpg.xp._stat_display_level(character, "charisma") -> 0–150
     Buffs:
       - Routed through the character's BuffHandler (character.buffs) using the
         'charisma_display' stat identifier. See world.buffs.PerfumeBuff,

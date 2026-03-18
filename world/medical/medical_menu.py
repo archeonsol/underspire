@@ -3,7 +3,7 @@ Medical treatment menu: GUI for scanning and treating trauma.
 EvMenu flow: target -> main panel (vitals, trauma, actions) -> perform action -> result -> back to main.
 """
 from world.medical import _ensure_medical_db, get_medical_detail, get_medical_summary, BLEEDING_LEVELS
-from world.medical_treatment import get_treatment_options, TOOL_SCANNER
+from world.medical.medical_treatment import get_treatment_options, TOOL_SCANNER
 from typeclasses.medical_tools import get_medical_tools_from_inventory, MedicalTool, Bioscanner
 
 
@@ -183,9 +183,9 @@ def node_medical_exit(caller, raw_string, **kwargs):
 def start_medical_menu(caller, target):
     """Start the medical EvMenu for the given target."""
     from evennia.utils.evmenu import EvMenu
-    EvMenu(
+        EvMenu(
         caller,
-        "world.medical_menu",
+        "world.medical.medical_menu",
         startnode="node_medical_main",
         target=target,
         persistent=False,

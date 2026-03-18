@@ -273,10 +273,10 @@ RARITY_ORDER = ["grey", "green", "blue", "purple", "yellow"]
 
 # Chance (0.0-1.0) that a successful scavenge roll produces a T1 weapon or T1 armor instead of generic loot.
 # When this triggers, we try weapon 50% / armor 50%. Only tier-1 (scavenger) weapons/armor from
-# world.weapon_tiers and world.armor_levels.
+# world.combat.weapon_tiers and world.armor_levels.
 SCAVENGE_WEAPON_ARMOR_CHANCE = 0.08
 
-# weapon_key -> typeclass path for spawning T1 weapons (from world.weapon_tiers tier 1).
+# weapon_key -> typeclass path for spawning T1 weapons (from world.combat.weapon_tiers tier 1).
 WEAPON_KEY_TYPECLASS = {
     "knife": "typeclasses.weapons.ShortBladeWeapon",
     "blunt": "typeclasses.weapons.BluntWeapon",
@@ -368,11 +368,11 @@ def _determine_rarity(env, final_roll):
 
 def _pick_t1_weapon():
     """
-    Return (typeclass_path, template_name) for a random T1 weapon from world.weapon_tiers, or (None, None).
+    Return (typeclass_path, template_name) for a random T1 weapon from world.combat.weapon_tiers, or (None, None).
     Only tier-1 (scavenger) weapons; no fists.
     """
     try:
-        from world.weapon_tiers import WEAPON_TIERS, get_weapon_tier
+        from world.combat.weapon_tiers import WEAPON_TIERS, get_weapon_tier
     except ImportError:
         return None, None
     candidates = []

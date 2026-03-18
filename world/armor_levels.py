@@ -53,7 +53,7 @@ STACKING SCORE
   L6 pieces: 9–14 (inquisitorate; few pieces cover everything)
 """
 
-from world.damage_types import DAMAGE_TYPES, ARMOR_EXTRA_DAMAGE_TYPES
+from world.combat.damage_types import DAMAGE_TYPES, ARMOR_EXTRA_DAMAGE_TYPES
 
 ALL_ARMOR_DAMAGE_TYPES = DAMAGE_TYPES + ARMOR_EXTRA_DAMAGE_TYPES
 

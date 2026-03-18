@@ -73,7 +73,7 @@ class CmdStats(Command):
                 logger.log_trace("staff_cmds.CmdStats fragmented_at format: %s" % e)
 
         from world.levels import get_stat_grade, get_skill_grade
-        from world.xp import _stat_level, _skill_level
+        from world.rpg.xp import _stat_level, _skill_level
         # Original tall structure; grades from exact thresholds (stats: stored level, skills: level)
         w = 50
         edge = "|x├" + "─" * (w - 2) + "┤|n"
@@ -1853,7 +1853,7 @@ class CmdGiveXp(Command):
 
     def func(self):
         caller = self.caller
-        from world.xp import XP_CAP
+        from world.rpg.xp import XP_CAP
 
         if not self.args:
             caller.msg("Usage: givexp <amount> [= target]")

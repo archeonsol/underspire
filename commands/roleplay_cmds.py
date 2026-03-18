@@ -27,7 +27,7 @@ def _body_parts_usage_list():
 def _run_emote(caller, text, improvise=False):
     """Shared emote logic for CmdEmote and CmdNoMatch. If improvise=True (or caller.ndb.performance_improvising), messages are wrapped in bright white and an audience reaction is echoed."""
     improvise = improvise or bool(getattr(getattr(caller, "ndb", None), "performance_improvising", False))
-    from world.emote import (
+    from world.rpg.emote import (
         first_to_third,
         first_to_second,
         split_emote_segments,
@@ -127,7 +127,7 @@ def _run_emote(caller, text, improvise=False):
                 msg = f"|cYou|n {body}" if body else "|cYou|n"
             # Slur for drunk callers (level 2+).
             try:
-                from world.survival import slur_text_if_drunk
+                from world.rpg.survival import slur_text_if_drunk
                 msg = slur_text_if_drunk(caller, msg)
             except Exception as e:
                 logger.log_trace("roleplay_cmds._run_emote slur (you): %s" % e)
@@ -163,7 +163,7 @@ def _run_emote(caller, text, improvise=False):
             full_body = re.sub(r"\.\s+(\w)", lambda m: ". " + m.group(1).upper(), full_body)
             # Optional voice tag in quoted speech (perception check, rare)
             try:
-                from world.voice import get_voice_phrase, get_speaking_tag, voice_perception_check
+                from world.rpg.voice import get_voice_phrase, get_speaking_tag, voice_perception_check
                 if get_voice_phrase(caller) and voice_perception_check(viewer, caller) and '"' in full_body:
                     idx = full_body.index('"')
                     full_body = full_body[: idx + 1] + get_speaking_tag(caller) + full_body[idx + 1 :]
@@ -177,7 +177,7 @@ def _run_emote(caller, text, improvise=False):
                 msg = format_emote_message(emitter_name, full_body)
             # Slur emote output for drunk callers (level 2+) for other viewers as well.
             try:
-                from world.survival import slur_text_if_drunk
+                from world.rpg.survival import slur_text_if_drunk
                 msg = slur_text_if_drunk(caller, msg)
             except Exception:
                 pass
@@ -714,7 +714,7 @@ class CmdRecog(Command):
     help_category = "General"
 
     def func(self):
-        from world.emote import resolve_sdesc_to_characters
+        from world.rpg.emote import resolve_sdesc_to_characters
         from world.rp_features import (
             get_display_name_for_viewer,
             get_character_sdesc_for_viewer,
@@ -1215,7 +1215,7 @@ class CmdPronoun(Command):
     help_category = "Roleplay"
 
     def func(self):
-        from world.emote import PRONOUN_MAP
+        from world.rpg.emote import PRONOUN_MAP
         caller = self.caller
         arg = (self.args or "").strip().lower()
         if not arg:
@@ -1404,7 +1404,7 @@ class CmdTease(Command):
             caller.msg("That item has no tease message set.")
             return
         from world.crafting import substitute_tease_for_viewer
-        from world.emote import format_emote_message
+        from world.rpg.emote import format_emote_message
         room = caller.location
         if not room:
             return
@@ -1441,7 +1441,7 @@ class CmdSmell(Command):
 
     def func(self):
         from world.smell import get_smell_for, format_smell_line
-        from world.emote import resolve_sdesc_to_characters
+        from world.rpg.emote import resolve_sdesc_to_characters
 
         caller = self.caller
         args = (self.args or "").strip()
@@ -1470,7 +1470,7 @@ class CmdSmell(Command):
             if loc:
                 try:
                     from world.rp_features import get_display_name_for_viewer
-                    from world.emote import PRONOUN_MAP
+                    from world.rpg.emote import PRONOUN_MAP
                 except ImportError:
                     get_display_name_for_viewer = None
                     PRONOUN_MAP = {}

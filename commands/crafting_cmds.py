@@ -42,7 +42,7 @@ class CmdSurvey(Command):
             return
 
         # Basic: damage types protected, mobility yes/no
-        from world.damage_types import DAMAGE_TYPES
+        from world.combat.damage_types import DAMAGE_TYPES
         prot = getattr(obj.db, "protection", None) or {}
         types_protected = [dt for dt in DAMAGE_TYPES if prot.get(dt, 0) > 0]
         mobility = obj.get_mobility_impact() if hasattr(obj, "get_mobility_impact") else (getattr(obj.db, "mobility_impact", 0) or 0)
@@ -167,7 +167,7 @@ class CmdTailor(Command):
 
     def func(self):
         caller = self.caller
-        from world.tailoring import tailor_parse_args
+        from world.rpg.tailoring import tailor_parse_args
         bolt_spec, subcmd, value = tailor_parse_args(self.args)
 
         if not bolt_spec and not subcmd:
@@ -259,7 +259,7 @@ class CmdTailor(Command):
             return
 
         if subcmd == "finalize":
-            from world.tailoring import finalize_bolt_to_clothing
+            from world.rpg.tailoring import finalize_bolt_to_clothing
             clothing, msg = finalize_bolt_to_clothing(bolt, caller)
             caller.msg(msg)
             return

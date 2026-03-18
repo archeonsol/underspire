@@ -75,7 +75,7 @@ class RoleplayMixin:
         if candidates is not None and searchdata and isinstance(searchdata, str):
             try:
                 from evennia.utils.utils import inherits_from
-                from world.emote import resolve_sdesc_to_characters
+                from world.rpg.emote import resolve_sdesc_to_characters
                 cand_list = list(candidates)
                 char_candidates = [c for c in cand_list if inherits_from(c, "typeclasses.characters.Character")]
                 if char_candidates:
@@ -163,7 +163,7 @@ class RoleplayMixin:
         """
         Say (and whisper) hook. For room say, optionally show voice; language garbling applied per viewer.
         """
-        from world.voice import get_voice_phrase, get_speaking_tag, voice_perception_check
+        from world.rpg.voice import get_voice_phrase, get_speaking_tag, voice_perception_check
 
         # Whisper or explicit receivers: send per-receiver with language processing, then overhear
         if kwargs.get("whisper", False) or receivers:

@@ -26,12 +26,12 @@ class BoltOfCloth(Item):
 
     def get_material_display_name(self):
         """Display name for this bolt's material (e.g. 'bolt of silk')."""
-        from world.tailoring import get_material_info
+        from world.rpg.tailoring import get_material_info
         return get_material_info(self).get("name", "bolt of cloth")
 
     def get_draft_status(self):
         """Return a short summary of current draft settings for tailor command."""
-        from world.tailoring import get_material_info
+        from world.rpg.tailoring import get_material_info
         name = getattr(self.db, "draft_name", None) or "unfinished garment"
         aliases = getattr(self.db, "draft_aliases", None) or []
         desc = getattr(self.db, "draft_desc", None) or ""

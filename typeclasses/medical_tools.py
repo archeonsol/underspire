@@ -5,7 +5,7 @@ Use with the medical menu or 'use <tool> on <target>' for scan/treat. Defib: def
 from evennia import DefaultObject
 from typeclasses.items import Item
 
-from world.medical_treatment import (
+from world.medical.medical_treatment import (
     TOOL_SCANNER,
     TOOL_BANDAGES,
     TOOL_MEDKIT,
@@ -68,7 +68,7 @@ class Bioscanner(MedicalTool):
     def use_for_scan(self, operator, target):
         if not hasattr(target, "db"):
             return False, "Target not scannable; no valid biosigns."
-        from world.medical_scanner import get_scanner_readout
+        from world.medical.medical_scanner import get_scanner_readout
         hp = getattr(target, "hp", 0)
         mx = getattr(target, "max_hp", 1)
         formatted = get_scanner_readout(target)
@@ -186,7 +186,7 @@ def get_medical_tools_from_inventory(character):
     Return dict tool_type -> list of MedicalTool objects.
     Includes character's inventory and any stationary medical fixtures in the room (e.g. OR station).
     """
-    from world.medical_treatment import (
+    from world.medical.medical_treatment import (
         TOOL_SCANNER, TOOL_BANDAGES, TOOL_MEDKIT, TOOL_SUTURE_KIT,
         TOOL_SPLINT, TOOL_HEMOSTATIC, TOOL_TOURNIQUET, TOOL_SURGICAL_KIT,
     )

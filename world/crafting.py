@@ -3,7 +3,7 @@ Clothing crafting: bolt of cloth customization and token substitution.
 Tease tokens: Wearer $N $P $S, Target $T $R $U, Item $I/$i (garment name). Use .verb for
 conjugation. E.g. '$N .lift $p $I at $T'.
 """
-from world.emote import PRONOUN_MAP
+from world.rpg.emote import PRONOUN_MAP
 
 
 def _pronoun_tuple(character):
@@ -81,7 +81,7 @@ def substitute_tease_for_viewer(template, doer, target, viewer, item=None):
         if viewer == doer:
             return base
         # Others see third-person form of the doer's emote
-        from world.emote import first_to_third
+        from world.rpg.emote import first_to_third
         return first_to_third(base, doer)
     if item:
         item_display = item.get_display_name(viewer)
@@ -148,7 +148,7 @@ def substitute_tease_for_viewer(template, doer, target, viewer, item=None):
     result = result.replace("$I", item_display).replace("$i", item_display_lower)
     # .verb conjugation: .lift -> "lift" for doer, "lifts" for others (like posing)
     import re
-    from world.emote import _conjugate
+    from world.rpg.emote import _conjugate
     if viewer == doer:
         result = re.sub(r"\.(\w+)", r"\1", result)
     else:

@@ -5,7 +5,7 @@ Used by the wear command (stacking/layer checks) and combat (reduction + quality
 import random
 
 from world.clothing import get_worn_items
-from world.damage_types import DAMAGE_TYPES
+from world.combat.damage_types import DAMAGE_TYPES
 
 # Maximum total stacking_score a character can wear. Exceeding blocks wear.
 MAX_ARMOR_STACKING_SCORE = 24

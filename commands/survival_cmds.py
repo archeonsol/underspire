@@ -65,7 +65,7 @@ class CmdEat(Command):
         else:
             caller.location.msg_contents("%s eats %s." % (caller.name, name), exclude=caller)
         # Apply survival effects: hunger and nutrition.
-        from world.survival import apply_food_effects
+        from world.rpg.survival import apply_food_effects
         apply_food_effects(caller, obj)
         # Consume: delete single-use or decrement uses
         if getattr(obj.db, "uses_remaining", None) is not None:
@@ -124,7 +124,7 @@ class CmdDrink(Command):
         else:
             caller.location.msg_contents("%s drinks %s." % (caller.name, name), exclude=caller)
         # Apply survival effects: thirst and/or alcohol.
-        from world.survival import apply_drink_effects
+        from world.rpg.survival import apply_drink_effects
         apply_drink_effects(caller, obj)
         if getattr(obj.db, "uses_remaining", None) is not None:
             u = (obj.db.uses_remaining or 0) - 1

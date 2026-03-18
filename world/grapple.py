@@ -467,7 +467,7 @@ def attempt_resist(victim):
     if now - last < RESIST_COOLDOWN:
         return False, "You need a moment before you can try again.", ""
     try:
-        from world.stamina import is_exhausted, spend_stamina, STAMINA_COST_RESIST_GRAPPLE
+        from world.rpg.stamina import is_exhausted, spend_stamina, STAMINA_COST_RESIST_GRAPPLE
         if is_exhausted(victim):
             return False, "You're too tired to resist.", ""
         if (getattr(victim, "stamina", 0) or 0) < STAMINA_COST_RESIST_GRAPPLE:
@@ -584,7 +584,7 @@ def grapple_strike(grappler, victim):
     except ImportError:
         pass
     try:
-        from world.stamina import is_exhausted, spend_stamina, STAMINA_COST_GRAPPLE_STRIKE
+        from world.rpg.stamina import is_exhausted, spend_stamina, STAMINA_COST_GRAPPLE_STRIKE
         if is_exhausted(grappler):
             return False, "You're too tired to keep strangling."
         cur = getattr(grappler.db, "current_stamina", None)

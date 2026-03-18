@@ -26,7 +26,7 @@ class CmdXp(Command):
     help_category = "General"
 
     def func(self):
-        from world.xp import (
+        from world.rpg.xp import (
             XP_CAP,
             get_xp_cost_stat,
             get_xp_cost_skill,
@@ -330,7 +330,7 @@ class CmdXp(Command):
             if cur >= stat_cap:
                 caller.msg("That stat is already at its cap.")
                 return
-            from world.xp import get_stat_cost
+            from world.rpg.xp import get_stat_cost
 
             levels_gained, total_spent, new_val = advance_loop(
                 cur, stat_cap, bulk_n, xp, get_stat_cost
@@ -384,7 +384,7 @@ class CmdXp(Command):
             if cur >= skill_cap:
                 caller.msg("That skill is already at its cap.")
                 return
-            from world.xp import get_skill_cost
+            from world.rpg.xp import get_skill_cost
 
             levels_gained, total_spent, new_val = advance_loop(
                 cur, skill_cap, bulk_n, xp, get_skill_cost

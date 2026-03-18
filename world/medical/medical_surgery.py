@@ -156,7 +156,7 @@ def _surgery_finish(ids, organ_key):
         return
 
     from world.medical import ORGAN_INFO
-    from world.medical_treatment import (
+    from world.medical.medical_treatment import (
         _ensure_medical_db,
         _organ_difficulty,
         _medicine_roll,
@@ -229,7 +229,7 @@ def start_surgery_sequence(caller, target, table, organ_key):
     organ_damage = target.db.organ_damage or {}
     if organ_damage.get(organ_key, 0) <= 0:
         return False, "That organ does not require surgery."
-    from world.medical_treatment import ORGAN_INFO
+    from world.medical.medical_treatment import ORGAN_INFO
     if organ_key not in ORGAN_SURGERY_NARRATIVES:
         return False, "No surgical procedure for that organ."
 

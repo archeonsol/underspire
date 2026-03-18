@@ -298,7 +298,17 @@ class Room(ObjectParent, DefaultRoom):
         if not looker_shown and looker not in chars_to_show:
             chars_to_show.append(looker)
         for char in chars_to_show:
-            if char in on_table or char in sitting_set or char in lying_set or char in grappled_set:
+            # If a character is sitting/lying/on a table, rely on the furniture/table display
+            # instead of also showing a generic room pose (avoids "standing here" while seated/lying).
+            if (
+                char in on_table
+                or char in sitting_set
+                or char in lying_set
+                or char in grappled_set
+                or getattr(char.db, "sitting_on", None)
+                or getattr(char.db, "lying_on", None)
+                or getattr(char.db, "lying_on_table", None)
+            ):
                 continue
             logged_off = False
             is_dead = False
@@ -342,26 +352,48 @@ class Room(ObjectParent, DefaultRoom):
                     pose = substitute_clothing_desc(pose, char)
                 except Exception:
                     pass
-                # Resolve simple name mentions in pose for viewer: if pose contains the looker's
-                # key, show "you/your" for that viewer instead of their name.
+                # Resolve mentions of the viewer in the pose text using the same
+                # recog/sdesc logic as emotes: whatever name the poser would use
+                # for the viewer (recog, helmet-recog, or sdesc) becomes "you/your".
                 try:
-                    viewer_name = (getattr(looker, "key", None) or "").strip()
-                    if viewer_name:
-                        pose = re.sub(rf"\b{re.escape(viewer_name)}'s\b", "your", pose)
-                        pose = re.sub(rf"\b{re.escape(viewer_name)}\b", "you", pose)
-                except Exception:
-                    pass
+                    from world.rp_features import get_display_name_for_viewer
+                except ImportError:
+                    get_display_name_for_viewer = None
+                if get_display_name_for_viewer and looker:
+                    try:
+                        # This is the string the posing character would use for the viewer.
+                        matched_name = (get_display_name_for_viewer(looker, char) or "").strip()
+                    except Exception:
+                        matched_name = ""
+                    if matched_name:
+                        # Use word-boundary-like matching that also works for hyphens/digits,
+                        # mirroring the emote system's behavior.
+                        pattern_base = r"(?<!\w)" + re.escape(matched_name) + r"(?!\w)"
+                        pose = re.sub(pattern_base + r"'s", "your", pose, flags=re.IGNORECASE)
+                        pose = re.sub(pattern_base, "you", pose, flags=re.IGNORECASE)
             name = char.get_display_name(looker, **kwargs)
-            if logged_off:
-                # Name in character color; sleep-place text in bold white (caller controls verb, e.g. "is sleeping here")
-                char_pose_parts.append(f"{ROOM_DESC_CHARACTER_NAME_COLOR}{name}|n |b|w{pose}.|n")
-            elif is_dead:
-                # Dead/flatlined: always "Name is <pose>."
-                char_pose_parts.append(f"{ROOM_DESC_CHARACTER_NAME_COLOR}{name}|n is {pose}.")
+            if char is looker:
+                # Special handling so you see "You are ..." instead of "Name is ..."
+                you_pose = pose
+                if (you_pose or "").lower().startswith("is "):
+                    you_pose = "are " + you_pose[3:]
+                if logged_off:
+                    char_pose_parts.append(f"You |b|w{you_pose}.|n")
+                elif is_dead:
+                    char_pose_parts.append(f"You are {you_pose}.")
+                else:
+                    char_pose_parts.append(f"You {you_pose}.")
             else:
-                # For living, present characters, do not force an 'is' – use whatever the player set
-                # with @lp (e.g. 'is leaning against the wall', 'leaning against the wall', 'crouched here').
-                char_pose_parts.append(f"{ROOM_DESC_CHARACTER_NAME_COLOR}{name}|n {pose}.")
+                if logged_off:
+                    # Name in character color; sleep-place text in bold white (caller controls verb, e.g. "is sleeping here")
+                    char_pose_parts.append(f"{ROOM_DESC_CHARACTER_NAME_COLOR}{name}|n |b|w{pose}.|n")
+                elif is_dead:
+                    # Dead/flatlined: always "Name is <pose>."
+                    char_pose_parts.append(f"{ROOM_DESC_CHARACTER_NAME_COLOR}{name}|n is {pose}.")
+                else:
+                    # For living, present characters, do not force an 'is' – use whatever the player set
+                    # with @lp (e.g. 'is leaning against the wall', 'leaning against the wall', 'crouched here').
+                    char_pose_parts.append(f"{ROOM_DESC_CHARACTER_NAME_COLOR}{name}|n {pose}.")
         char_pose_line = " ".join(char_pose_parts) if char_pose_parts else ""
         if grappled_parts:
             char_pose_line = " ".join(filter(None, [char_pose_line, " ".join(grappled_parts)]))

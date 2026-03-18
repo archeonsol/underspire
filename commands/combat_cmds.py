@@ -88,7 +88,7 @@ class CmdAttack(Command):
                 caller.msg(f"|r{_combat_display_name(target, caller)} is already dead.|n")
                 return
         try:
-            from world.stamina import is_exhausted
+            from world.rpg.stamina import is_exhausted
             if is_exhausted(caller):
                 caller.msg("You're too tired to fight.")
                 return

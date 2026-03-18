@@ -90,7 +90,7 @@ See the `spawn` command and `evennia.prototypes.spawner.spawn` for more info.
 # }
 
 
-# Tailoring: bolts of material. Higher materials require more tailoring skill (see world.tailoring.BOLT_MATERIALS).
+# Tailoring: bolts of material. Higher materials require more tailoring skill (see world.rpg.tailoring.BOLT_MATERIALS).
 # Spawn with: spawn bolt of cloth | spawn bolt of silk | spawn bolt of satin | spawn bolt of velvet
 BOLT_OF_CLOTH = {
     "key": "bolt of cloth",

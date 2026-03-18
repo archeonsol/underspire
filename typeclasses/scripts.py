@@ -110,14 +110,14 @@ class StaminaRegenScript(Script):
     """
 
     def at_script_creation(self):
-        from world.stamina import STAMINA_REGEN_INTERVAL
+        from world.rpg.stamina import STAMINA_REGEN_INTERVAL
         self.key = "stamina_regen"
         self.interval = STAMINA_REGEN_INTERVAL
         self.repeats = 0
         self.persistent = True
 
     def at_repeat(self):
-        from world.stamina import stamina_regen_all
+        from world.rpg.stamina import stamina_regen_all
         stamina_regen_all()
 
 

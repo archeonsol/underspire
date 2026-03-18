@@ -124,9 +124,9 @@ def level_to_effective_grade(level, max_level=None):
 
 def xp_cost_for_next_level(current_level, max_level=None):
     """
-    Legacy: XP for one level. Prefer world.xp.xp_cost_for_stat_level / xp_cost_for_skill_level.
+    Legacy: XP for one level. Prefer world.rpg.xp.xp_cost_for_stat_level / xp_cost_for_skill_level.
     """
-    from world.xp import xp_cost_for_stat_level, xp_cost_for_skill_level
+    from world.rpg.xp import xp_cost_for_stat_level, xp_cost_for_skill_level
     max_level = MAX_LEVEL if max_level is None else max_level
     try:
         lv = int(current_level or 0)

@@ -105,7 +105,7 @@ def _defib_msg3_and_finish(*args):
 
     # --- THE FIX STARTS HERE ---
     try:
-        from world.medical_treatment import attempt_resuscitate
+        from world.medical.medical_treatment import attempt_resuscitate
         success, msg = attempt_resuscitate(caller, target)
         
         if success and defib and hasattr(defib, "consume_use"):

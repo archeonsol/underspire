@@ -103,7 +103,7 @@ class CmdUse(Command):
             if getattr(target, "hp", 1) > 0:
                 caller.msg("They are not in arrest. The defibrillator is for the dead.")
                 return
-            from world.medical_defib import start_defib_sequence
+            from world.medical.medical_defib import start_defib_sequence
             started, err = start_defib_sequence(caller, target, tool)
             if not started:
                 caller.msg(err or "You cannot do that right now.")
@@ -159,7 +159,7 @@ class CmdStabilize(Command):
     help_category = "General"
 
     def func(self):
-        from world.medical_treatment import attempt_stop_bleeding, TOOL_CAN_STOP_BLEEDING
+        from world.medical.medical_treatment import attempt_stop_bleeding, TOOL_CAN_STOP_BLEEDING
         from typeclasses.medical_tools import MedicalTool
 
         caller = self.caller
@@ -242,7 +242,7 @@ class CmdApply(Command):
     help_category = "General"
 
     def func(self):
-        from world.medical_treatment import get_treatment_options, BONE_ALIASES, ORGAN_ALIASES
+        from world.medical.medical_treatment import get_treatment_options, BONE_ALIASES, ORGAN_ALIASES
         from typeclasses.medical_tools import MedicalTool
 
         caller = self.caller
@@ -367,7 +367,7 @@ class CmdSurgery(Command):
         if not args:
             caller.msg("Surgery on what organ? Usage: surgery <organ> (e.g. surgery heart, surgery liver)")
             return
-        from world.medical_treatment import ORGAN_ALIASES
+        from world.medical.medical_treatment import ORGAN_ALIASES
         organ_arg = args.strip().lower()
         organ_key = ORGAN_ALIASES.get(organ_arg, organ_arg.replace(" ", "_"))
         from typeclasses.medical_tools import OperatingTable
@@ -383,7 +383,7 @@ class CmdSurgery(Command):
         if not patient:
             caller.msg("No one is on the operating table. They must use 'lie on operating table' first.")
             return
-        from world.medical_surgery import start_surgery_sequence
+        from world.medical.medical_surgery import start_surgery_sequence
         from world.medical import ORGAN_INFO
         if organ_key not in ORGAN_INFO:
             caller.msg("Unknown organ. Try: brain, eyes, throat, carotid, heart, lungs, spine_cord, liver, spleen, stomach, kidneys, pelvic_organs, collarbone_area.")
@@ -422,7 +422,7 @@ class CmdDefib(Command):
         if not defib:
             caller.msg("You need a defibrillator in your inventory.")
             return
-        from world.medical_defib import start_defib_sequence
+        from world.medical.medical_defib import start_defib_sequence
         started, err = start_defib_sequence(caller, target, defib)
         if not started:
             caller.msg(err if err else "You cannot do that right now.")

@@ -17,7 +17,7 @@ from typeclasses.characters import Character
 #   msg_miss (str): optional; message when target evades (default: generic dodge line)
 #   telegraph_msg (str): for telegraph, message when wind-up starts
 #   ticks (int): for telegraph, number of ticks before execute
-#   weapon_key (str): for trauma/damage type (e.g. claws, bite, saw, fists); uses world.damage_types
+#   weapon_key (str): for trauma/damage type (e.g. claws, bite, saw, fists); uses world.combat.damage_types
 #   unblockable (bool): if True, forces dodge not block (flavor / future use)
 #   stamina_drain (int): optional stamina cost on target (e.g. block-crush)
 

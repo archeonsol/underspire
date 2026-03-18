@@ -67,7 +67,7 @@ class Exit(ObjectParent, DefaultExit):
             except Exception:
                 pass
         try:
-            from world.stamina import is_exhausted, spend_stamina, STAMINA_COST_WALK, STAMINA_COST_CRAWL
+            from world.rpg.stamina import is_exhausted, spend_stamina, STAMINA_COST_WALK, STAMINA_COST_CRAWL
         except ImportError:
             is_exhausted = lambda _: False
             spend_stamina = lambda _, __: True
@@ -100,7 +100,7 @@ class Exit(ObjectParent, DefaultExit):
                         stagger_direction = (stagger_exit.key or "away").strip()
         # Drain hunger/thirst only when traversing scavenging tiles (wilderness/urban).
         try:
-            from world.survival import apply_move_hunger_thirst
+            from world.rpg.survival import apply_move_hunger_thirst
             apply_move_hunger_thirst(traversing_object, traversing_object.location, destination)
         except Exception:
             pass
