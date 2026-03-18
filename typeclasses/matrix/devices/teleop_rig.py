@@ -79,7 +79,7 @@ class TeleopRig(PuppetRigMixin, Seat, NetworkedObject):
             bool: True if connection is valid, False otherwise
         """
         # Check Matrix connection
-        if not self.is_connected():
+        if not self.has_network_coverage():
             if hasattr(character, 'msg'):
                 character.msg("No Matrix connection available. Cannot establish telepresence link.")
             return False

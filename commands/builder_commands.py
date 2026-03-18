@@ -357,7 +357,13 @@ class CmdName(Command):
             return
         old = obj.key
         obj.key = new_name
-        caller.msg("Renamed %s to |w%s|n." % (old, new_name))
+        obj.save()
+
+        # Check if key was auto-corrected (validation happens in save())
+        if obj.key != new_name:
+            caller.msg("Renamed %s to |w%s|n (auto-corrected from '%s')." % (old, obj.key, new_name))
+        else:
+            caller.msg("Renamed %s to |w%s|n." % (old, new_name))
 
 
 class CmdMatrixDig(Command):

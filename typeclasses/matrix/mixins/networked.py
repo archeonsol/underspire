@@ -199,15 +199,15 @@ class NetworkedMixin(MatrixIdMixin):
 
 
 
-    def is_connected(self):
+    def has_network_coverage(self):
         """
-        Check if this device is currently connected to the Matrix.
+        Check if this device currently has Matrix network coverage.
 
-        A device is connected if it can find a relay (either through wireless
+        A device has coverage if it can find a relay (either through wireless
         coverage or hardwired connection).
 
         Returns:
-            bool: True if device has an active connection to the Matrix
+            bool: True if device has active network coverage
         """
         relay = self.get_relay()
         return relay is not None

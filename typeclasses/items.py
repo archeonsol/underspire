@@ -3,11 +3,11 @@
 Non-combat items (containers, keys, tools, etc.).
 For combat weapons, use typeclasses.weapons.CombatWeapon instead.
 """
-from evennia import DefaultObject
+from typeclasses.objects import Object
 import re
 
 
-class Item(DefaultObject):
+class Item(Object):
     """
     Generic non-combat item. Use for keys, containers, quest objects, etc.
     """

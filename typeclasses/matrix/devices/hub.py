@@ -280,7 +280,7 @@ class Hub(NetworkedObject):
         text = super().return_appearance(looker, **kwargs)
 
         # Add connection status
-        if self.is_connected():
+        if self.has_network_coverage():
             text += "\n|g[ONLINE]|n Connected to the Matrix."
         else:
             text += "\n|r[OFFLINE]|n Not connected to any network."

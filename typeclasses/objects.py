@@ -22,6 +22,83 @@ class ObjectParent:
 
     """
 
+    def save(self, *args, **kwargs):
+        """
+        Override save to validate key before saving to database.
+        This catches all renames including @name, buname, and direct key assignment.
+        """
+        # Validate and fix key before saving (don't auto-save since we're already saving)
+        if hasattr(self, 'key'):
+            self._fix_reserved_key_prefix(auto_save=False)
+
+        # Call parent save
+        super().save(*args, **kwargs)
+
+    def _fix_reserved_key_prefix(self, auto_save=True):
+        """
+        Check if key starts with reserved prefixes (^ or #) and fix automatically.
+        Notifies any connected sessions about the change.
+
+        Called from save() override to validate all key changes.
+
+        Args:
+            auto_save (bool): Should always be False when called from save().
+                             Only set True if calling manually outside save flow.
+
+        Returns:
+            bool: True if key was changed, False otherwise
+        """
+        if not self.key or not isinstance(self.key, str):
+            return False
+
+        old_key = self.key
+        changed = False
+        reason = ""
+
+        if self.key.startswith("^"):
+            self.key = "_" + self.key[1:]
+            changed = True
+            reason = "Matrix IDs"
+        elif self.key.startswith("#"):
+            self.key = "_" + self.key[1:]
+            changed = True
+            reason = "dbrefs"
+
+        if changed:
+            if auto_save:
+                self.save(update_fields=['db_key'])
+
+            msg = f"|yObject automatically renamed from '{old_key}' to '{self.key}' to avoid collision with {reason}.|n"
+
+            # Try to notify any connected sessions (for puppeted objects)
+            if hasattr(self, 'sessions') and self.sessions.all():
+                self.msg(msg)
+
+            # Also log it
+            from evennia.utils import logger
+            logger.log_info(f"Auto-renamed object from '{old_key}' to '{self.key}' (reason: {reason})")
+
+        return changed
+
+    def search(self, searchdata, **kwargs):
+        """
+        Override search to support Matrix IDs (^XXXXXX format).
+
+        If searchdata starts with ^, attempt Matrix ID lookup first.
+        Otherwise fall back to normal Evennia search behavior.
+        """
+        if searchdata and isinstance(searchdata, str) and searchdata.startswith("^"):
+            from world.matrix_ids import lookup_matrix_id
+            result = lookup_matrix_id(searchdata)
+            if result:
+                return result
+            # Matrix ID not found - return None and let caller handle the error
+            # (consistent with normal search behavior when nothing is found)
+            return None
+
+        # Not a Matrix ID, use default search behavior
+        return super().search(searchdata, **kwargs)
+
     def get_cmdsets(self, caller, current, **kwargs):
         """Never return None for current so the cmdset merger does not crash."""
         cur = self.cmdset.current

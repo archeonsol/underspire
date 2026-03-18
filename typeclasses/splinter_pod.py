@@ -7,7 +7,8 @@ Each pod has exactly ONE persistent interior (same instance every time). Items d
 persist when leaving and re-entering. A second pod on the grid has its own separate interior.
 Only one character may be inside a given pod at a time.
 """
-from evennia import DefaultRoom, DefaultObject
+from evennia import DefaultRoom
+from typeclasses.objects import Object
 from evennia.utils.create import create_object
 from evennia.utils.search import search_tag
 
@@ -52,7 +53,7 @@ class SplinterPodInterior(DefaultRoom):
         return ""
 
 
-class SplinterPod(DefaultObject):
+class SplinterPod(Object):
     """
     Splinter pod: enter to reach this pod's interior, splinter me, then done to leave.
     Each pod has one persistent interior (like a vehicle); one character at a time per pod.

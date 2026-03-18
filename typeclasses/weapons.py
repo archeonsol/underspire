@@ -7,7 +7,7 @@ for a sword). weapon_key determines which skill is rolled and which moves/damage
 Damage type (slashing/impact/penetrating/magical) drives trauma and injury; set db.damage_type
 to override the default for this weapon class. Ranged weapons use world.ammo and require loading.
 """
-from evennia import DefaultObject
+from typeclasses.objects import Object
 
 
 # Keys must exist in world.combat.WEAPON_DATA and world.skills.WEAPON_KEY_TO_SKILL
@@ -64,7 +64,7 @@ def _is_ranged_weapon_key(weapon_key):
         return False
 
 
-class CombatWeapon(DefaultObject):
+class CombatWeapon(Object):
     """
     Base typeclass for all combat weapons. Set db.weapon_key to a key in
     world.combat.WEAPON_DATA (e.g. "knife", "long_blade"). Subclasses set a

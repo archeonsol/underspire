@@ -641,8 +641,14 @@ class CmdFind(Command):
             caller.msg("Usage: @find <search term>")
             return
 
-        # Use search_object with exact=False for partial matching
-        matches = search_object(args, exact=False)
+        # Check for Matrix ID first (starts with ^)
+        if args.startswith("^"):
+            from world.matrix_ids import lookup_matrix_id
+            result = lookup_matrix_id(args)
+            matches = [result] if result else []
+        else:
+            # Use search_object with exact=False for partial matching
+            matches = search_object(args, exact=False)
 
         if not matches:
             caller.msg(f"No objects found matching '{args}'.")
@@ -1581,7 +1587,12 @@ class CmdNpc(Command):
                 room_msg_pairs.append((v, old_d))
         target.key = new_name
         target.save()
-        caller.msg("|gYou know them as %s now.|n" % new_name)
+
+        # Check if key was auto-corrected (validation happens in save())
+        if target.key != new_name:
+            caller.msg("|gYou know them as %s now.|n (auto-corrected from '%s')" % (target.key, new_name))
+        else:
+            caller.msg("|gYou know them as %s now.|n" % new_name)
         for v, old_d in room_msg_pairs:
             v.msg("%s is now called %s." % (old_d, new_name))
 

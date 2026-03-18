@@ -6,6 +6,7 @@ parts of the game system.
 """
 
 
+
 def get_containing_room(obj, max_depth=10):
     """
     Walk up an object's location chain to find the containing Room.

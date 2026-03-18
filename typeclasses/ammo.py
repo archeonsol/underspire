@@ -2,7 +2,7 @@
 Ammunition typeclasses. Each ammo type is for one firearm class (sidearm, longarm, automatic).
 Weapons are loaded via the reload command by matching db.ammo_type. Quantity stacks up to max_stack.
 """
-from evennia import DefaultObject
+from typeclasses.objects import Object
 from world.ammo import (
     AMMO_TYPES,
     AMMO_TYPE_SIDEARM,
@@ -16,7 +16,7 @@ from world.ammo import (
 DEFAULT_MAX_STACK = 50
 
 
-class Ammo(DefaultObject):
+class Ammo(Object):
     """
     Base ammunition. Set db.ammo_type to one of world.ammo.AMMO_TYPES.
     db.quantity = rounds in this stack; db.max_stack = stack size cap.

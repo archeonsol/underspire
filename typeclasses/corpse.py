@@ -2,10 +2,10 @@
 Corpse typeclass. A character who has permanently died is converted to this.
 Keeps the dead character's inventory, body_descriptions, and worn clothing; look shows body + worn + contents.
 """
-from evennia import DefaultObject
+from typeclasses.objects import Object
 
 
-class Corpse(DefaultObject):
+class Corpse(Object):
     """
     Permanently dead body. Created by converting a flatlined character via world.death.make_permanent_death.
     db.original_name = name of the deceased. Same object keeps db.body_descriptions, db.worn, and contents (inventory).

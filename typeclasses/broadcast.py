@@ -9,11 +9,10 @@ Recording and broadcast system: Camera, Television, Cassette.
 - Cassette: holds a recording (list of timestamped lines). Persists with the object.
 """
 import time
-from evennia.objects.objects import DefaultObject
 from evennia.utils.ansi import strip_ansi
 from evennia.utils.create import create_object
 
-from .objects import ObjectParent
+from .objects import Object
 
 # Prefix added by Television.display_broadcast; if we see it (after stripping ANSI),
 # do not re-feed to cameras or we get infinite "On the television you see: ..." nesting.
@@ -77,7 +76,7 @@ def feed_cameras_in_location(location, text):
 # --- Camera ---
 
 
-class Camera(ObjectParent, DefaultObject):
+class Camera(Object):
     """
     Captures what happens in the room. Modes:
     - off: does nothing
@@ -201,7 +200,7 @@ class Camera(ObjectParent, DefaultObject):
 # --- Television ---
 
 
-class Television(ObjectParent, DefaultObject):
+class Television(Object):
     """
     Displays broadcast content. Either:
     - Live: linked to a Camera (db.linked_camera); shows what the camera sees.
@@ -293,7 +292,7 @@ class Television(ObjectParent, DefaultObject):
 # --- Cassette ---
 
 
-class Cassette(ObjectParent, DefaultObject):
+class Cassette(Object):
     """
     Holds a single recording. The recording persists in db.recording
     for as long as the cassette exists. Put the cassette in a Television
@@ -315,7 +314,7 @@ class Cassette(ObjectParent, DefaultObject):
             self.key = base
 
 
-class Photograph(ObjectParent, DefaultObject):
+class Photograph(Object):
     """
     A still image captured by a Camera. Stores a snapshot of a room's appearance
     (full colored look output) at the time of capture.

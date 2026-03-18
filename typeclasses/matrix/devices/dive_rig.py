@@ -214,7 +214,7 @@ class DiveRig(Seat, NetworkedObject):
             self.db.active_connection = None
             return False
 
-        if not self.is_connected():
+        if not self.has_network_coverage():
             self.db.active_connection = None
             return False
 
@@ -262,7 +262,7 @@ class DiveRig(Seat, NetworkedObject):
             return False
 
         # Check if rig is still connected to Matrix
-        if not self.is_connected():
+        if not self.has_network_coverage():
             self.disconnect(character, severity=JACKOUT_EMERGENCY, reason="Network connection lost")
             return False
 

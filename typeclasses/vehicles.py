@@ -7,7 +7,7 @@ Vehicles have a parts system (engine, transmission, brakes, etc.) that can be da
 Each vehicle has exactly ONE persistent interior (same instance every time). Items dropped inside
 stay when you exit and re-enter. A second vehicle has its own separate interior.
 """
-from evennia import DefaultObject
+from typeclasses.objects import Object
 from evennia.utils.create import create_object
 from evennia.utils.search import search_tag
 from evennia.objects.objects import DefaultExit
@@ -165,7 +165,7 @@ class VehicleInterior(Room):
         return f"\n|wExits (drive):|n {exits_str}.  Start the engine first, then |wdrive <direction>|n."
 
 
-class Vehicle(DefaultObject):
+class Vehicle(Object):
     """
     A drivable vehicle with an interior. Place the vehicle in a room; when characters
     enter they go to the interior room. Drive <direction> moves the vehicle (and everyone

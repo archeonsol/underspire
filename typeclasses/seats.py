@@ -3,10 +3,10 @@ Seating and lying-down objects: chairs, couches, beds, etc.
 Characters use 'sit' / 'stand' and 'lie on' / 'get up'; room shows "X is sitting on Y" / "X is lying on Y".
 Template typeclasses for customization (desc, key, etc.).
 """
-from evennia.objects.objects import DefaultObject
+from typeclasses.objects import Object
 
 
-class Seat(DefaultObject):
+class Seat(Object):
     """
     Template for sit-on objects: chair, couch, bench, etc.
     Multiple people can sit (capacity); character.db.sitting_on = this object.
