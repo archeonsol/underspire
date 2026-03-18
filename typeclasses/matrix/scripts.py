@@ -180,11 +180,32 @@ class MatrixConnectionScript(DefaultScript):
         from typeclasses.matrix.devices.dive_rig import DiveRig
         all_dive_rigs = DiveRig.objects.all()
         dive_disconnected = 0
+        proxy_disconnected = 0
         for rig in all_dive_rigs:
             # Only check rigs with active connections
-            if getattr(rig.db, 'active_connection', None):
+            conn = getattr(rig.db, 'active_connection', None)
+            if conn:
+                # Validate rig connection
                 if hasattr(rig, 'validate_connection') and not rig.validate_connection():
                     dive_disconnected += 1
+
+                # Check avatar's proxy router if it has one
+                avatar = conn.get('avatar')
+                if avatar and hasattr(avatar.db, 'proxy_router') and avatar.db.proxy_router:
+                    proxy_router_pk = avatar.db.proxy_router
+                    try:
+                        from typeclasses.matrix.objects import Router
+                        proxy_router = Router.objects.get(pk=proxy_router_pk)
+                        # Check if proxy router is offline
+                        if not getattr(proxy_router.db, 'online', False):
+                            if hasattr(avatar, 'handle_proxy_disconnect'):
+                                avatar.handle_proxy_disconnect()
+                                proxy_disconnected += 1
+                    except Router.DoesNotExist:
+                        # Proxy router was deleted - clear it and emergency jackout
+                        if hasattr(avatar, 'handle_proxy_disconnect'):
+                            avatar.handle_proxy_disconnect()
+                            proxy_disconnected += 1
 
         # Check teleop connections - iterate all objects and check for controlled_by attribute
         # (Can't filter by attribute directly)
@@ -201,9 +222,9 @@ class MatrixConnectionScript(DefaultScript):
                 teleop_disconnected += 1
 
         # Optional: log disconnection activity
-        if dive_disconnected > 0 or teleop_disconnected > 0:
+        if dive_disconnected > 0 or teleop_disconnected > 0 or proxy_disconnected > 0:
             from evennia.utils import logger
-            logger.log_info(f"Connection check: disconnected {dive_disconnected} dive session(s), {teleop_disconnected} teleop session(s)")
+            logger.log_info(f"Connection check: disconnected {dive_disconnected} dive session(s), {teleop_disconnected} teleop session(s), {proxy_disconnected} proxy tunnel(s)")
 
     def at_start(self):
         """Called when script starts (including after server restart)."""
