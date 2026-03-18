@@ -48,10 +48,10 @@ def get_registry_script():
             )
         script = script[0]
 
-    # Ensure attributes exist
-    if not hasattr(script.db, 'id_to_dbref'):
+    # Ensure attributes exist and are not None
+    if not script.db.id_to_dbref:
         script.db.id_to_dbref = {}
-    if not hasattr(script.db, 'dbref_to_id'):
+    if not script.db.dbref_to_id:
         script.db.dbref_to_id = {}
 
     return script

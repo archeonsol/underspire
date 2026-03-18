@@ -40,7 +40,11 @@ class MatrixIdMixin:
         Clean up Matrix ID when object is deleted.
         This frees the ID for reuse.
         """
-        unregister_matrix_id(self)
+        try:
+            unregister_matrix_id(self)
+        except Exception:
+            # Don't let registry errors prevent deletion
+            pass
         return super().at_object_delete()
 
     def get_matrix_id(self):
