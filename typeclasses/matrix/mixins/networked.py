@@ -234,7 +234,7 @@ class NetworkedMixin:
 
     def register_device_command(self, command_name, handler_method_name, help_text=None,
                                 matrix_only=False, physical_only=False, requires_acl=False,
-                                visibility_threshold=0):
+                                auth_level=0, visibility_threshold=0):
         """
         Register a command that can be invoked via device interface menu.
 
@@ -247,24 +247,36 @@ class NetworkedMixin:
             help_text (str): Optional help text describing the command
             matrix_only (bool): If True, only accessible from Matrix (not physical access)
             physical_only (bool): If True, only accessible from physical access (not Matrix)
-            requires_acl (bool): If True, requires caller to be on device ACL
+            requires_acl (bool): If True, requires caller to be on device ACL (level 1+)
+            auth_level (int): Minimum authorization level required (0-10)
+                             0: Public access (no ACL required, anyone can use)
+                             1: Minimum entry - just gets you in the door
+                             2-3: Low access - basic authenticated commands
+                             4-6: Medium access - standard modification commands
+                             7-9: High access - advanced commands, full control
+                             10: Root/admin - all commands including ACL management
             visibility_threshold (int): Minimum skill level (0-150) to see this command in menu
                                        Uses 'hacking' skill for Matrix access, 'technology' for physical
 
         Example:
             # Basic command visible to all
             self.register_device_command("status", "handle_status",
-                help_text="Show device status")
+                help_text="Show device status", auth_level=0)
 
-            # Physical-only reset requiring ACL
-            self.register_device_command("factory_reset", "handle_factory_reset",
-                help_text="Reset device to defaults",
-                physical_only=True, requires_acl=True)
+            # Medium access command
+            self.register_device_command("describe", "handle_describe",
+                help_text="Set device description",
+                requires_acl=True, auth_level=5)
+
+            # Root-level command for ACL management
+            self.register_device_command("grant_access", "handle_grant_access",
+                help_text="Grant access to another user",
+                requires_acl=True, auth_level=10)
 
             # Hidden exploit command for skilled hackers
             self.register_device_command("dump_logs", "handle_dump_logs",
                 help_text="Extract security logs",
-                matrix_only=True, visibility_threshold=75)
+                matrix_only=True, visibility_threshold=75, auth_level=7)
         """
         if not hasattr(self.db, 'device_commands'):
             self.db.device_commands = {}
@@ -275,6 +287,7 @@ class NetworkedMixin:
             'matrix_only': matrix_only,
             'physical_only': physical_only,
             'requires_acl': requires_acl,
+            'auth_level': auth_level,
             'visibility_threshold': visibility_threshold
         }
 
@@ -309,10 +322,16 @@ class NetworkedMixin:
             caller.msg(f"|rCommand '{command_name}' requires physical access.|n")
             return False
 
-        # Check ACL if required
-        if cmd_data.get('requires_acl', False):
-            if not self.check_acl(caller):
-                caller.msg(f"|rAccess denied. You are not authorized to use '{command_name}'.|n")
+        # Check authorization level
+        required_auth_level = cmd_data.get('auth_level', 0)
+        if required_auth_level > 0 or cmd_data.get('requires_acl', False):
+            caller_level = self.get_acl_level(caller)
+            # If requires_acl is set but auth_level is 0, default to level 1
+            if cmd_data.get('requires_acl', False) and required_auth_level == 0:
+                required_auth_level = 1
+
+            if caller_level < required_auth_level:
+                caller.msg(f"|rAccess denied. Command '{command_name}' requires authorization level {required_auth_level} (you have level {caller_level}).|n")
                 return False
 
         handler_name = cmd_data['handler']
@@ -381,62 +400,115 @@ class NetworkedMixin:
 
         return available
 
-    def check_acl(self, character):
+    def check_acl(self, character, required_level=1):
         """
-        Check if a character is on this device's Access Control List.
+        Check if a character is authorized on this device's ACL.
+
+        For MatrixAvatars, checks BOTH:
+        - The physical operator (grants physical + Matrix access)
+        - The avatar itself (grants Matrix-only access)
+
+        This allows avatars to be granted access independently, enabling
+        Matrix users to authorize other avatars without knowing their
+        physical identities.
 
         Args:
-            character: The character to check (can be Character or MatrixAvatar)
+            character: The character to check (Character or MatrixAvatar)
+            required_level (int): Minimum authorization level required (1-10)
 
         Returns:
-            bool: True if character is on the ACL, False otherwise
+            int: Authorization level (0 if not authorized, 1-10 if authorized)
         """
         if not hasattr(self.db, 'acl') or not self.db.acl:
-            return False
+            return 0
 
-        # For MatrixAvatar, check their operator's dbref
+        # Migrate old list-based ACL to dict-based ACL
+        if isinstance(self.db.acl, list):
+            old_acl = self.db.acl
+            self.db.acl = {}
+            for char_pk in old_acl:
+                # Default old entries to level 5 (medium access)
+                self.db.acl[char_pk] = 5
+
+        # For MatrixAvatar, check BOTH operator AND avatar (return highest level)
         from typeclasses.matrix.avatars import MatrixAvatar
         if isinstance(character, MatrixAvatar):
+            max_level = 0
+            # Check if the physical operator is authorized
             operator = character.db.operator
-            if operator:
-                return operator.pk in self.db.acl
-            return False
+            if operator and operator.pk in self.db.acl:
+                max_level = max(max_level, self.db.acl[operator.pk])
+            # Also check if the avatar itself is authorized (Matrix-only access)
+            if character.pk in self.db.acl:
+                max_level = max(max_level, self.db.acl[character.pk])
+            return max_level
 
         # For regular characters, check their dbref
-        return character.pk in self.db.acl
+        return self.db.acl.get(character.pk, 0)
 
-    def add_to_acl(self, character):
+    def get_acl_level(self, character):
+        """
+        Get the authorization level for a character.
+
+        Args:
+            character: The character to check (Character or MatrixAvatar)
+
+        Returns:
+            int: Authorization level (0 if not authorized, 1-10 if authorized)
+        """
+        return self.check_acl(character, required_level=0)
+
+    def add_to_acl(self, character, level=5):
         """
         Add a character to this device's Access Control List.
 
+        For MatrixAvatars: Adds the AVATAR itself (not the operator).
+        This grants Matrix-only access - the avatar can access from the Matrix
+        but doesn't get physical access to the device.
+
+        For Characters: Adds the physical character, granting both physical
+        and Matrix access (when they jack in).
+
         Args:
             character: The character to add (Character or MatrixAvatar)
+            level (int): Authorization level to grant (1-10, default 5)
+                        1: Entry level - can access interface, basic viewing
+                        2-3: Low access - basic authenticated commands
+                        4-6: Medium access - standard commands, modifications
+                        7-9: High access - advanced commands, full control
+                        10: Root access - all commands, ACL management
 
         Returns:
-            bool: True if added, False if already on list
+            bool: True if added/updated, False on error
         """
         if not hasattr(self.db, 'acl'):
-            self.db.acl = []
+            self.db.acl = {}
 
-        # Get the actual character dbref if MatrixAvatar
-        from typeclasses.matrix.avatars import MatrixAvatar
-        if isinstance(character, MatrixAvatar):
-            operator = character.db.operator
-            if not operator:
-                return False
-            char_pk = operator.pk
-        else:
-            char_pk = character.pk
+        # Migrate old list-based ACL to dict-based ACL
+        if isinstance(self.db.acl, list):
+            old_acl = self.db.acl
+            self.db.acl = {}
+            for char_pk in old_acl:
+                # Default old entries to level 5 (medium access)
+                self.db.acl[char_pk] = 5
 
-        if char_pk in self.db.acl:
-            return False
+        # Clamp level to valid range
+        level = max(1, min(10, level))
 
-        self.db.acl.append(char_pk)
+        # For MatrixAvatar, add the AVATAR itself (Matrix-only access)
+        # For Character, add the character (physical + Matrix access)
+        char_pk = character.pk
+
+        # Add or update the entry
+        self.db.acl[char_pk] = level
         return True
 
     def remove_from_acl(self, character):
         """
         Remove a character from this device's Access Control List.
+
+        For MatrixAvatars: Removes the avatar itself.
+        For Characters: Removes the physical character.
 
         Args:
             character: The character to remove (Character or MatrixAvatar)
@@ -447,40 +519,58 @@ class NetworkedMixin:
         if not hasattr(self.db, 'acl') or not self.db.acl:
             return False
 
-        # Get the actual character dbref if MatrixAvatar
-        from typeclasses.matrix.avatars import MatrixAvatar
-        if isinstance(character, MatrixAvatar):
-            operator = character.db.operator
-            if not operator:
-                return False
-            char_pk = operator.pk
-        else:
-            char_pk = character.pk
+        # Migrate old list-based ACL to dict-based ACL
+        if isinstance(self.db.acl, list):
+            old_acl = self.db.acl
+            self.db.acl = {}
+            for char_pk in old_acl:
+                # Default old entries to level 5 (medium access)
+                self.db.acl[char_pk] = 5
+
+        # Remove the character/avatar by its own pk
+        char_pk = character.pk
 
         if char_pk not in self.db.acl:
             return False
 
-        self.db.acl.remove(char_pk)
+        del self.db.acl[char_pk]
         return True
 
     def get_acl_names(self):
         """
-        Get a list of character names on the ACL.
+        Get a list of character/avatar names on the ACL with type indicators and levels.
 
         Returns:
-            list: List of character names (or "Unknown" for deleted characters)
+            list: List of formatted names showing type and authorization level:
+                  "CharName (physical, level 10)" - Physical character with level
+                  "AvatarName (matrix, level 5)" - Matrix avatar with level
+                  "[Unknown #123]" - Deleted object
         """
         if not hasattr(self.db, 'acl') or not self.db.acl:
             return []
 
+        # Migrate old list-based ACL to dict-based ACL
+        if isinstance(self.db.acl, list):
+            old_acl = self.db.acl
+            self.db.acl = {}
+            for char_pk in old_acl:
+                # Default old entries to level 5 (medium access)
+                self.db.acl[char_pk] = 5
+
         from evennia.objects.models import ObjectDB
+        from typeclasses.matrix.avatars import MatrixAvatar
+
         names = []
-        for char_pk in self.db.acl:
+        for char_pk, level in self.db.acl.items():
             try:
-                char = ObjectDB.objects.get(pk=char_pk)
-                names.append(char.key)
+                obj = ObjectDB.objects.get(pk=char_pk)
+                # Check if it's a MatrixAvatar
+                if obj.typeclass_path and 'MatrixAvatar' in obj.typeclass_path:
+                    names.append(f"{obj.key} (matrix, level {level})")
+                else:
+                    names.append(f"{obj.key} (physical, level {level})")
             except ObjectDB.DoesNotExist:
-                names.append(f"[Unknown #{char_pk}]")
+                names.append(f"[Unknown #{char_pk}, level {level}]")
 
         return names
 

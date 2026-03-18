@@ -56,33 +56,33 @@ class Hub(NetworkedObject):
             "describe",
             "handle_describe",
             help_text="Set hub description: describe <text>",
-            requires_acl=True  # Only authorized users can customize
+            auth_level=5  # Medium access - can customize description
         )
         self.register_device_command(
             "detail",
             "handle_add_detail",
             help_text="Add examinable detail: detail <key> <description>",
-            requires_acl=True
+            auth_level=5  # Medium access - can add details
         )
         self.register_device_command(
             "remove_detail",
             "handle_remove_detail",
             help_text="Remove detail: remove_detail <key>",
-            requires_acl=True
+            auth_level=5  # Medium access - can remove details
         )
         self.register_device_command(
             "list_details",
             "handle_list_details",
-            help_text="List all custom details"
-            # No restrictions - anyone can view
+            help_text="List all custom details",
+            auth_level=0  # Public - anyone can view
         )
 
-        # Add owner to ACL by default
+        # Add owner to ACL by default with full access
         if self.location and hasattr(self.location, 'pk'):
             # If placed in a character's inventory on creation
             from typeclasses.characters import Character
             if isinstance(self.location, Character):
-                self.add_to_acl(self.location)
+                self.add_to_acl(self.location, level=10)  # Owner gets root access
 
     def handle_describe(self, caller, *args):
         """
@@ -105,9 +105,9 @@ class Hub(NetworkedObject):
             caller.msg("\nUsage: patch cmd.exe describe <new description>")
             return True
 
-        # Check if caller is authorized (on ACL)
-        if not self.check_acl(caller):
-            caller.msg("|rAccess denied. You are not authorized to modify this hub.|n")
+        # Check if caller is authorized (level 5+ required)
+        if self.get_acl_level(caller) < 5:
+            caller.msg("|rAccess denied. You need authorization level 5 to modify this hub.|n")
             return False
 
         # Set new description
@@ -151,9 +151,9 @@ class Hub(NetworkedObject):
             caller.msg("\nExample: patch cmd.exe detail fountain A crystalline data fountain")
             return False
 
-        # Check authorization
-        if not self.check_acl(caller):
-            caller.msg("|rAccess denied. You are not authorized to modify this hub.|n")
+        # Check authorization (level 5+ required)
+        if self.get_acl_level(caller) < 5:
+            caller.msg("|rAccess denied. You need authorization level 5 to modify this hub.|n")
             return False
 
         detail_key = args[0].lower()
@@ -200,9 +200,9 @@ class Hub(NetworkedObject):
             caller.msg("Usage: patch cmd.exe remove_detail <key>")
             return False
 
-        # Check authorization
-        if not self.check_acl(caller):
-            caller.msg("|rAccess denied. You are not authorized to modify this hub.|n")
+        # Check authorization (level 5+ required)
+        if self.get_acl_level(caller) < 5:
+            caller.msg("|rAccess denied. You need authorization level 5 to modify this hub.|n")
             return False
 
         detail_key = args[0].lower()
@@ -283,7 +283,10 @@ class Hub(NetworkedObject):
             text += "\n|r[OFFLINE]|n Not connected to any network."
 
         # Add customization info if owner is looking
-        if self.check_acl(looker):
-            text += "\n|yThis is your hub. Jack in to customize it via cmd.exe.|n"
+        acl_level = self.get_acl_level(looker)
+        if acl_level >= 5:
+            text += f"\n|yYou have authorization level {acl_level}. Jack in to customize via cmd.exe.|n"
+        elif acl_level > 0:
+            text += f"\n|yYou have limited access (level {acl_level}).|n"
 
         return text

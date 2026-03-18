@@ -50,7 +50,7 @@ def device_main_menu(caller, raw_string, **kwargs):
             options.append({
                 "key": str(i),
                 "desc": cmd_name,
-                "goto": (_execute_command, {"device": device, "command": cmd_name, "from_matrix": from_matrix})
+                "goto": ("node_execute_command", {"device": device, "command": cmd_name, "from_matrix": from_matrix})
             })
 
     # Storage browsing if available
@@ -58,14 +58,14 @@ def device_main_menu(caller, raw_string, **kwargs):
         options.append({
             "key": "f",
             "desc": "Browse files",
-            "goto": (_browse_files, {"device": device, "from_matrix": from_matrix})
+            "goto": ("node_browse_files", {"device": device, "from_matrix": from_matrix})
         })
 
     # ACL management if authorized or via exploit
     options.append({
         "key": "a",
         "desc": "View ACL",
-        "goto": (_view_acl, {"device": device, "from_matrix": from_matrix})
+        "goto": ("node_view_acl", {"device": device, "from_matrix": from_matrix})
     })
 
     options.append({
@@ -77,7 +77,7 @@ def device_main_menu(caller, raw_string, **kwargs):
     return text, options
 
 
-def _execute_command(caller, raw_string, **kwargs):
+def node_execute_command(caller, raw_string, **kwargs):
     """
     Execute a device command, prompting for arguments if needed.
     """
@@ -93,13 +93,13 @@ def _execute_command(caller, raw_string, **kwargs):
 
     options = {
         "key": "_default",
-        "goto": (_process_command, {"device": device, "command": command, "from_matrix": from_matrix})
+        "goto": ("node_process_command", {"device": device, "command": command, "from_matrix": from_matrix})
     }
 
     return text, options
 
 
-def _process_command(caller, raw_string, **kwargs):
+def node_process_command(caller, raw_string, **kwargs):
     """
     Process the command with provided arguments.
     """
@@ -130,7 +130,7 @@ def _process_command(caller, raw_string, **kwargs):
     return text, options
 
 
-def _browse_files(caller, raw_string, **kwargs):
+def node_browse_files(caller, raw_string, **kwargs):
     """
     Browse files on device storage.
     """
@@ -160,7 +160,7 @@ def _browse_files(caller, raw_string, **kwargs):
         {
             "key": "r",
             "desc": "Read a file",
-            "goto": (_read_file_prompt, {"device": device, "from_matrix": from_matrix})
+            "goto": ("node_read_file_prompt", {"device": device, "from_matrix": from_matrix})
         },
         {
             "key": "b",
@@ -172,7 +172,7 @@ def _browse_files(caller, raw_string, **kwargs):
     return text, options
 
 
-def _read_file_prompt(caller, raw_string, **kwargs):
+def node_read_file_prompt(caller, raw_string, **kwargs):
     """
     Prompt for filename to read.
     """
@@ -184,13 +184,13 @@ def _read_file_prompt(caller, raw_string, **kwargs):
 
     options = {
         "key": "_default",
-        "goto": (_read_file, {"device": device, "from_matrix": from_matrix})
+        "goto": ("node_read_file", {"device": device, "from_matrix": from_matrix})
     }
 
     return text, options
 
 
-def _read_file(caller, raw_string, **kwargs):
+def node_read_file(caller, raw_string, **kwargs):
     """
     Read and display a file.
     """
@@ -213,13 +213,13 @@ def _read_file(caller, raw_string, **kwargs):
 
     options = {
         "key": "_default",
-        "goto": (_browse_files, {"device": device, "from_matrix": from_matrix})
+        "goto": ("node_browse_files", {"device": device, "from_matrix": from_matrix})
     }
 
     return text, options
 
 
-def _view_acl(caller, raw_string, **kwargs):
+def node_view_acl(caller, raw_string, **kwargs):
     """
     View device ACL.
     """
