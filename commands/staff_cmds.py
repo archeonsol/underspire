@@ -663,13 +663,17 @@ class CmdFind(Command):
 
             results.append(f"|w{obj_name}|n (#{obj_id}): {loc_text}{voided}")
 
-        # Use EvMore for pagination if more than 1 result
+        # Use EvMore for pagination only if many results (>20)
         if len(results) == 1:
             caller.msg(results[0])
+        elif len(results) <= 20:
+            caller.msg(f"Found {len(results)} matches for '{args}':")
+            for i, result in enumerate(results, 1):
+                caller.msg(f"  {i}. {result}")
         else:
             header = f"Found {len(results)} matches for '{args}':\n"
             output = header + "\n".join(f"  {i}. {result}" for i, result in enumerate(results, 1))
-            EvMore(caller, output, always_page=True)
+            EvMore(caller, output)
 
 
 class CmdAnnounce(Command):
