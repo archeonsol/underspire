@@ -156,3 +156,24 @@ class StaffPendingScript(Script):
 
 # Matrix scripts
 from typeclasses.matrix.scripts import MatrixCleanupScript, MatrixConnectionScript
+
+# typeclasses/scripts.py
+
+from evennia import DefaultScript
+
+class PCNoteStorage(DefaultScript):
+    """
+    A persistent, silent script that holds all PC notes.
+    It does not tick. It just acts as a database table.
+    """
+    def at_script_creation(self):
+        self.key = "pc_note_storage"
+        self.desc = "Stores all PC notes globally."
+        self.persistent = True
+
+        self.interval = 0       # Do not tick
+        self.repeats = 0        # Do not repeat
+        self.autodelete = False # NEVER delete yourself
+
+        self.db.notes = []
+        self.db.next_id = 1

@@ -166,11 +166,12 @@ class LongBladeWeapon(CombatWeapon):
         super().at_object_creation()
         self.db.weapon_key = WEAPON_KEY_LONG_BLADE
         self.db.damage_type = "slashing"
-        if not getattr(self.db, "weapon_template", None):
-            self.db.weapon_template = self.key
+        # If nothing more specific was set, default to a basic tunnel sword.
+        # Note: CombatWeapon.at_object_creation sets weapon_template to self.key by default,
+        # so we treat that as "unset" here.
+        if not getattr(self.db, "weapon_template", None) or self.db.weapon_template == self.key:
+            self.db.weapon_template = "Tunnel Shortsword"
         self._apply_weapon_template_defaults()
-        # Generic long blade defaults to a basic tunnel sword.
-        self.db.weapon_template = "Tunnel Shortsword"
         if not self.db.desc:
             self.db.desc = "A long blade: sword or similar."
 
@@ -184,11 +185,10 @@ class BluntWeapon(CombatWeapon):
         super().at_object_creation()
         self.db.weapon_key = WEAPON_KEY_BLUNT
         self.db.damage_type = "impact"
-        if not getattr(self.db, "weapon_template", None):
-            self.db.weapon_template = self.key
+        # If nothing more specific was set, default to an early crafted cudgel.
+        if not getattr(self.db, "weapon_template", None) or self.db.weapon_template == self.key:
+            self.db.weapon_template = "Bound Cudgel"
         self._apply_weapon_template_defaults()
-        # Generic blunt weapon defaults to an early crafted cudgel.
-        self.db.weapon_template = "Bound Cudgel"
         if not self.db.desc:
             self.db.desc = "A blunt weapon: club, bat, hammer, or similar."
 

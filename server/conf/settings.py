@@ -103,7 +103,7 @@ COMBAT_ROLLS = {
 
 # Optional: print combat roll debug to staff (Builder+) in the room.
 # This is very spammy; keep it False outside of tuning sessions.
-COMBAT_DEBUG_ROLLS = True
+COMBAT_DEBUG_ROLLS = False
 
 ######################################################################
 # Settings given in secret_settings.py override those in this file.

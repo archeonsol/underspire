@@ -6,7 +6,7 @@ from world.medical import BODY_PARTS, apply_trauma, get_brutal_hit_flavor
 from world.skills import SKILL_STATS, WEAPON_KEY_TO_SKILL, DEFENSE_SKILL
 from world.ammo import is_ranged_weapon
 from world.combat.weapon_definitions import WEAPON_DATA
-from world.combat_messages import hit_message, get_result_messages
+from world.combat.combat_messages import hit_message, get_result_messages, get_soak_messages
 from world.combat.damage_types import get_damage_type
 from world.armor import (
     get_armor_protection_for_location,
@@ -66,10 +66,28 @@ def _weapon_attack_table(weapon_key, weapon_obj, skill_level):
     tier = None
     if weapon_obj is not None and getattr(weapon_obj, "db", None):
         template_name = getattr(weapon_obj.db, "weapon_template", None)
+        tier = getattr(weapon_obj.db, "weapon_tier", None)
+
+        # If this object declares a specific template (or tier), we must use the tier system.
+        # This ensures a template weapon only ever uses its defined move list (names + damage ranges).
         if template_name:
             entry, tier = find_weapon_template(weapon_key, template_name)
+            # Common legacy case: weapon was renamed to the template name but weapon_template wasn't set right.
+            if not entry:
+                entry2, tier2 = find_weapon_template(weapon_key, getattr(weapon_obj, "key", None) or "")
+                if entry2:
+                    entry, tier = entry2, tier2
+                    try:
+                        weapon_obj.db.weapon_template = entry.get("name") or template_name
+                    except Exception:
+                        pass
+        # If still no entry, fall back to tier lookup (never to WEAPON_DATA when tiers are available).
         if not entry:
-            tier = getattr(weapon_obj.db, "weapon_tier", None)
+            try:
+                tier_int = int(tier) if tier is not None else 1
+            except Exception:
+                tier_int = 1
+            entry = get_weapon_tier(weapon_key, tier_int)
 
     if not isinstance(tier, int) or tier < 1:
         tier = 1
@@ -78,6 +96,7 @@ def _weapon_attack_table(weapon_key, weapon_obj, skill_level):
     if not entry:
         entry = get_weapon_tier(weapon_key, tier)
     if not entry:
+        # If weapon_tiers is importable but contains no data, keep combat functional.
         return WEAPON_DATA.get(weapon_key, WEAPON_DATA["fists"])
 
     attacks = list(entry.get("attacks") or [])
@@ -588,6 +607,7 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
             degrade_armor(armor_pieces, damage_type, reduction)
 
         if absorbed_fully and damage <= 0:
+            soak_templates = get_soak_messages(weapon_key, wielded_obj, move_name=move_name, shielded=bool(hit_shield))
             if hit_shield:
                 eff_for_atk = combat_display_name(effective_defender, attacker)
                 def_for_atk = combat_display_name(defender, attacker)
@@ -597,16 +617,32 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
                 def_for_eff = combat_display_name(defender, effective_defender)
                 atk_for_eff = combat_display_name(attacker, effective_defender)
                 attacker.msg(
-                    f"|cYour blow lands on {eff_for_atk}'s {body_part} — {def_for_atk} pulled them in the way — but their armor absorbs it.|n"
+                    (soak_templates.get("attacker") or "|cYour blow lands on {effective_defender}'s {loc} — {defender} pulled them in the way — but their armor absorbs it.|n").format(
+                        attacker=atk_for_def,
+                        defender=def_for_atk,
+                        effective_defender=eff_for_atk,
+                        loc=body_part,
+                    )
                 )
                 defender.msg(
-                    f"|cYou pull {eff_for_def} in the way. {atk_for_def}'s strike hits them but armor takes it.|n"
+                    (soak_templates.get("defender") or "|cYou pull {effective_defender} in the way. {attacker}'s strike hits them but armor takes it.|n").format(
+                        attacker=atk_for_def,
+                        defender=def_for_atk,
+                        effective_defender=eff_for_def,
+                        loc=body_part,
+                    )
                 )
                 effective_defender.msg(
-                    f"|c{def_for_eff} uses you as a shield. {atk_for_eff}'s blow hits your {body_part}; your armor takes it.|n"
+                    (soak_templates.get("effective_defender") or "|c{defender} uses you as a shield. {attacker}'s blow hits your {loc}; your armor takes it.|n").format(
+                        attacker=atk_for_eff,
+                        defender=def_for_eff,
+                        effective_defender=eff_for_eff,
+                        loc=body_part,
+                    )
                 )
                 loc = getattr(attacker, "location", None) or getattr(defender, "location", None)
                 if loc and hasattr(loc, "contents_get"):
+                    room_tpl = soak_templates.get("room") or "{defender} pulls {effective_defender} into the line of fire. {attacker}'s blow hits {effective_defender}'s {loc}, but their armor |csoaks the impact.|n"
                     for viewer in loc.contents_get(content_type="character"):
                         if viewer in (attacker, defender, effective_defender):
                             continue
@@ -614,25 +650,41 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
                         def_v = combat_display_name(defender, viewer)
                         eff_v = combat_display_name(effective_defender, viewer)
                         viewer.msg(
-                            f"{def_v} pulls {eff_v} into the line of fire. {atk_v}'s blow hits {eff_v}'s {body_part}, but their armor |csoaks the impact.|n"
+                            room_tpl.format(
+                                attacker=atk_v,
+                                defender=def_v,
+                                effective_defender=eff_v,
+                                loc=body_part,
+                            )
                         )
             else:
+                def_for_atk = combat_display_name(defender, attacker)
+                atk_for_def = combat_display_name(attacker, defender)
                 attacker.msg(
-                    f"|cYour blow lands on {combat_display_name(defender, attacker)}'s {body_part} but their armor absorbs it.|n"
+                    (soak_templates.get("attacker") or "|cYour blow lands on {defender}'s {loc}, but their armor absorbs it.|n").format(
+                        attacker=atk_for_def,
+                        defender=def_for_atk,
+                        effective_defender=def_for_atk,
+                        loc=body_part,
+                    )
                 )
                 defender.msg(
-                    f"|c{combat_display_name(attacker, defender)}'s strike hits your {body_part}; your armor takes it.|n"
+                    (soak_templates.get("defender") or "|c{attacker}'s strike hits your {loc}; your armor takes it.|n").format(
+                        attacker=atk_for_def,
+                        defender=def_for_atk,
+                        effective_defender=def_for_atk,
+                        loc=body_part,
+                    )
                 )
                 loc = getattr(attacker, "location", None) or getattr(defender, "location", None)
                 if loc and hasattr(loc, "contents_get"):
+                    room_tpl = soak_templates.get("room") or "{attacker}'s blow lands on {defender}'s {loc}, but their armor |cabsorbs the hit.|n"
                     for viewer in loc.contents_get(content_type="character"):
                         if viewer in (attacker, defender):
                             continue
                         atk_v = combat_display_name(attacker, viewer)
                         def_v = combat_display_name(defender, viewer)
-                        viewer.msg(
-                            f"{atk_v}'s blow lands on {def_v}'s {body_part}, but their armor |cabsorbs the hit.|n"
-                        )
+                        viewer.msg(room_tpl.format(attacker=atk_v, defender=def_v, loc=body_part))
         else:
             trauma_result = apply_trauma(
                 effective_defender,

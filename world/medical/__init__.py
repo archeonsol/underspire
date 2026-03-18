@@ -518,6 +518,15 @@ def get_brutal_hit_flavor(weapon_key, body_part, trauma_result, defender_name, a
     Uses damage type (slashing/impact/penetrating/burn/freeze/arc/void) for flavor. Returns (attacker_msg, defender_msg).
     """
     from world.combat.damage_types import get_damage_type
+    try:
+        # Reuse combat message profile resolution so we can specialize trauma per weapon template too.
+        from world.combat.combat_messages import get_message_profile_id
+    except Exception:
+        get_message_profile_id = None
+    try:
+        from world.medical.trauma_messages import TRAUMA_MESSAGE_PROFILES
+    except Exception:
+        TRAUMA_MESSAGE_PROFILES = {}
     if not trauma_result:
         return "", ""
     damage_type = get_damage_type(weapon_key, weapon_obj)
@@ -528,8 +537,37 @@ def get_brutal_hit_flavor(weapon_key, body_part, trauma_result, defender_name, a
     fracture = trauma_result.get("fracture")
     bleeding = trauma_result.get("bleeding")
 
+    profile_id = None
+    if callable(get_message_profile_id):
+        try:
+            profile_id = get_message_profile_id(str(weapon_key or "fists"), weapon_obj)
+        except Exception:
+            profile_id = None
+
+    def _profile_line(kind: str):
+        if not profile_id:
+            return None
+        prof = TRAUMA_MESSAGE_PROFILES.get(profile_id)
+        if not prof:
+            # Fall back to base weapon_key profile if template-specific isn't present.
+            prof = TRAUMA_MESSAGE_PROFILES.get(str(weapon_key or "fists"))
+        if not prof:
+            return None
+        table = prof.get(kind) or {}
+        tpl = table.get(damage_type)
+        if not tpl:
+            tpl = table.get("default")
+        if not tpl:
+            return None
+        atk_tpl, def_tpl = tpl
+        return atk_tpl.format(loc=loc), def_tpl.format(loc=loc)
+
     if organ:
-        if damage_type == "slashing":
+        prof_lines = _profile_line("organ")
+        if prof_lines:
+            lines_atk.append(prof_lines[0])
+            lines_def.append(prof_lines[1])
+        elif damage_type == "slashing":
             lines_atk.append(f"|rYou opened something vital at their {loc}.|n")
             lines_def.append(f"|rSomething inside your {loc} tore.|n")
         elif damage_type == "penetrating":
@@ -551,7 +589,11 @@ def get_brutal_hit_flavor(weapon_key, body_part, trauma_result, defender_name, a
             lines_atk.append(f"|rThat blow to their {loc} went deep. Something gave.|n")
             lines_def.append(f"|rSomething broke in your {loc}. Not bone.|n")
     if fracture:
-        if damage_type == "slashing":
+        prof_lines = _profile_line("fracture")
+        if prof_lines:
+            lines_atk.append(prof_lines[0])
+            lines_def.append(prof_lines[1])
+        elif damage_type == "slashing":
             lines_atk.append(f"|ySteel on bone at their {loc}. You felt it.|n")
             lines_def.append(f"|yThe blade hit bone in your {loc}.|n")
         elif damage_type == "impact":

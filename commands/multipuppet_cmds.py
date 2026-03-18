@@ -7,7 +7,8 @@ checks are not applied here; character-level commands use base_cmds.Command and 
 """
 
 from evennia.commands.command import Command as BaseCommand
-from evennia.utils import logger
+from evennia.commands.default.account import CmdIC, CmdOOC
+from evennia.utils import logger, search, utils
 from commands.media_cmds import _get_object_by_id
 
 
@@ -73,6 +74,260 @@ def _resolve_multi_puppet(account, index):
         return (result[0] if result else None), index
     except (TypeError, ValueError):
         return None, index
+
+
+class StaffOnlyPuppet(CmdIC):
+    """
+    Puppet a character. Staff only (one character per account for players).
+
+    This overrides Evennia's default `CmdIC` search behaviour to be a bit
+    more forgiving for NPCs with multi-word names: when run by a Builder+,
+    if the normal search does not find a match, we also accept partial
+    matches on any word of a character's key in the current room
+    (including surnames).
+    """
+
+    key = "@puppet"
+    aliases = []
+    locks = "cmd:perm(Builder)"
+
+    def func(self):
+        """
+        Staff-only puppet command with relaxed surname/partial matching and
+        integration with the multi-puppet system.
+        """
+        account = self.account
+        session = self.session
+
+        # Remember previous multi-puppet list so we can clear their links.
+        old_ids = list(getattr(account.db, "multi_puppets", None) or [])
+
+        new_character = None
+        character_candidates = []
+
+        args = (self.args or "").strip()
+
+        if not args:
+            # No argument: fall back to last puppet, like default CmdIC.
+            character_candidates = [account.db._last_puppet] if account.db._last_puppet else []
+            if not character_candidates:
+                self.msg("Usage: @puppet <character>")
+                return
+        else:
+            # --- First: use the same logic as Evennia's CmdIC.func ---
+            playables = account.characters
+            if playables:
+                character_candidates.extend(
+                    utils.make_iter(
+                        account.search(
+                            args,
+                            candidates=playables,
+                            search_object=True,
+                            quiet=True,
+                        )
+                    )
+                )
+
+            if account.locks.check_lockstring(account, "perm(Builder)"):
+                # Builder+ can puppet beyond their own characters.
+                local_matches = []
+                if session.puppet:
+                    # Local search from current puppet, as in CmdIC.
+                    local_matches = [
+                        char
+                        for char in session.puppet.search(args, quiet=True)
+                        if char.access(account, "puppet")
+                    ]
+                    character_candidates = list(local_matches) or character_candidates
+
+                    # --- Extra: surname/word-part matching in current room ---
+                    if not local_matches:
+                        loc = getattr(session.puppet, "location", None)
+                        if loc and hasattr(loc, "contents_get"):
+                            arg_low = args.lower()
+                            relaxed = []
+                            for obj in loc.contents_get(content_type="character"):
+                                if not obj.access(account, "puppet"):
+                                    continue
+                                key_low = (obj.key or "").lower()
+                                words = key_low.split()
+                                if any(w.startswith(arg_low) for w in words) or arg_low in key_low:
+                                    relaxed.append(obj)
+                            if relaxed:
+                                character_candidates = list(relaxed)
+
+                # If we still have no candidates at all, fall back to the
+                # global object search from CmdIC (keeps default behaviour).
+                if not character_candidates:
+                    character_candidates.extend(
+                        [
+                            char
+                            for char in search.object_search(args)
+                            if char.access(account, "puppet")
+                        ]
+                    )
+
+        # --- Handle candidates (same semantics as CmdIC) ---
+        if not character_candidates:
+            self.msg("That is not a valid character choice.")
+            return
+        if len(character_candidates) > 1:
+            self.msg(
+                "Multiple targets with the same name:\n %s"
+                % ", ".join("%s(#%s)" % (obj.key, obj.id) for obj in character_candidates)
+            )
+            return
+
+        new_character = character_candidates[0]
+
+        # --- Perform the actual puppeting (same as CmdIC) ---
+        try:
+            account.puppet_object(session, new_character)
+            account.db._last_puppet = new_character
+            logger.log_sec(
+                f"Puppet Success: (Caller: {account}, Target: {new_character}, IP:"
+                f" {self.session.address})."
+            )
+        except RuntimeError as exc:
+            self.msg(f"|rYou cannot become |C{new_character.name}|n: {exc}")
+            logger.log_sec(
+                f"Puppet Failed: {account} -> {new_character} ({self.session.address}): {exc}"
+            )
+            return
+
+        # --- Reset multi-puppet links so @puppet is always 'p1' ---
+        for oid in old_ids:
+            obj = _get_object_by_id(oid)
+            if obj and hasattr(obj, "db"):
+                for key in ("_multi_puppet_account_id", "_multi_puppet_slot"):
+                    if hasattr(obj.db, key):
+                        try:
+                            del obj.db[key]
+                        except Exception:
+                            pass
+
+        if getattr(self.session, "puppet", None):
+            account.db.multi_puppets = [self.session.puppet.id]
+            _set_multi_puppet_link(self.session.puppet, account.id, 1)
+
+
+class StaffOnlyUnpuppet(CmdOOC):
+    """
+    Unpuppet / leave character. Staff only.
+
+    Usage:
+      @unpuppet              - fully unpuppet (legacy behaviour)
+      @unpuppet all          - keep p1 puppeted, drop p2, p3, ... from multi-puppet set
+      @unpuppet p2 p3 ...    - drop specific multi-puppet slots while keeping p1
+    """
+
+    key = "@unpuppet"
+    aliases = []
+    locks = "cmd:perm(Builder)"
+
+    def func(self):
+        """
+        Staff unpuppet:
+          - No args: unpuppet completely (current behaviour).
+          - Args like 'p2 p3 p4': drop those multi-puppet slots only, keeping p1 puppeted.
+        """
+        args = (self.args or "").strip()
+
+        # No arguments: full unpuppet + clear all multi-puppets (legacy behaviour).
+        if not args:
+            _clear_multi_puppet_links_for_account(self.account)
+            super().func()
+            if hasattr(self.account, "db"):
+                self.account.db.multi_puppets = []
+            return
+
+        # Special case: "@unpuppet all" -> keep p1, drop all extra puppets (p2+).
+        if args.lower() == "all":
+            ids = _multi_puppet_list(self.account)
+            if not ids:
+                self.caller.msg("You have no puppets in your set.")
+                return
+            if len(ids) == 1:
+                self.caller.msg("Only p1 is in your puppet set; nothing to unpuppet.")
+                return
+            keep_id = ids[0]
+            removed_ids = ids[1:]
+            removed_names = []
+            for oid in removed_ids:
+                obj = _get_object_by_id(oid)
+                if obj and hasattr(obj, "db"):
+                    removed_names.append(obj.get_display_name(self.caller))
+                    for key in ("_multi_puppet_account_id", "_multi_puppet_slot"):
+                        if hasattr(obj.db, key):
+                            try:
+                                delattr(obj.db, key) if False else obj.db.__delitem__(key)
+                            except Exception:
+                                pass
+            if hasattr(self.account, "db"):
+                self.account.db.multi_puppets = [keep_id]
+            # Ensure p1 still has correct link.
+            first = _get_object_by_id(keep_id)
+            if first:
+                _set_multi_puppet_link(first, self.account.id, 1)
+            if removed_names:
+                self.caller.msg("Unpuppeted: %s (p2+). You remain puppeting p1." % ", ".join(removed_names))
+            else:
+                self.caller.msg("Multi-puppet set trimmed; you remain puppeting p1.")
+            return
+
+        # With arguments: interpret as one or more p-slots (p2, p3, ...). Only drop those slots.
+        tokens = args.split()
+        indices_to_remove = set()
+        wants_full_unpuppet = False
+        for tok in tokens:
+            tok = tok.lower()
+            if tok.startswith("p") and tok[1:].isdigit():
+                idx = int(tok[1:]) - 1  # p1 -> 0, p2 -> 1, ...
+                if idx == 0:
+                    # Asking to unpuppet p1 too – treat as full unpuppet.
+                    wants_full_unpuppet = True
+                elif idx > 0:
+                    indices_to_remove.add(idx)
+
+        if wants_full_unpuppet or not indices_to_remove:
+            # Fall back to full unpuppet if p1 requested or nothing valid parsed.
+            _clear_multi_puppet_links_for_account(self.account)
+            super().func()
+            if hasattr(self.account, "db"):
+                self.account.db.multi_puppets = []
+            return
+
+        # Remove selected multi-puppet slots while keeping main puppet (p1) active.
+        ids = _multi_puppet_list(self.account)
+        if not ids:
+            self.caller.msg("You have no puppets in your set.")
+            return
+
+        removed_names = []
+        # Work from highest index down so list pops don't shift earlier indices.
+        for idx in sorted(indices_to_remove, reverse=True):
+            if 0 <= idx < len(ids):
+                oid = ids[idx]
+                obj = _get_object_by_id(oid)
+                if obj and hasattr(obj, "db"):
+                    removed_names.append(obj.get_display_name(self.caller))
+                    for key in ("_multi_puppet_account_id", "_multi_puppet_slot"):
+                        if hasattr(obj.db, key):
+                            try:
+                                del obj.db[key]
+                            except Exception:
+                                pass
+                ids.pop(idx)
+
+        # Re-number remaining slots and persist.
+        if hasattr(self.account, "db"):
+            self.account.db.multi_puppets = ids
+        for slot, oid in enumerate(ids, start=1):
+            obj = _get_object_by_id(oid)
+            if obj:
+                _set_multi_puppet_link(obj, self.account.id, slot)
+        if removed_names:
+            self.caller.msg("Unpuppeted: %s" % ", ".join(removed_names))
 
 
 class CmdAddPuppet(BaseCommand):
