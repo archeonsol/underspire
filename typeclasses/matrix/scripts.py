@@ -7,6 +7,7 @@ MatrixCleanupScript - Periodically removes empty ephemeral Matrix nodes
 """
 
 from evennia.scripts.scripts import DefaultScript
+from world.utils import get_containing_room
 
 
 class MatrixCleanupScript(DefaultScript):
@@ -81,24 +82,16 @@ class MatrixCleanupScript(DefaultScript):
                     interface_node = MatrixNode.objects.get(pk=interface_id)
                 except MatrixNode.DoesNotExist:
                     pass
+parent_device = cluster.db.parent_device
 
-            # Check if device is connected to network (walk up location chain to find room)
-            device_connected = False
-            current_location = parent_device.location
-            depth = 0
-            actual_room = None
+# Check if device is connected to network
+device_connected = False
+actual_room = get_containing_room(parent_device)
 
-            while current_location and depth < 10:
-                if isinstance(current_location, Room):
-                    actual_room = current_location
-                    break
-                current_location = current_location.location
-                depth += 1
-
-            if actual_room:
-                network_router = getattr(actual_room.db, 'network_router', None)
-                if network_router:
-                    device_connected = True
+if actual_room:
+    network_router = getattr(actual_room.db, 'network_router', None)
+    if network_router:
+        device_connected = True
 
             # If device lost connectivity, eject any avatars in the cluster
             if not device_connected:

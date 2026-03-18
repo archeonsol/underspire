@@ -6,6 +6,7 @@ Mixins providing shared functionality for Matrix-related classes.
 NetworkedMixin - Provides Matrix connectivity for both objects and items
 """
 
+from world.utils import get_containing_room
 from .matrix_id import MatrixIdMixin
 
 
@@ -187,7 +188,7 @@ class NetworkedMixin(MatrixIdMixin):
         Returns:
             Router: The router this device connects through, or None if not connected
         """
-        room = self.location
+        room = get_containing_room(self)
         if not room:
             return None
 
