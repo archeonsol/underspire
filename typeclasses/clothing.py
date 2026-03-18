@@ -33,6 +33,72 @@ class Clothing(Item):
         # See-through clothing (jewelry, mesh, etc.): when True, does not replace body-part text.
         if not hasattr(self.db, "see_thru"):
             self.db.see_thru = False
+        # Optional two-state support (for zipping, hoods, etc.).
+        # db.state: current active state key (e.g. "a" or "b"). None → no special state handling.
+        # db.state_a / db.state_b: optional dicts with overrides for this state:
+        #   {
+        #       "covered_parts": [...],
+        #       "worn_desc": "text",
+        #       "see_thru": bool,
+        #       "toggle_emote_you": "You zip up $N's jacket.",  # room text auto-derived from this
+        #   }
+        if not hasattr(self.db, "state"):
+            self.db.state = None
+        if not hasattr(self.db, "state_a"):
+            self.db.state_a = None
+        if not hasattr(self.db, "state_b"):
+            self.db.state_b = None
+
+    def has_two_states(self):
+        """
+        Return True if this garment is configured with two states.
+
+        A stateful garment can define db.state_a and db.state_b as small config dicts.
+        """
+        return bool(getattr(self.db, "state_a", None) and getattr(self.db, "state_b", None))
+
+    def get_state_config(self, key):
+        """
+        Return the config dict for the given state key ("a" or "b"), or None.
+        """
+        if key == "a":
+            return getattr(self.db, "state_a", None) or None
+        if key == "b":
+            return getattr(self.db, "state_b", None) or None
+        return None
+
+    def apply_state(self, key):
+        """
+        Apply a configured state ("a" or "b") to this garment.
+
+        Copies values from the state config into live db fields so the clothing
+        system (world.clothing) sees the new coverage/description immediately.
+        """
+        cfg = self.get_state_config(key)
+        if not cfg:
+            return False
+        covered = cfg.get("covered_parts")
+        if covered is not None:
+            self.db.covered_parts = list(covered)
+        if "worn_desc" in cfg:
+            self.db.worn_desc = cfg.get("worn_desc") or ""
+        if "see_thru" in cfg:
+            self.db.see_thru = bool(cfg.get("see_thru"))
+        self.db.state = key
+        return True
+
+    def toggle_state(self):
+        """
+        Toggle between state "a" and "b" when both are configured.
+        Returns a tuple (new_key, cfg) or (None, None) if no change.
+        """
+        if not self.has_two_states():
+            return None, None
+        current = getattr(self.db, "state", None)
+        new_key = "b" if current == "a" else "a"
+        if not self.apply_state(new_key):
+            return None, None
+        return new_key, self.get_state_config(new_key)
 
     def get_display_desc(self, looker, **kwargs):
         """Main description plus quality line when set (from tailoring finalize)."""

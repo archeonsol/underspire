@@ -122,7 +122,7 @@ class CmdRepairArmor(Command):
 
 class CmdTailor(Command):
     """
-    Tailor clothing from a bolt of material: set name, coverage, descriptions, tease, then finalize into a wearable garment.
+    Tailor clothing from a bolt of material: set name, coverage, descriptions, tease, optional alt-state, then finalize into a wearable garment.
 
     Usage:
       @tailor [bolt]                        - show draft status
@@ -133,6 +133,7 @@ class CmdTailor(Command):
       @tailor [bolt] tease <text>          - tease message ($N/$P/$S, $T/$R/$U, $I; see help tease)
       @tailor [bolt] coverage <part...>    - body parts covered (head, larm, torso, lthigh, etc.)
       @tailor [bolt] seethru               - toggle see-through (body/clothes show through this layer)
+      @tailor [bolt] altstate              - switch tailoring edits between primary (A) and alternate (B) state
       @tailor [bolt] finalize              - roll tailoring and turn bolt into wearable clothing
 
     Layering:
@@ -171,7 +172,7 @@ class CmdTailor(Command):
         bolt_spec, subcmd, value = tailor_parse_args(self.args)
 
         if not bolt_spec and not subcmd:
-            caller.msg("Usage: @tailor [bolt] [name|aliases|desc|worndesc|tease|coverage|seethru|finalize] ...")
+            caller.msg("Usage: @tailor [bolt] [name|aliases|desc|worndesc|tease|coverage|seethru|altstate|finalize] ...")
             return
 
         if bolt_spec:
@@ -196,19 +197,42 @@ class CmdTailor(Command):
         if not subcmd:
             # Status
             st = bolt.get_draft_status()
+            active = getattr(bolt.db, "draft_active_state", "a") or "a"
+
             caller.msg("|wDraft status|n for %s:" % bolt.get_display_name(caller))
             caller.msg("  Material: %s" % st.get("material", "bolt of cloth"))
-            caller.msg("  Name: %s" % st["name"])
-            caller.msg("  Aliases: %s" % (st["aliases"] or "(none)"))
+
+            # Name and aliases are primary (A) properties; hide them when viewing B.
+            if active == "a":
+                caller.msg("  Name: %s" % st["name"])
+                caller.msg("  Aliases: %s" % (st["aliases"] or "(none)"))
+
             caller.msg("  Desc: %s" % (st["desc"] or "(none)"))
             caller.msg("  Worn: %s" % (st["worn_desc"] or "(none)"))
             caller.msg("  Tease: %s" % (st["tease"] or "(none)"))
             caller.msg("  Coverage: %s" % (st["covered_parts"] or "(none)"))
             see = getattr(bolt.db, "draft_see_thru", False)
             caller.msg("  See-thru: %s" % ("yes" if see else "no"))
+
+            # Show toggleemote-you for the currently active alt-state (A/B) so tailors
+            # can see, at a glance, what will fire on toggle without leaving this menu.
+            if active == "b":
+                cfg = getattr(bolt.db, "draft_state_b", None) or {}
+                label = "B"
+            else:
+                cfg = getattr(bolt.db, "draft_state_a", None) or {}
+                label = "A"
+            t_you = cfg.get("toggle_emote_you") if cfg else None
+            caller.msg("  %s toggleemote-you: %s" % (label, t_you or "(none)"))
             return
 
         if subcmd == "name":
+            # Name is a primary (A) property; prevent editing while in alt/B view
+            # to avoid confusion. Use altstate to swap back to A first.
+            active = getattr(bolt.db, "draft_active_state", "a") or "a"
+            if active == "b":
+                caller.msg("You can only change the garment's name while in primary (A) state. Use @tailor [bolt] altstate to switch back.")
+                return
             if not value:
                 caller.msg("Usage: @tailor [bolt] name <name>")
                 return
@@ -217,6 +241,11 @@ class CmdTailor(Command):
             return
 
         if subcmd == "aliases":
+            # Aliases are also shared; only editable in primary (A) view.
+            active = getattr(bolt.db, "draft_active_state", "a") or "a"
+            if active == "b":
+                caller.msg("You can only change aliases while in primary (A) state. Use @tailor [bolt] altstate to switch back.")
+                return
             aliases = value.split() if value else []
             bolt.db.draft_aliases = aliases
             caller.msg("Draft aliases set to: %s" % (aliases or "(none)"))
@@ -228,16 +257,30 @@ class CmdTailor(Command):
             return
 
         if subcmd in ("worndesc", "worn"):
-            bolt.db.draft_worn_desc = value or ""
-            caller.msg("Draft worn description set.")
+            active = getattr(bolt.db, "draft_active_state", "a") or "a"
+            if active == "b":
+                cfg = getattr(bolt.db, "draft_state_b", None) or {}
+                cfg["worn_desc"] = value or ""
+                bolt.db.draft_state_b = cfg
+                caller.msg("Draft alternate (state B) worn description set.")
+            else:
+                bolt.db.draft_worn_desc = value or ""
+                caller.msg("Draft worn description set.")
             return
 
         if subcmd == "tease":
             if any(q in (value or "") for q in ('"', "'")):
                 caller.msg("Tease messages cannot contain quotes. Avoid using \" or ' in the text.")
                 return
-            bolt.db.draft_tease = value or ""
-            caller.msg("Draft tease message set.")
+            active = getattr(bolt.db, "draft_active_state", "a") or "a"
+            if active == "b":
+                cfg = getattr(bolt.db, "draft_state_b", None) or {}
+                cfg["tease"] = value or ""
+                bolt.db.draft_state_b = cfg
+                caller.msg("Draft alternate (state B) tease message set.")
+            else:
+                bolt.db.draft_tease = value or ""
+                caller.msg("Draft tease message set.")
             return
 
         if subcmd == "coverage":
@@ -248,14 +291,135 @@ class CmdTailor(Command):
             if invalid:
                 caller.msg("Unknown body parts: %s. Use: %s" % (", ".join(invalid), ", ".join(BODY_PARTS_HEAD_TO_FEET)))
                 return
-            bolt.db.draft_covered_parts = canonical
-            caller.msg("Coverage set to: %s" % canonical)
+            active = getattr(bolt.db, "draft_active_state", "a") or "a"
+            if active == "b":
+                cfg = getattr(bolt.db, "draft_state_b", None) or {}
+                cfg["covered_parts"] = canonical
+                bolt.db.draft_state_b = cfg
+                caller.msg("Alternate (state B) coverage set to: %s" % canonical)
+            else:
+                bolt.db.draft_covered_parts = canonical
+                caller.msg("Coverage set to: %s" % canonical)
             return
 
         if subcmd in ("seethru", "see-thru"):
-            current = bool(getattr(bolt.db, "draft_see_thru", False))
-            bolt.db.draft_see_thru = not current
-            caller.msg("See-thru set to: %s" % ("yes" if bolt.db.draft_see_thru else "no"))
+            active = getattr(bolt.db, "draft_active_state", "a") or "a"
+            if active == "b":
+                cfg = getattr(bolt.db, "draft_state_b", None) or {}
+                current = bool(cfg.get("see_thru", False))
+                cfg["see_thru"] = not current
+                bolt.db.draft_state_b = cfg
+                caller.msg(
+                    "Alternate (state B) see-thru set to: %s"
+                    % ("yes" if cfg["see_thru"] else "no")
+                )
+            else:
+                current = bool(getattr(bolt.db, "draft_see_thru", False))
+                bolt.db.draft_see_thru = not current
+                caller.msg("See-thru set to: %s" % ("yes" if bolt.db.draft_see_thru else "no"))
+            return
+
+        if subcmd in ("statea", "stateb"):
+            # Configure optional two-state behavior for the finished garment.
+            # Usage examples:
+            #   @tailor <bolt> statea coverage torso head
+            #   @tailor <bolt> statea worndesc <text>
+            #   @tailor <bolt> statea seethru
+            #   @tailor <bolt> statea toggleemote-you <text>
+            #   @tailor <bolt> statea clear
+            attr_name = "draft_state_a" if subcmd == "statea" else "draft_state_b"
+            cfg = getattr(bolt.db, attr_name, None) or {}
+
+            # If called without further args, show the per-state menu/status only for
+            # that state, including toggleemote-* values.
+            if not value:
+                cov = cfg.get("covered_parts") if cfg else None
+                worn = cfg.get("worn_desc") if cfg else None
+                see_flag = None
+                if cfg and "see_thru" in cfg:
+                    see_flag = "yes" if cfg.get("see_thru") else "no"
+                t_you = cfg.get("toggle_emote_you") if cfg else None
+                t_room = cfg.get("toggle_emote_room") if cfg else None
+
+                label = "A" if subcmd == "statea" else "B"
+                caller.msg(f"|wState {label} config|n for {bolt.get_display_name(caller)}:")
+                caller.msg("  Coverage: %s" % (cov or "(none)"))
+                caller.msg("  Worn: %s" % (worn or "(none)"))
+                caller.msg("  See-thru: %s" % (see_flag if see_flag is not None else "(none)"))
+                caller.msg("  toggleemote-you (when leaving state %s): %s" % (label, t_you or "(none)"))
+                caller.msg(
+                    "  Use: @tailor [bolt] %s <coverage|worndesc|seethru|toggleemote-you|clear> ..."
+                    % subcmd
+                )
+                return
+
+            parts = value.split(None, 1)
+            field = parts[0].lower()
+            rest = parts[1] if len(parts) > 1 else ""
+
+            if field == "clear":
+                setattr(bolt.db, attr_name, None)
+                caller.msg("Draft %s configuration cleared." % ("state A" if subcmd == "statea" else "state B"))
+                return
+
+            if field == "coverage":
+                from typeclasses.bolt_of_cloth import resolve_coverage_args
+                from world.medical import BODY_PARTS_HEAD_TO_FEET
+
+                cov_parts = rest.split() if rest else []
+                canonical, invalid = resolve_coverage_args(cov_parts)
+                if invalid:
+                    caller.msg(
+                        "Unknown body parts: %s. Use: %s"
+                        % (", ".join(invalid), ", ".join(BODY_PARTS_HEAD_TO_FEET))
+                    )
+                    return
+                cfg["covered_parts"] = canonical
+                setattr(bolt.db, attr_name, cfg)
+                caller.msg(
+                    "Draft %s coverage set to: %s"
+                    % (subcmd, canonical or "(none)")
+                )
+                return
+
+            if field in ("worndesc", "worn"):
+                cfg["worn_desc"] = rest or ""
+                setattr(bolt.db, attr_name, cfg)
+                caller.msg("Draft %s worn description set." % subcmd)
+                return
+
+            if field in ("seethru", "see-thru", "see"):
+                current = bool(cfg.get("see_thru", False))
+                cfg["see_thru"] = not current
+                setattr(bolt.db, attr_name, cfg)
+                caller.msg(
+                    "Draft %s see-thru set to: %s"
+                    % (subcmd, "yes" if cfg["see_thru"] else "no")
+                )
+                return
+
+            if field in ("toggleemote-you", "toggleemoteyou", "toggleemote_you"):
+                cfg["toggle_emote_you"] = rest or ""
+                setattr(bolt.db, attr_name, cfg)
+                caller.msg("Draft %s toggleemote-you text set." % subcmd)
+                return
+
+            caller.msg(
+                "Unknown %s option. Use: coverage, worndesc, seethru, toggleemote-you, clear."
+                % subcmd
+            )
+            return
+
+        if subcmd == "altstate":
+            # Toggle which state @tailor edits/views: primary (A) or alternate (B).
+            current = getattr(bolt.db, "draft_active_state", "a") or "a"
+            new_state = "b" if current == "a" else "a"
+            bolt.db.draft_active_state = new_state
+            # Ensure a draft_state_b dict exists when switching into B, so later edits have a place to live.
+            if new_state == "b" and not getattr(bolt.db, "draft_state_b", None):
+                bolt.db.draft_state_b = {}
+            label = "alternate (state B)" if new_state == "b" else "primary (state A)"
+            caller.msg(f"@tailor now editing the {label} configuration.")
             return
 
         if subcmd == "finalize":
@@ -264,4 +428,6 @@ class CmdTailor(Command):
             caller.msg(msg)
             return
 
-        caller.msg("Unknown subcommand. Use: name, aliases, desc, worndesc, tease, coverage, seethru, finalize.")
+        caller.msg(
+            "Unknown subcommand. Use: name, aliases, desc, worndesc, tease, coverage, seethru, statea, stateb, finalize."
+        )

@@ -617,6 +617,87 @@ class CmdRemove(Command):
                 viewer.msg(f"{vcaller} removes {vitem}.")
 
 
+class CmdToggleClothing(Command):
+    """
+    Toggle a two-state garment you're wearing (zip/unzip, hood up/down, etc.).
+
+    Usage:
+      toggle <clothing>
+
+    This works for any clothing item configured with two states (state_a and state_b
+    on the garment's db). The garment defines what each state does to coverage,
+    description, and any emote text.
+    """
+
+    key = "toggle"
+    aliases = ["adjust"]
+    locks = "cmd:all()"
+    help_category = "General"
+    usage_typeclasses = ["typeclasses.clothing.Clothing"]
+    usage_hint = "|wtoggle|n"
+
+    def func(self):
+        caller = self.caller
+        if not self.args or not self.args.strip():
+            caller.msg("Toggle what?")
+            return
+
+        target = caller.search(self.args.strip(), location=caller)
+        if not target:
+            return
+
+        from typeclasses.clothing import Clothing
+
+        if not isinstance(target, Clothing):
+            caller.msg(f"{target.get_display_name(caller)} isn't something you can adjust that way.")
+            return
+
+        worn = caller.db.worn or []
+        if target not in worn:
+            caller.msg(f"You're not wearing {target.get_display_name(caller)}.")
+            return
+
+        if not target.has_two_states():
+            caller.msg(f"{target.get_display_name(caller)} doesn't have an alternate state to toggle.")
+            return
+
+        # Remember which state we were in before toggling; this determines which
+        # toggle emote config to use (source state → emote).
+        old_key = getattr(target.db, "state", None) or "a"
+
+        new_key, _cfg = target.toggle_state()
+        if not new_key:
+            caller.msg("Nothing seems to happen.")
+            return
+
+        # Optional per-state toggle emote text, pulled from the *source* state config:
+        # - When toggling A → B, use state A's toggleemote-*.
+        # - When toggling B → A, use state B's toggleemote-*.
+        cfg = target.get_state_config(old_key)
+        you_emote = cfg.get("toggle_emote_you") if cfg else None
+
+        item_name_you = target.get_display_name(caller) if hasattr(target, "get_display_name") else target.name
+        if you_emote:
+            from world.crafting import substitute_clothing_desc
+
+            caller.msg(substitute_clothing_desc(you_emote, caller, item=target))
+        else:
+            caller.msg(f"You adjust {item_name_you}.")
+
+        if caller.location and hasattr(caller.location, "contents_get"):
+            for viewer in caller.location.contents_get(content_type="character"):
+                if viewer == caller:
+                    continue
+                vcaller = caller.get_display_name(viewer) if hasattr(caller, "get_display_name") else caller.name
+                vitem = target.get_display_name(viewer) if hasattr(target, "get_display_name") else target.name
+                if you_emote:
+                    from world.crafting import substitute_clothing_desc
+
+                    viewer.msg(substitute_clothing_desc(you_emote, caller, item=target))
+                else:
+                    viewer.msg(f"{vcaller} adjusts {vitem}.")
+
+
 class CmdStrip(Command):
     """
     Take off a worn item from yourself or from another (living or corpse).

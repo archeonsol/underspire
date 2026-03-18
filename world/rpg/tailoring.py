@@ -125,6 +125,33 @@ def finalize_bolt_to_clothing(bolt, caller):
     bolt.db.quality_adjective = adjective
     bolt.db.quality_score = quality_score
 
+    # Optional two-state configuration for stateful garments (zips, hoods, etc.)
+    draft_state_a = getattr(bolt.db, "draft_state_a", None)
+    draft_state_b = getattr(bolt.db, "draft_state_b", None)
+
+    # If only an alternate (B) draft exists, derive primary (A) from the main draft
+    # fields so that state A = "normal" and state B = "alternate".
+    if draft_state_b and not draft_state_a:
+        base_cfg = {}
+        if getattr(bolt.db, "draft_covered_parts", None):
+            base_cfg["covered_parts"] = list(getattr(bolt.db, "draft_covered_parts") or [])
+        if getattr(bolt.db, "draft_worn_desc", None):
+            base_cfg["worn_desc"] = getattr(bolt.db, "draft_worn_desc") or ""
+        if hasattr(bolt.db, "draft_see_thru"):
+            base_cfg["see_thru"] = bool(getattr(bolt.db, "draft_see_thru", False))
+        draft_state_a = base_cfg or None
+
+    if draft_state_a and draft_state_b:
+        try:
+            # Store on finished clothing; Clothing helpers know how to use these.
+            bolt.db.state_a = dict(draft_state_a)
+            bolt.db.state_b = dict(draft_state_b)
+            # Default initial state is "a".
+            bolt.db.state = "a"
+        except Exception:
+            # If anything goes wrong, fail silently; garment remains non-stateful.
+            pass
+
     for k in (
         "draft_name",
         "draft_aliases",
@@ -133,6 +160,8 @@ def finalize_bolt_to_clothing(bolt, caller):
         "draft_tease",
         "draft_covered_parts",
         "draft_see_thru",
+        "draft_state_a",
+        "draft_state_b",
         "material_type",
     ):
         if bolt.attributes.has(k):
@@ -187,6 +216,9 @@ TAILOR_SUBCMDS = [
     "coverage",
     "seethru",
     "see-thru",
+    "statea",
+    "stateb",
+    "altstate",
     "finalize",
 ]
 

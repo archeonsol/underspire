@@ -72,7 +72,7 @@ COMBAT_ROLLS = {
     # Rating model:
     # - "multiplicative" uses: R = c_mul * stat_eff * (1 + alpha*(skill/150)) + mods
     # - stat_eff can be raw stat sum or a diminishing-returns transform (dr_mode)
-    "rating_model": "multiplicative",
+    "rating_model": "additive",
 
     # Diminishing returns on stats before rating (Option D)
     # "log" compresses very high stat sums so stacking has less runaway impact.
