@@ -6,8 +6,10 @@ Mixins providing shared functionality for Matrix-related classes.
 NetworkedMixin - Provides Matrix connectivity for both objects and items
 """
 
+from .matrix_id import MatrixIdMixin
 
-class NetworkedMixin:
+
+class NetworkedMixin(MatrixIdMixin):
     """
     Mixin providing Matrix connectivity for physical devices.
 
@@ -36,50 +38,32 @@ class NetworkedMixin:
         self.db.device_commands = {}  # Registered commands: {command_name: handler_function_name}
         self.db.interface_desc = None  # Custom description for device interface room
 
-    def get_or_create_node(self):
-        """
-        Get this device's Matrix node, creating it if it doesn't exist.
-
-        DEPRECATED: Use get_or_create_cluster() for ephemeral device interfaces.
-        This method is kept for backward compatibility with persistent nodes.
-
-        The node is a virtual room in the Matrix that represents this physical
-        device. When someone dives into this device, they enter its node.
-
-        Returns:
-            MatrixNode: The Matrix room representing this device
-        """
-        if not self.db.matrix_node:
-            from typeclasses.matrix.rooms import MatrixNode
-            self.db.matrix_node = MatrixNode.create_for_device(self)
-        return self.db.matrix_node
-
     def get_or_create_cluster(self):
         """
         Get or create the ephemeral 2-room cluster for this device.
 
-        Creates a vestibule (ICE room) and interface room on first access.
+        Creates a checkpoint (ICE room) and interface room on first access.
         Both rooms are ephemeral and will be cleaned up when empty.
 
         Returns:
-            dict: {'vestibule': MatrixNode, 'interface': MatrixNode} or None on failure
+            dict: {'checkpoint': MatrixNode, 'interface': MatrixNode} or None on failure
         """
         from typeclasses.matrix.rooms import MatrixNode
         from evennia.utils.create import create_object
 
         # Check if cluster already exists
-        vestibule_dbref = getattr(self.db, 'vestibule_node', None)
+        checkpoint_dbref = getattr(self.db, 'checkpoint_node', None)
         interface_dbref = getattr(self.db, 'interface_node', None)
 
-        vestibule = None
+        checkpoint = None
         interface = None
 
         # Try to load existing rooms
-        if vestibule_dbref:
+        if checkpoint_dbref:
             try:
-                vestibule = MatrixNode.objects.get(pk=vestibule_dbref)
+                checkpoint = MatrixNode.objects.get(pk=checkpoint_dbref)
             except MatrixNode.DoesNotExist:
-                self.db.vestibule_node = None
+                self.db.checkpoint_node = None
 
         if interface_dbref:
             try:
@@ -88,13 +72,13 @@ class NetworkedMixin:
                 self.db.interface_node = None
 
         # If both exist, return them
-        if vestibule and interface:
-            return {'vestibule': vestibule, 'interface': interface}
+        if checkpoint and interface:
+            return {'checkpoint': checkpoint, 'interface': interface}
 
         # Clean up partial cluster
-        if vestibule:
-            vestibule.delete()
-            self.db.vestibule_node = None
+        if checkpoint:
+            checkpoint.delete()
+            self.db.checkpoint_node = None
         if interface:
             interface.delete()
             self.db.interface_node = None
@@ -102,19 +86,22 @@ class NetworkedMixin:
         # Create new cluster
         device_type = getattr(self.db, 'device_type', 'device')
 
+        # Get Matrix ID for this device
+        matrix_id = self.get_matrix_id()
+
         # Create checkpoint
-        vestibule = create_object(
+        checkpoint = create_object(
             MatrixNode,
-            key=f"{self.key} :: Checkpoint"
+            key=f"{matrix_id} :: Checkpoint"
         )
-        if not vestibule:
+        if not checkpoint:
             return None
 
-        vestibule.db.parent_object = self
-        vestibule.db.is_vestibule = True
-        vestibule.db.ephemeral = True
-        vestibule.db.node_type = "device_vestibule"
-        vestibule.db.desc = (
+        checkpoint.db.parent_object = self
+        checkpoint.db.is_checkpoint = True
+        checkpoint.db.ephemeral = True
+        checkpoint.db.node_type = "device_checkpoint"
+        checkpoint.db.desc = (
             "A stark virtual checkpoint. Security protocols hum in the background, "
             "ready to spawn defensive ICE at the first sign of unauthorized access."
         )
@@ -122,10 +109,10 @@ class NetworkedMixin:
         # Create interface room
         interface = create_object(
             MatrixNode,
-            key=f"{self.key} :: Interface"
+            key=f"{matrix_id} :: Interface"
         )
         if not interface:
-            vestibule.delete()
+            checkpoint.delete()
             return None
 
         interface.db.parent_object = self
@@ -164,31 +151,31 @@ class NetworkedMixin:
         from evennia.utils.create import create_object
         from typeclasses.matrix.exits import MatrixExit
 
-        # Vestibule -> Interface (locked until ICE defeated or on ACL)
+        # Checkpoint -> Interface (locked until ICE defeated or on ACL)
         exit_to_interface = create_object(
             MatrixExit,
             key="Interface",
             aliases=["in"],
-            location=vestibule,
+            location=checkpoint,
             destination=interface
         )
         # TODO: Add lock based on ICE/ACL status
         # exit_to_interface.locks.add("traverse:...")
 
-        # Interface -> Vestibule (back exit)
-        exit_to_vestibule = create_object(
+        # Interface -> Checkpoint (back exit)
+        exit_to_checkpoint = create_object(
             MatrixExit,
             key="Checkpoint",
             aliases=["c"],
             location=interface,
-            destination=vestibule
+            destination=checkpoint
         )
 
         # Store references
-        self.db.vestibule_node = vestibule.pk
+        self.db.checkpoint_node = checkpoint.pk
         self.db.interface_node = interface.pk
 
-        return {'vestibule': vestibule, 'interface': interface}
+        return {'checkpoint': checkpoint, 'interface': interface}
 
     def get_relay(self):
         """

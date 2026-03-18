@@ -6,7 +6,7 @@ Device clusters are ephemeral 2-room structures created when accessing networked
 
 Every networked device in the Matrix creates an ephemeral cluster consisting of:
 
-1. **Vestibule** - Entry point with ICE security
+1. **Checkpoint** - Entry point with ICE security
 2. **Interface** - Functional space for device interaction
 
 These rooms are created on-demand when first accessed and automatically cleaned up when empty.
@@ -16,18 +16,18 @@ These rooms are created on-demand when first accessed and automatically cleaned 
 ```
 [Router/Spine Node]
         ↓ (route connect <device>)
-[Vestibule] ← Entry point, ICE spawns here
+[Checkpoint] ← Entry point, ICE spawns here
         ↓ (exit: "interface" - locked by ICE/ACL)
 [Interface] ← Programs work here, device functions accessible
-        ↓ (exit: "back" - returns to vestibule)
-[Vestibule]
+        ↓ (exit: "back" - returns to checkpoint)
+[Checkpoint]
         ↓ (jack out or die)
 [Back to meatspace/router]
 ```
 
 ## Room Types
 
-### Vestibule (ICE Room)
+### Checkpoint (ICE Room)
 
 **Purpose:** Security checkpoint before accessing device functions
 
@@ -40,10 +40,10 @@ These rooms are created on-demand when first accessed and automatically cleaned 
 
 **Attributes:**
 ```python
-vestibule.db.parent_object = device  # Reference to physical device
-vestibule.db.is_vestibule = True
-vestibule.db.ephemeral = True
-vestibule.db.node_type = "device_vestibule"
+checkpoint.db.parent_object = device  # Reference to physical device
+checkpoint.db.is_checkpoint = True
+checkpoint.db.ephemeral = True
+checkpoint.db.node_type = "device_checkpoint"
 ```
 
 ### Interface Room
@@ -90,14 +90,14 @@ Use the `route` command from any spine node with a Router:
 route                      # Show router status and usage
 route list                 # List all connected cells (locations)
 route list Downtown Alpha  # List devices in specific cell
-route connect Hub #1247    # Connect to device vestibule
+route connect Hub #1247    # Connect to device checkpoint
 ```
 
 ### Within Clusters
 
 Once in a cluster:
-- `interface` - Exit from vestibule to interface (if ICE defeated/on ACL)
-- `back` or `vestibule` - Return to vestibule from interface
+- `interface` - Exit from checkpoint to interface (if ICE defeated/on ACL)
+- `back` or `checkpoint` - Return to checkpoint from interface
 - `jack out` - Disconnect from Matrix
 
 ## Lifecycle
@@ -109,21 +109,21 @@ Clusters are created lazily on first access:
 1. User executes `route connect <device>` from router
 2. System calls `device.get_or_create_cluster()`
 3. If cluster exists and valid, return existing rooms
-4. If not, create new vestibule and interface rooms
-5. Store references: `device.db.vestibule_node`, `device.db.interface_node`
-6. User is moved to vestibule
+4. If not, create new checkpoint and interface rooms
+5. Store references: `device.db.checkpoint_node`, `device.db.interface_node`
+6. User is moved to checkpoint
 
 ### Persistence
 
 **While Active:**
-- Cluster exists as long as ANY avatar is in vestibule OR interface
+- Cluster exists as long as ANY avatar is in checkpoint OR interface
 - Multiple users can access the same cluster simultaneously
 - Rooms remain loaded in memory
 
 **When Empty:**
 - Cleanup script periodically checks ephemeral rooms
-- If BOTH vestibule AND interface are empty → delete cluster
-- Device references (`vestibule_node`, `interface_node`) are cleared
+- If BOTH checkpoint AND interface are empty → delete cluster
+- Device references (`checkpoint_node`, `interface_node`) are cleared
 - Next access will create a fresh cluster
 
 **Data Persistence:**
@@ -140,12 +140,12 @@ Automatic cleanup happens via periodic script (future implementation):
 ```python
 # Pseudocode for cleanup script
 for each ephemeral room:
-    if room.db.is_vestibule:
+    if room.db.is_checkpoint:
         interface = get matching interface room
-        if no avatars in vestibule AND no avatars in interface:
-            delete vestibule
+        if no avatars in checkpoint AND no avatars in interface:
+            delete checkpoint
             delete interface
-            clear device.db.vestibule_node
+            clear device.db.checkpoint_node
             clear device.db.interface_node
 ```
 
@@ -206,7 +206,7 @@ Understanding where data lives:
 Devices track cluster state:
 
 ```python
-device.db.vestibule_node = vestibule_dbref  # or None when cleaned up
+device.db.checkpoint_node = checkpoint_dbref  # or None when cleaned up
 device.db.interface_node = interface_dbref  # or None when cleaned up
 device.db.device_type = "hub"  # or "camera", "terminal", etc.
 device.db.security_level = 3  # 0-10
@@ -231,29 +231,29 @@ Method on NetworkedMixin:
 
 ```python
 cluster = device.get_or_create_cluster()
-# Returns: {'vestibule': MatrixNode, 'interface': MatrixNode}
+# Returns: {'checkpoint': MatrixNode, 'interface': MatrixNode}
 
-vestibule = cluster['vestibule']
+checkpoint = cluster['checkpoint']
 interface = cluster['interface']
 ```
 
 ### Room Creation Flow
 
-1. Check if `device.db.vestibule_node` and `interface_node` exist
+1. Check if `device.db.checkpoint_node` and `interface_node` exist
 2. Try to load existing rooms by dbref
 3. If both valid, return existing cluster
 4. If invalid/missing, delete any partial cluster
-5. Create new vestibule with standard description
+5. Create new checkpoint with standard description
 6. Create new interface with device-type-specific description
 7. For hubs, restore `hub_desc` and `hub_details` from device
-8. Create exits: vestibule → interface, interface → vestibule
+8. Create exits: checkpoint → interface, interface → checkpoint
 9. Store dbrefs on device
 10. Return cluster dict
 
 ## Future Enhancements
 
 ### ICE System
-- Spawn ICE in vestibule based on device security level
+- Spawn ICE in checkpoint based on device security level
 - Lock interface exit until ICE defeated
 - Check ACL to bypass ICE for authorized users
 
@@ -270,7 +270,7 @@ interface = cluster['interface']
 - Still ephemeral, just more rooms in cluster
 
 ### Customization
-- Builder-defined vestibule descriptions per device
+- Builder-defined checkpoint descriptions per device
 - Custom ICE configurations
 - Special room types for unique devices
 - Event triggers on access/exit

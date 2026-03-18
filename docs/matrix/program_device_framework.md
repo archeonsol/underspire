@@ -17,7 +17,7 @@ The `NetworkedMixin` provides a standardized API for these interactions.
 
 When an avatar connects to a device (via dive rig or routing), they enter a 2-room cluster:
 
-1. **Vestibule** - ICE defense room that spawns security when unauthorized users connect
+1. **Checkpoint** - ICE defense room that spawns security when unauthorized users connect
 2. **Interface** - The actual device interface where programs can interact with the device
 
 Both rooms have a `db.parent_object` attribute pointing back to the physical device in meatspace. Programs check this to find the device they're interacting with.
@@ -113,7 +113,7 @@ for file in device.list_files():
 ### Access Control List (ACL)
 
 Devices maintain an ACL as a list of character dbrefs (`db.acl`). Characters on the ACL:
-- Don't trigger ICE spawns in the vestibule
+- Don't trigger ICE spawns in the checkpoint
 - Have interface exit automatically unlocked
 - Can execute privileged commands
 
@@ -452,7 +452,7 @@ patch cmd.exe describe A neon-lit virtual plaza
 
 The framework is designed to integrate with ICE (security programs):
 
-- Vestibule rooms check ACL before spawning ICE
+- Checkpoint rooms check ACL before spawning ICE
 - Programs in interface room can be traced back to operator
 - Failed hacking attempts could alert security
 - Device commands could trigger alarms

@@ -6,7 +6,7 @@ EvMenu nodes for Matrix navigation and interaction.
 Router Access Menu:
 - Lists access points (rooms) connected to a router
 - Shows devices in each access point
-- Allows routing to device interfaces (creates ephemeral vestibule/interface rooms)
+- Allows routing to device interfaces (creates ephemeral checkpoint/interface rooms)
 """
 
 from evennia.utils.evmenu import EvMenu
@@ -164,8 +164,8 @@ def route_to_device(caller, raw_string, **kwargs):
     """
     Route to a specific device's interface.
 
-    Creates the device's ephemeral vestibule and interface rooms,
-    then teleports the caller to the vestibule.
+    Creates the device's ephemeral checkpoint and interface rooms,
+    then teleports the caller to the checkpoint.
     """
     # Get router from menu storage
     router = caller.ndb._evmenu.router if hasattr(caller.ndb, '_evmenu') else None
@@ -190,10 +190,10 @@ def route_to_device(caller, raw_string, **kwargs):
         caller.msg(f"|rConnection failed: Device interface unavailable.|n")
         return None
 
-    vestibule = cluster.get('vestibule')
+    checkpoint = cluster.get('checkpoint')
     interface = cluster.get('interface')
 
-    if not vestibule or not interface:
+    if not checkpoint or not interface:
         caller.msg(f"|rConnection failed: Incomplete interface cluster.|n")
         return None
 
@@ -222,11 +222,11 @@ def route_to_device(caller, raw_string, **kwargs):
                 exclude=[caller]
             )
 
-        # Move to vestibule (let Evennia handle auto-look)
-        caller.move_to(vestibule)
+        # Move to checkpoint (let Evennia handle auto-look)
+        caller.move_to(checkpoint)
 
         # Announce arrival
-        vestibule.msg_contents(
+        checkpoint.msg_contents(
             f"{caller.key} materializes from the data stream.",
             exclude=[caller]
         )

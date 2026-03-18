@@ -174,7 +174,7 @@ device.db.acl = [character_dbref1, character_dbref2, ...]
 ```
 
 Users on the ACL:
-- Don't trigger ICE attacks in vestibule
+- Don't trigger ICE attacks in checkpoint
 - Have exits automatically unlocked
 - Can use certain privileged commands
 

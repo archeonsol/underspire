@@ -216,7 +216,7 @@ route list Corporate Plaza - Lobby
 # Should show "Executive Hub (hub, security: 5)"
 
 route connect Executive Hub
-# Should create ephemeral cluster and move you to vestibule
+# Should create ephemeral cluster and move you to checkpoint
 ```
 
 ## Network Topology Patterns
@@ -390,7 +390,7 @@ The dive rig's router determines where your avatar spawns in the Matrix (at the 
 
 Planned features that will build on this infrastructure:
 
-- **ICE System**: Devices will spawn ICE in vestibules based on security_level
+- **ICE System**: Devices will spawn ICE in checkpoints based on security_level
 - **Trace Detection**: Corporate security can trace unauthorized access
 - **Network Partitions**: Damaged routers create isolated network segments
 - **Dynamic Routing**: Find alternate paths when routers go offline

@@ -196,7 +196,7 @@ class CmdRoute(Command):
                          in each access point and connect to their Matrix interface.
 
     route back - Exit a device interface and return to the router that device is
-                 currently connected to. Works from vestibule or interface rooms.
+                 currently connected to. Works from checkpoint or interface rooms.
 
     Examples:
         route via Cortex Router
@@ -265,17 +265,17 @@ class CmdRoute(Command):
         """
         Exit a device interface and return to the router.
 
-        Traces: interface/vestibule → parent_object → location → router
+        Traces: interface/checkpoint → parent_object → location → router
         """
         room = caller.location
         if not room:
             caller.msg("You are nowhere.")
             return
 
-        # Check if we're in a device interface or vestibule
+        # Check if we're in a device interface or checkpoint
         parent_device = getattr(room.db, 'parent_object', None)
         if not parent_device:
-            caller.msg("You are not in a device interface. Use this command from within a device's vestibule or interface room.")
+            caller.msg("You are not in a device interface. Use this command from within a device's checkpoint or interface room.")
             return
 
         # Get the device's current physical location
