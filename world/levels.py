@@ -248,7 +248,7 @@ def skill_check(
 def contested_check(
     skill_a,
     skill_b,
-    tie_threshold=0.5,
+    tie_threshold=5.0,
     curve_steepness=1.0,
     q_factor=1.0,
     **kwargs
@@ -260,6 +260,7 @@ def contested_check(
         skill_a: Attacker/initiator skill level (0-150)
         skill_b: Defender/responder skill level (0-150)
         tie_threshold: Margin below which result is considered a tie (on 0-150 scale)
+                      - Default 5.0 means if they're within 5 points, it's a tie
         curve_steepness: How much skill differential matters (default 1.0)
                         - Higher = skilled fighter almost always beats unskilled
                         - Lower = more upsets possible
