@@ -110,28 +110,27 @@ class CmdJackOut(Command):
         )
 
 
-class CmdExec(Command):
+class CmdPatch(Command):
     """
-    Execute a program in a Matrix interface room.
+    Patch a program into a Matrix node.
 
     Usage:
-        exec <program> [arguments]
+        patch <program> [arguments]
 
-    Runs an executable program from your inventory, targeting the device
-    whose interface room you are currently in. Different programs provide
-    different capabilities:
+    Runs an executable program from your inventory, patching it into the
+    current node. Different programs provide different capabilities:
 
     Examples:
-        exec sysinfo.exe           - Display device information
-        exec cmd.exe describe A sleek virtual lounge
-        exec CRUD.exe ls           - List files on device
-        exec CRUD.exe read passwords.txt
+        patch sysinfo.exe           - Display device information
+        patch cmd.exe               - Open device control menu
+        patch CRUD.exe ls           - List files on device
+        patch CRUD.exe read passwords.txt
 
     Programs may have limited uses and degrade with each execution.
     """
 
-    key = "exec"
-    aliases = ["execute", "run"]
+    key = "patch"
+    aliases = []
     locks = "cmd:all()"
     help_category = "Matrix"
 
@@ -146,7 +145,7 @@ class CmdExec(Command):
 
         # Parse arguments
         if not self.args:
-            caller.msg("Usage: exec <program> [arguments]")
+            caller.msg("Usage: patch <program> [arguments]")
             return
 
         args = self.args.split()
@@ -169,21 +168,15 @@ class CmdExec(Command):
             caller.msg(f"Your programs: {', '.join([p.key for p in programs]) if programs else 'none'}")
             return
 
-        # Check if program requires a device interface
-        parent_device = None
-        if program.db.requires_device:
-            room = caller.location
-            if not room:
-                caller.msg("You are nowhere. This shouldn't happen.")
-                return
+        # Get device from room if in an interface
+        room = caller.location
+        if not room:
+            caller.msg("You are nowhere. This shouldn't happen.")
+            return
 
-            # Check if room has a parent device
-            parent_device = getattr(room.db, 'parent_object', None)
-            if not parent_device:
-                caller.msg(f"{program.key} requires a device interface to run.")
-                return
+        parent_device = getattr(room.db, 'parent_object', None)
 
-        # Execute the program (device may be None for utility programs)
+        # Execute the program (device may be None - program decides if it needs one)
         program.execute(caller, parent_device, *program_args)
 
 

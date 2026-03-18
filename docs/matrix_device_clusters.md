@@ -60,7 +60,7 @@ vestibule.db.node_type = "device_vestibule"
 **Device-Specific Behavior:**
 
 **Hub Devices:**
-- Customizable description via `exec cmd.exe describe <text>`
+- Customizable description via `patch cmd.exe describe <text>`
 - Description saved to `device.db.hub_desc`
 - Details saved to `device.db.hub_details`
 - Acts as virtual apartment/hangout space
@@ -68,7 +68,7 @@ vestibule.db.node_type = "device_vestibule"
 
 **Other Devices (cameras, terminals, locks):**
 - Fixed description (default or builder-customized)
-- Access via `exec cmd.exe <command> [args]`
+- Access via `patch cmd.exe <command> [args]`
 - Storage access via CRUD.exe
 - Template-based, not customizable by users
 

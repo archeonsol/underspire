@@ -98,7 +98,7 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         """
         super().at_cmdset_creation()
 
-        from commands.base_cmds import CmdLook, CmdExamine, CmdGet, CmdPut, CmdStopWalking
+        from commands.base_cmds import CmdLook, CmdExamine, CmdGet, CmdPut, CmdStopWalking, CmdOperate
         from commands.combat_cmds import CmdAttack, CmdStop, CmdFlee, CmdStance, CmdExecute, CmdGrapple, CmdLetGo, CmdResist
         from commands.scavenge_cmds import CmdScavenge, CmdSkin, CmdButcher, CmdSever, CmdLoot
         from commands.medical_cmds import CmdHt, CmdUse, CmdApply, CmdStabilize, CmdSurgery, CmdDefib
@@ -180,6 +180,7 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
             self.remove(DefaultCmdGet)
             self.add(CmdGet())
         self.add(CmdPut())
+        self.add(CmdOperate())
         self.add(CmdCamera())
         self.add(CmdTuneTelevision())
         self.add(CmdTailor())
