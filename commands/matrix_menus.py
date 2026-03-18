@@ -136,16 +136,17 @@ def access_point_devices(caller, raw_string, **kwargs):
 
     for i, device in enumerate(devices, 1):
         device_type = getattr(device.db, 'device_type', 'unknown')
-        device_name = device.key
+        matrix_id = device.get_matrix_id() if hasattr(device, 'get_matrix_id') else "^UNKNOWN"
 
         # Check security level if set
         security = getattr(device.db, 'security_level', 0)
         security_str = f" |r[SEC:{security}]|n" if security > 0 else ""
 
-        text += f"  |w{i}|n. {device_name} |x({device_type}){security_str}|n\n"
+        display_name = f"{device_type} {matrix_id}"
+        text += f"  |w{i}|n. {display_name}{security_str}\n"
 
         options.append({
-            "desc": f"Route to {device_name}",
+            "desc": f"Route to {display_name}",
             "goto": ("route_to_device", {"device": device})
         })
 

@@ -93,7 +93,7 @@ class NetworkedMixin(MatrixIdMixin):
         # Create checkpoint
         checkpoint = create_object(
             MatrixNode,
-            key=f"{matrix_id} :: Checkpoint"
+            key=f"{device_type} {matrix_id} :: Checkpoint"
         )
         if not checkpoint:
             return None
@@ -110,7 +110,7 @@ class NetworkedMixin(MatrixIdMixin):
         # Create interface room
         interface = create_object(
             MatrixNode,
-            key=f"{matrix_id} :: Interface"
+            key=f"{device_type} {matrix_id} :: Interface"
         )
         if not interface:
             checkpoint.delete()
