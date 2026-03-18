@@ -6,7 +6,7 @@ EvMenu nodes for Matrix navigation and interaction.
 Router Access Menu:
 - Lists access points (rooms) connected to a router
 - Shows devices in each access point
-- Allows routing to device interfaces (creates ephemeral vestibule/interface rooms)
+- Allows routing to device interfaces (creates ephemeral checkpoint/interface rooms)
 """
 
 from evennia.utils.evmenu import EvMenu
@@ -60,14 +60,8 @@ def router_access_points(caller, raw_string, **kwargs):
     options = []
 
     for i, room in enumerate(linked_rooms, 1):
-        # Count networked devices in this room
-        device_count = 0
-        for obj in room.contents:
-            if isinstance(obj, NetworkedMixin):
-                device_count += 1
-
         ap_name = room.key
-        text += f"  |w{i}|n. {ap_name} |x({device_count} device{'s' if device_count != 1 else ''})|n\n"
+        text += f"  |w{i}|n. {ap_name}\n"
 
         options.append({
             "desc": f"Access {ap_name}",
@@ -106,11 +100,19 @@ def access_point_devices(caller, raw_string, **kwargs):
         caller.msg("Error: Missing router or room data.")
         return "router_access_points"
 
-    # Find all networked devices in this room
+    # Find all networked devices in this room (recursively check inventory)
     devices = []
-    for obj in room.contents:
-        if isinstance(obj, NetworkedMixin):
-            devices.append(obj)
+
+    def find_devices_recursive(container):
+        """Recursively search container and inventory for networked devices."""
+        for obj in container.contents:
+            if isinstance(obj, NetworkedMixin):
+                devices.append(obj)
+            # Also search this object's contents (inventory, containers, etc.)
+            if hasattr(obj, 'contents'):
+                find_devices_recursive(obj)
+
+    find_devices_recursive(room)
 
     if not devices:
         text = f"|c=== {room.key} ===|n\n\n"
@@ -162,8 +164,8 @@ def route_to_device(caller, raw_string, **kwargs):
     """
     Route to a specific device's interface.
 
-    Creates the device's ephemeral vestibule and interface rooms,
-    then teleports the caller to the vestibule.
+    Creates the device's ephemeral checkpoint and interface rooms,
+    then teleports the caller to the checkpoint.
     """
     # Get router from menu storage
     router = caller.ndb._evmenu.router if hasattr(caller.ndb, '_evmenu') else None
@@ -188,10 +190,10 @@ def route_to_device(caller, raw_string, **kwargs):
         caller.msg(f"|rConnection failed: Device interface unavailable.|n")
         return None
 
-    vestibule = cluster.get('vestibule')
+    checkpoint = cluster.get('checkpoint')
     interface = cluster.get('interface')
 
-    if not vestibule or not interface:
+    if not checkpoint or not interface:
         caller.msg(f"|rConnection failed: Incomplete interface cluster.|n")
         return None
 
@@ -220,11 +222,11 @@ def route_to_device(caller, raw_string, **kwargs):
                 exclude=[caller]
             )
 
-        # Move to vestibule (let Evennia handle auto-look)
-        caller.move_to(vestibule)
+        # Move to checkpoint (let Evennia handle auto-look)
+        caller.move_to(checkpoint)
 
         # Announce arrival
-        vestibule.msg_contents(
+        checkpoint.msg_contents(
             f"{caller.key} materializes from the data stream.",
             exclude=[caller]
         )

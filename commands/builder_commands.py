@@ -656,7 +656,9 @@ class CmdMatrixLink(Command):
                 from evennia.objects.models import ObjectDB
                 try:
                     router = ObjectDB.objects.get(pk=current_dbref)
-                    caller.msg(f"This room is linked to router: |w{router.key}|n (#{router.id})")
+                    online = getattr(router.db, 'online', False)
+                    status = "|g[ONLINE]|n" if online else "|r[OFFLINE]|n"
+                    caller.msg(f"This room is linked to router: |w{router.key}|n (#{router.id}) {status}")
                 except ObjectDB.DoesNotExist:
                     caller.msg(f"This room is linked to a router that no longer exists (#{current_dbref}).")
                     caller.msg("Use |wmlink/clear|n to remove the broken link.")
@@ -683,10 +685,14 @@ class CmdMatrixLink(Command):
         if len(results) > 1:
             caller.msg(f"Multiple routers found matching '{args}':")
             for i, router in enumerate(results, 1):
-                caller.msg(f"  {i}. {router.key} (#{router.id}) in {router.location.key if router.location else 'nowhere'}")
+                online = getattr(router.db, 'online', False)
+                status = "|g[ONLINE]|n" if online else "|r[OFFLINE]|n"
+                caller.msg(f"  {i}. {router.key} (#{router.id}) {status} in {router.location.key if router.location else 'nowhere'}")
             caller.msg("Please be more specific or use the dbref.")
             return
 
         router = results[0]
         loc.db.network_router = router.pk  # Store dbref, not name
-        caller.msg(f"Room linked to router |w{router.key}|n (#{router.id}). Networked devices here will use this router.")
+        online = getattr(router.db, 'online', False)
+        status = "|g[ONLINE]|n" if online else "|r[OFFLINE]|n"
+        caller.msg(f"Room linked to router |w{router.key}|n (#{router.id}) {status}. Networked devices here will use this router.")

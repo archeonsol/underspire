@@ -7,18 +7,18 @@ Programs are executable items that avatars carry in the Matrix. They provide cap
 Programs are executed via the `exec` command:
 
 ```
-exec <program> [arguments]
+patch <program> [arguments]
 ```
 
 ### Examples
 
 ```
-exec sysinfo.exe
-exec cmd.exe describe A sleek virtual lounge
-exec CRUD.exe ls
-exec CRUD.exe read passwords.txt
-exec Skeleton.key add Alice
-exec ICEpick.exe <target>
+patch sysinfo.exe
+patch cmd.exe describe A sleek virtual lounge
+patch CRUD.exe ls
+patch CRUD.exe read passwords.txt
+patch Skeleton.key add Alice
+patch ICEpick.exe <target>
 ```
 
 ## Program Categories
@@ -35,7 +35,7 @@ General-purpose tools for information gathering and device interaction.
   - Requires device interface
   - Unlimited uses
   - Sends commands to connected devices
-  - Usage: `exec cmd.exe <command> [args]`
+  - Usage: `patch cmd.exe <command> [args]`
 
 ### File Operations
 
@@ -43,24 +43,24 @@ General-purpose tools for information gathering and device interaction.
   - Requires device interface with storage capability
   - Limited uses (typically 10), degrades with each operation
   - Operations:
-    - `exec CRUD.exe ls` - List files
-    - `exec CRUD.exe read <filename>` - Read file contents
-    - `exec CRUD.exe write <filename> <contents>` - Create/update file
-    - `exec CRUD.exe delete <filename>` - Delete file
+    - `patch CRUD.exe ls` - List files
+    - `patch CRUD.exe read <filename>` - Read file contents
+    - `patch CRUD.exe write <filename> <contents>` - Create/update file
+    - `patch CRUD.exe delete <filename>` - Delete file
 
 - **exfil.exe** - Data exfiltration program
   - Requires device interface with storage capability
   - Limited uses (typically 8)
   - Highly illegal, moderate black market value
   - Extracts files from device storage into portable data chips
-  - Usage: `exec exfil.exe <filename>`
+  - Usage: `patch exfil.exe <filename>`
   - Creates a MatrixItem you can carry out and sell/transfer
 
 - **infil.exe** - Data infiltration program
   - Requires device interface with storage capability
   - Limited uses (typically 10)
   - Uploads data chips from inventory to device storage
-  - Usage: `exec infil.exe <data_item_name>`
+  - Usage: `patch infil.exe <data_item_name>`
   - Consumes the data item after upload
   - Useful for planting false data or transferring stolen files
 
@@ -71,9 +71,9 @@ General-purpose tools for information gathering and device interaction.
   - Very limited uses (typically 5)
   - Highly illegal, high black market value
   - Operations:
-    - `exec Skeleton.key list` - Show ACL
-    - `exec Skeleton.key add <name>` - Add user to ACL
-    - `exec Skeleton.key remove <name>` - Remove user from ACL
+    - `patch Skeleton.key list` - Show ACL
+    - `patch Skeleton.key add <name>` - Add user to ACL
+    - `patch Skeleton.key remove <name>` - Remove user from ACL
 
 ### Combat Programs
 
@@ -81,7 +81,7 @@ General-purpose tools for information gathering and device interaction.
   - Works anywhere (no device interface required)
   - Limited uses (typically 20)
   - Provides offensive capabilities against ICE
-  - Usage: `exec ICEpick.exe <target>`
+  - Usage: `patch ICEpick.exe <target>`
 
 ## Data Exfiltration Workflow
 
@@ -89,12 +89,12 @@ Matrix runs often involve stealing corporate data:
 
 1. Jack into target network via dive rig
 2. Navigate to target device's interface room
-3. Use `exec CRUD.exe ls` to find valuable files
-4. Use `exec CRUD.exe read <file>` to verify contents
-5. Use `exec exfil.exe <file>` to convert file to portable data chip
+3. Use `patch CRUD.exe ls` to find valuable files
+4. Use `patch CRUD.exe read <file>` to verify contents
+5. Use `patch exfil.exe <file>` to convert file to portable data chip
 6. Carry the data chip out of the Matrix
 7. Jack out safely
-8. Sell the data chip or use `exec infil.exe` to upload elsewhere
+8. Sell the data chip or use `patch infil.exe` to upload elsewhere
 
 **Stakes:**
 - Data chips are physical items that can be dropped if you die
@@ -174,7 +174,7 @@ device.db.acl = [character_dbref1, character_dbref2, ...]
 ```
 
 Users on the ACL:
-- Don't trigger ICE attacks in vestibule
+- Don't trigger ICE attacks in checkpoint
 - Have exits automatically unlocked
 - Can use certain privileged commands
 

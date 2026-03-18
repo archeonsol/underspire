@@ -25,3 +25,14 @@ Deckers need to 'craft' programs in advance and run on a 'potion-like' system of
 ## Crack
 - Cracks are manifested as weapons for deckers
 - Psionic folks can conjure cracks naturally
+
+
+----
+
+something.lnk (device connection?)
+asdf.dat (data file)
+asdf.exe (program)
+- exfil.exe (turn a file into a physical object)
+- wedge.exe (I dunno. whatever to add yourself to the ACL)
+- dewedge.exe (remove acl)
+asdf.enc (encryption key?)

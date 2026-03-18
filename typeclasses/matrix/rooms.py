@@ -91,34 +91,3 @@ class MatrixNode(Room):
         #     # Check if moved_obj has clearance
         #     # Alert ICE if unauthorized
         #     pass
-
-    @classmethod
-    def create_for_device(cls, device, **kwargs):
-        """
-        Factory method to create a Matrix node for a physical device.
-
-        Works for any Matrix-connected device: hubs, cameras, terminals, handsets, etc.
-        The node type and description are determined by the device's properties.
-
-        Args:
-            device: The physical device object this node represents
-            **kwargs: Additional node creation parameters
-
-        Returns:
-            MatrixNode: The created node
-        """
-        device_type = getattr(device.db, 'device_type', 'device')
-        node_name = f"Node: {device.get_display_name(device)}"
-
-        # Create the node
-        node = cls.create(node_name, **kwargs)
-        node.db.parent_object = device
-        node.db.node_type = device_type
-
-        # Set description based on device type
-        if device_type == "hub":
-            node.db.desc = "A private network space. Basic security daemons patrol the perimeter."
-        else:
-            node.db.desc = f"A sterile virtual space. {device_type.capitalize()} controls shimmer in the void."
-
-        return node

@@ -72,14 +72,14 @@ class Seat(DefaultObject):
         Check if there's room for another person.
 
         Args:
-            posture (str): "sitting" (1 slot) or "lying" (3 slots)
+            posture (str): "sitting" (1 slot) or "lying" (2 slots)
 
         Returns:
             bool: True if there's room
         """
         capacity = self.db.capacity or 1
         used = self.get_used_capacity()
-        slots_needed = 3 if posture == "lying" else 1
+        slots_needed = 2 if posture == "lying" else 1
         return (used + slots_needed) <= capacity
 
     def get_empty_template(self):
@@ -232,14 +232,14 @@ class Bed(Seat):
         return occupants
 
     def get_used_capacity(self):
-        """Calculate how many capacity slots are currently used (sitting = 1, lying = 3)."""
+        """Calculate how many capacity slots are currently used (sitting = 1, lying = 2)."""
         loc = self.location
         if not loc:
             return 0
         used = 0
         for char in loc.contents_get(content_type="character"):
             if getattr(char.db, "lying_on", None) == self:
-                used += 3  # lying takes 3 slots
+                used += 2  # lying takes 2 slots
             elif getattr(char.db, "sitting_on", None) == self:
                 used += 1  # sitting takes 1 slot
         return used

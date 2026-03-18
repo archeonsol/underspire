@@ -1,5 +1,5 @@
 """
-Base commands: Command (flatline/dead blocking), _command_character, CmdLook, CmdExamine, CmdGet, CmdPut.
+Base commands: Command (flatline/dead blocking), _command_character, CmdLook, CmdExamine, CmdGet, CmdPut, CmdOperate.
 """
 
 import re
@@ -361,3 +361,60 @@ class CmdPut(Command):
             )
         else:
             self.caller.msg("You can't put that in there.")
+
+
+class CmdOperate(Command):
+    """
+    Operate a networked device.
+
+    Usage:
+        operate <device>
+        op <device>
+
+    Opens an interactive menu for controlling networked devices like hubs,
+    cameras, terminals, etc. The menu shows device info, available commands,
+    and file storage (if applicable).
+
+    This is the meatspace equivalent of running 'patch cmd.exe' in the Matrix.
+    """
+
+    key = "operate"
+    aliases = ["op"]
+    locks = "cmd:all()"
+    help_category = "General"
+
+    def func(self):
+        caller = _command_character(self)
+
+        # If no args, check if we're in a device interface room
+        if not self.args:
+            room = caller.location
+            if room and hasattr(room.db, 'parent_object') and room.db.parent_object:
+                device = room.db.parent_object
+                from typeclasses.matrix.mixins import NetworkedMixin
+                if isinstance(device, NetworkedMixin):
+                    # We're in a device interface - open its menu
+                    from typeclasses.matrix.device_menu import start_device_menu
+                    # Check if caller is a Matrix avatar
+                    from typeclasses.matrix.avatars import MatrixAvatar
+                    from_matrix = isinstance(caller, MatrixAvatar)
+                    start_device_menu(caller, device, from_matrix=from_matrix)
+                    return
+
+            caller.msg("Usage: operate <device>")
+            return
+
+        # Find the device (check both location and inventory)
+        device = caller.search(self.args.strip())
+        if not device:
+            return
+
+        # Check if it's a networked device
+        from typeclasses.matrix.mixins import NetworkedMixin
+        if not isinstance(device, NetworkedMixin):
+            caller.msg(f"{device.get_display_name(caller)} is not a networked device.")
+            return
+
+        # Launch the device menu
+        from typeclasses.matrix.device_menu import start_device_menu
+        start_device_menu(caller, device, from_matrix=False)
