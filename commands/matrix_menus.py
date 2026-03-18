@@ -74,7 +74,14 @@ def router_access_points(caller, raw_string, **kwargs):
             "goto": ("access_point_devices", {"room": room})
         })
 
+    text += "\n|xe|n. Route to entry point"
     text += "\n|xq|n. Exit router interface"
+
+    options.append({
+        "key": ("e", "entry"),
+        "desc": "Route to entry point",
+        "goto": "route_to_entry_point"
+    })
 
     options.append({
         "key": ("q", "quit", "exit", "back"),
@@ -223,6 +230,82 @@ def route_to_device(caller, raw_string, **kwargs):
         )
 
     delay(0.8, _link_established)
+
+    # Exit the menu
+    return None
+
+
+def route_to_entry_point(caller, raw_string, **kwargs):
+    """
+    Route back to the entry point router.
+
+    Traces from avatar -> rig -> meatspace room -> entry router,
+    then routes the avatar to that router.
+    """
+    from typeclasses.matrix.avatars import MatrixAvatar
+
+    if not isinstance(caller, MatrixAvatar):
+        caller.msg("|rError: Only Matrix avatars can route to entry points.|n")
+        return "router_access_points"
+
+    # Get the rig this avatar is connected through
+    rig = caller.db.entry_device
+    if not rig:
+        caller.msg("|rError: No entry device found. Cannot determine entry point.|n")
+        return "router_access_points"
+
+    # Get the meatspace room the rig is in
+    rig_room = rig.location
+    if not rig_room:
+        caller.msg("|rError: Entry device has no location.|n")
+        return "router_access_points"
+
+    # Get the router that room is linked to
+    entry_router_pk = getattr(rig_room.db, 'network_router', None)
+    if not entry_router_pk:
+        caller.msg("|rError: Entry location has no network router.|n")
+        return "router_access_points"
+
+    # Load the entry router
+    from typeclasses.matrix.objects import Router
+    try:
+        entry_router = Router.objects.get(pk=entry_router_pk)
+    except Router.DoesNotExist:
+        caller.msg("|rError: Entry router not found.|n")
+        return "router_access_points"
+
+    # Check if we're already at the entry router
+    if caller.location == entry_router:
+        caller.msg("|yYou are already at your entry point router.|n")
+        return "router_access_points"
+
+    # Route to the entry router with delays
+    from evennia.utils import delay
+
+    caller.msg(f"|cResolving route to entry point...|n")
+
+    def _routing():
+        caller.msg(f"|cRouting to |w{entry_router.key}|c...|n")
+        delay(0.8, _do_move)
+
+    def _do_move():
+        # Announce departure
+        if caller.location:
+            caller.location.msg_contents(
+                f"{caller.key} disappears in a flicker of data.",
+                exclude=[caller]
+            )
+
+        # Move to entry router
+        caller.move_to(entry_router)
+
+        # Announce arrival
+        entry_router.msg_contents(
+            f"{caller.key} materializes from the data stream.",
+            exclude=[caller]
+        )
+
+    delay(0.8, _routing)
 
     # Exit the menu
     return None
