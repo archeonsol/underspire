@@ -178,7 +178,10 @@ class NetworkedMixin(MatrixIdMixin):
         # Get router from room
         router_dbref = room.db.network_router
         from typeclasses.matrix.objects import Router
-        return Router.objects.get(pk=router_dbref)
+        try:
+            return Router.objects.get(pk=router_dbref)
+        except Router.DoesNotExist:
+            return None
 
 
 
