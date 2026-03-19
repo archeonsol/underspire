@@ -209,6 +209,138 @@ class CmdCamera(Command):
         self.caller.msg("Usage: camera live <tv> | camera unlink | camera record | camera stop")
 
 
+class CmdPhotoRecog(Command):
+    """
+    Tag someone in a photograph with a name, for you only.
+
+    This does NOT affect global recog. It only changes how *you* see names in that photo.
+
+    Usage:
+      photo recog <sdesc> as <name>
+      photo recog <sdesc> as <name> in <photo>
+
+    Example:
+      photo recog short man as John
+      photo recog short as John in photograph of Lobby
+    """
+
+    key = "photo recog"
+    aliases = ["photorecog", "photo tag", "photo label person"]
+    locks = "cmd:all()"
+    help_category = "General"
+
+    def func(self):
+        caller = _command_character(self)
+        if not caller:
+            return
+        raw = (self.args or "").strip()
+        if not raw or " as " not in raw:
+            self.caller.msg("Usage: photo recog <sdesc> as <name> [in <photo>]")
+            return
+
+        # Parse optional "in <photo>" suffix.
+        left = raw
+        photo_spec = ""
+        if " in " in raw:
+            before_in, _, after_in = raw.rpartition(" in ")
+            if before_in and after_in:
+                left = before_in.strip()
+                photo_spec = after_in.strip()
+
+        sdesc_part, _, name_part = left.partition(" as ")
+        sdesc_part = (sdesc_part or "").strip()
+        name_part = (name_part or "").strip().rstrip(".,?!")
+        if not sdesc_part or not name_part:
+            self.caller.msg("Usage: photo recog <sdesc> as <name> [in <photo>]")
+            return
+
+        # Find the Photograph: explicit "in <photo>" wins; otherwise use last viewed photo.
+        photo = None
+        if photo_spec:
+            candidates = list(getattr(caller, "contents", []) or [])
+            if getattr(caller, "location", None):
+                candidates += list(getattr(caller.location, "contents", []) or [])
+            photo = caller.search(photo_spec, candidates=candidates)
+        else:
+            try:
+                photo = getattr(getattr(caller, "ndb", None), "last_photograph", None)
+            except Exception:
+                photo = None
+
+        try:
+            from typeclasses.broadcast import Photograph
+        except Exception:
+            Photograph = None
+        if not photo or not Photograph or not isinstance(photo, Photograph):
+            self.caller.msg("You need to specify a photograph (or look at one first).")
+            return
+
+        snap_chars = getattr(getattr(photo, "db", None), "snapshot_chars", None) or {}
+        if not snap_chars:
+            self.caller.msg("That photograph doesn't seem to have anyone in it.")
+            return
+
+        # Resolve captured characters as objects.
+        char_objs = []
+        try:
+            from evennia.utils.search import search_object
+            for cid in snap_chars.keys():
+                try:
+                    ref = "#%s" % int(cid)
+                    result = search_object(ref)
+                    if result:
+                        char_objs.append(result[0])
+                except Exception:
+                    continue
+        except Exception:
+            char_objs = []
+        if not char_objs:
+            self.caller.msg("That photograph doesn't seem to have anyone in it.")
+            return
+
+        # Match the target within the photo by sdesc/recog matching.
+        target = None
+        try:
+            from world.rpg.emote import resolve_sdesc_to_characters
+            matches = resolve_sdesc_to_characters(caller, char_objs, sdesc_part)
+            if not matches:
+                self.caller.msg(f"No one in the photo matches |w{sdesc_part}|n.")
+                return
+            if len(matches) > 1:
+                self.caller.msg("Multiple people match that in the photo. Be more specific (use 1-<sdesc>, 2-<sdesc>, etc).")
+                return
+            target = matches[0]
+        except Exception:
+            self.caller.msg("Couldn't match that person in the photo.")
+            return
+
+        try:
+            tid = str(getattr(target, "id", None))
+        except Exception:
+            tid = None
+        if not tid:
+            self.caller.msg("Couldn't tag that.")
+            return
+
+        # Store per-viewer per-photo tag.
+        viewer_id = str(getattr(caller, "id", ""))
+        if not viewer_id:
+            self.caller.msg("Couldn't tag that.")
+            return
+        all_tags = dict(getattr(photo.db, "photo_recogs", None) or {})
+        viewer_tags = dict(all_tags.get(viewer_id, {}) or {})
+        viewer_tags[tid] = name_part
+        all_tags[viewer_id] = viewer_tags
+        photo.db.photo_recogs = all_tags
+
+        # Feedback: show what you previously saw them as in this photo.
+        try:
+            before = target.get_display_name(caller)
+        except Exception:
+            before = "them"
+        self.caller.msg(f"You tag {before} in the photo as |w{name_part}|n.")
+
+
 class CmdTuneTelevision(Command):
     """
     Play the cassette that's inside a television in the room.

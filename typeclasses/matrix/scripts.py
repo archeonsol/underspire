@@ -82,16 +82,14 @@ class MatrixCleanupScript(DefaultScript):
                     interface_node = MatrixNode.objects.get(pk=interface_id)
                 except MatrixNode.DoesNotExist:
                     pass
-parent_device = cluster.db.parent_device
 
-# Check if device is connected to network
-device_connected = False
-actual_room = get_containing_room(parent_device)
-
-if actual_room:
-    network_router = getattr(actual_room.db, 'network_router', None)
-    if network_router:
-        device_connected = True
+            # Check if device is connected to network
+            device_connected = False
+            actual_room = get_containing_room(parent_device)
+            if actual_room:
+                network_router = getattr(actual_room.db, "network_router", None)
+                if network_router:
+                    device_connected = True
 
             # If device lost connectivity, eject any avatars in the cluster
             if not device_connected:

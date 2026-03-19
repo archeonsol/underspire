@@ -71,6 +71,135 @@ class CmdLook(DefaultCmdLook):
         caller = self.caller
         args = (self.args or "").strip()
 
+        # Look at a character *in* a printed photograph:
+        #   look <target> in <photograph>
+        # This proxies to target.return_appearance(caller) and also allows recog from a photo.
+        if args and " in " in args:
+            left, _, right = args.partition(" in ")
+            target_spec = (left or "").strip()
+            photo_spec = (right or "").strip()
+            if target_spec and photo_spec:
+                # Search for the photograph in inventory first, then room.
+                candidates = list(getattr(caller, "contents", []) or [])
+                if getattr(caller, "location", None):
+                    candidates += list(getattr(caller.location, "contents", []) or [])
+                photo = caller.search(photo_spec, candidates=candidates)
+                if photo:
+                    try:
+                        from typeclasses.broadcast import Photograph
+                    except Exception:
+                        Photograph = None
+                    if Photograph and isinstance(photo, Photograph):
+                        # Resolve which characters were captured in the photo.
+                        snap_chars = getattr(getattr(photo, "db", None), "snapshot_chars", None) or {}
+                        char_objs = []
+                        try:
+                            from evennia.utils.search import search_object
+                            for cid in snap_chars.keys():
+                                try:
+                                    ref = "#%s" % int(cid)
+                                    result = search_object(ref)
+                                    if result:
+                                        char_objs.append(result[0])
+                                except Exception:
+                                    continue
+                        except Exception:
+                            char_objs = []
+
+                        if not char_objs:
+                            caller.msg("That photograph doesn't seem to have anyone in it.")
+                            return
+
+                        # Allow matching by sdesc/recog (viewer-aware), including 1- / 2- prefixes.
+                        target = None
+                        try:
+                            from world.rpg.emote import resolve_sdesc_to_characters
+                            matches = resolve_sdesc_to_characters(caller, char_objs, target_spec)
+                            if matches:
+                                if len(matches) > 1:
+                                    caller.msg("Multiple people in the photo match that. Be more specific (use 1-<sdesc>, 2-<sdesc>, etc).")
+                                    return
+                                target = matches[0]
+                        except Exception:
+                            target = None
+
+                        # Fallback: try plain substring match against display names.
+                        if not target:
+                            low = target_spec.lower()
+                            hits = []
+                            for c in char_objs:
+                                try:
+                                    dn = c.get_display_name(caller)
+                                except Exception:
+                                    dn = getattr(c, "key", "")
+                                if low and dn and low in dn.lower():
+                                    hits.append(c)
+                            if len(hits) == 1:
+                                target = hits[0]
+                            elif len(hits) > 1:
+                                caller.msg("Multiple people in the photo match that. Be more specific.")
+                                return
+
+                        if not target:
+                            caller.msg("You can't find anyone in that photograph matching '%s'." % target_spec)
+                            return
+
+                        # Show their (snapshot) appearance captured at photo time, not their current state.
+                        try:
+                            cid = str(getattr(target, "id", ""))
+                        except Exception:
+                            cid = ""
+                        detail = ""
+                        try:
+                            detail = (snap_chars.get(cid, {}) or {}).get("detail") or ""
+                        except Exception:
+                            detail = ""
+                        if not detail:
+                            caller.msg("That photograph doesn't have a detailed close-up for them (it may be an older photo).")
+                            return
+                        # Resolve placeholders in the stored detail to the viewer's display names.
+                        try:
+                            pattern = re.compile(r"<<CHAR:(\d+)>>")
+                            viewer_tags = {}
+                            try:
+                                viewer_id = str(getattr(caller, "id", ""))
+                                viewer_tags = (getattr(getattr(photo, "db", None), "photo_recogs", None) or {}).get(viewer_id, {}) or {}
+                            except Exception:
+                                viewer_tags = {}
+
+                            def _sub(match):
+                                oid = match.group(1)
+                                try:
+                                    tagged = (viewer_tags or {}).get(str(oid))
+                                except Exception:
+                                    tagged = None
+                                if tagged:
+                                    return tagged
+                                from evennia.utils.search import search_object
+                                try:
+                                    ref = "#%s" % int(oid)
+                                    result = search_object(ref)
+                                    obj = result[0] if result else None
+                                except Exception:
+                                    obj = None
+                                if obj and hasattr(obj, "get_display_name"):
+                                    try:
+                                        return obj.get_display_name(caller)
+                                    except Exception:
+                                        pass
+                                try:
+                                    fallback = (snap_chars or {}).get(str(oid), {}).get("sdesc")
+                                except Exception:
+                                    fallback = None
+                                return fallback or "someone"
+
+                            detail = pattern.sub(_sub, detail)
+                        except Exception:
+                            pass
+                        caller.msg(detail)
+
+                        return
+
         # Directional look: look north / look n, etc.
         if args:
             lower = args.lower()

@@ -13,6 +13,7 @@ just overloads its hooks to have it perform its function.
 """
 
 from evennia.scripts.scripts import DefaultScript
+import time
 
 
 class Script(DefaultScript):
@@ -152,6 +153,52 @@ class StaffPendingScript(Script):
         self.repeats = 0
         self.persistent = True
         self.db.pending = []
+
+
+class HandsetMessageCleanupScript(Script):
+    """
+    Global cleanup: prune handset message buffers to last 24 hours.
+
+    Runs on a timer so simply viewing menus won't delete messages.
+    """
+
+    def at_script_creation(self):
+        self.key = "handset_message_cleanup"
+        self.interval = 3600  # hourly
+        self.repeats = 0
+        self.persistent = True
+
+    def at_repeat(self):
+        cutoff = time.time() - 86400
+        try:
+            from evennia.objects.models import ObjectDB
+        except Exception:
+            return
+
+        # Only look at handset typeclass objects.
+        qs = ObjectDB.objects.filter(db_typeclass_path="typeclasses.matrix.devices.handsets.Handset")
+        for obj in qs:
+            try:
+                texts = list(getattr(obj.db, "texts", []) or [])
+            except Exception:
+                continue
+            if not texts:
+                continue
+            kept = []
+            for entry in texts:
+                if not isinstance(entry, dict):
+                    continue
+                t = entry.get("t", None)
+                if t is None:
+                    # Unknown age/legacy entry: drop during cleanup.
+                    continue
+                try:
+                    if float(t) >= cutoff:
+                        kept.append(entry)
+                except Exception:
+                    continue
+            if kept != texts:
+                obj.db.texts = kept
 
 
 # Matrix scripts

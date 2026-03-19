@@ -133,6 +133,7 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         from commands.vehicle_cmds import CmdEnterVehicle, CmdExitVehicle, CmdStartEngine, CmdStopEngine, CmdShutoffEngine, CmdDrive, CmdVehicleStatus, CmdRepairPart
         from commands.matrix_cmds import CmdJackIn, CmdJackOut, CmdRoute
         from commands.network_cmds import CmdNetworkWho, CmdNetworkSend, CmdNetworkNtag
+        from commands.handset_cmds import CmdHandset
         from commands.staff_cmds import (
             CmdStats, CmdGiveXp, CmdStaffSheet, CmdStaffSetStat, CmdStaffSetSkill,
             CmdCreateItem, CmdTypeclasses, CmdSpawnItem, CmdSpawnArmor, CmdSpawnVehicle, CmdSpawnMedical, CmdSpawnOR,
@@ -208,6 +209,7 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
             self.add(CmdGet())
         self.add(CmdPut())
         self.add(CmdOperate())
+        self.add(CmdHandset())
         self.add(CmdMacl())
         self.add(CmdCamera())
         self.add(CmdTuneTelevision())

@@ -9,10 +9,12 @@ Recording and broadcast system: Camera, Television, Cassette.
 - Cassette: holds a recording (list of timestamped lines). Persists with the object.
 """
 import time
+import re
 from evennia.utils.ansi import strip_ansi
 from evennia.utils.create import create_object
 
 from .objects import Object
+from typeclasses.rooms import ROOM_DESC_CHARACTER_NAME_COLOR
 
 # Prefix added by Television.display_broadcast; if we see it (after stripping ANSI),
 # do not re-feed to cameras or we get infinite "On the television you see: ..." nesting.
@@ -168,17 +170,65 @@ class Camera(Object):
     def take_photograph(self, caller):
         """
         Capture a still of the caller's current room and hand them a Photograph object.
-        The snapshot preserves the room's full colored look output.
+        The snapshot preserves the room's full colored look output, but stores character
+        placeholders so the photo can resolve character names per viewer (recog/sdesc).
         """
         if not caller or not getattr(caller, "location", None):
             return None
         room = caller.location
-        # Use the room's appearance as seen by the caller so colors and formatting match 'look'.
+        # Use the room's appearance as seen by the caller so colors and formatting match 'look',
+        # but do not include the caller's "You ..." self-line (photos should be third-person for viewers).
         try:
-            text = room.return_appearance(caller)
+            text = room.return_appearance(caller, include_looker=False)
         except Exception:
             text = str(room)
         room_name = getattr(room, "key", "somewhere")
+
+        # Replace visible character display-name segments with stable placeholders keyed by dbref.
+        # Later, the Photograph will resolve these placeholders to each viewer's get_display_name().
+        snapshot_chars = {}
+        try:
+            from evennia.utils.utils import inherits_from
+            from world.rpg.sdesc import get_short_desc
+
+            visible = room.filter_visible(room.contents_get(content_type="character"), caller)
+            visible = [c for c in visible if inherits_from(c, "evennia.objects.objects.DefaultCharacter")]
+            for char in visible:
+                try:
+                    cid = int(char.id)
+                except Exception:
+                    continue
+                try:
+                    placeholder = f"<<CHAR:{cid}>>"
+                    name_for_photographer = (char.get_display_name(caller) or "").strip()
+                    if not name_for_photographer:
+                        continue
+                    # Freeze a detailed "look" of this character at capture time (snapshot-only, not live).
+                    detail = ""
+                    try:
+                        detail = char.return_appearance(caller) or ""
+                    except Exception:
+                        detail = ""
+                    # Ensure the detail text doesn't bake in the photographer's recog label for the subject.
+                    if detail and name_for_photographer:
+                        try:
+                            detail = detail.replace(name_for_photographer, placeholder)
+                        except Exception:
+                            pass
+                    # Most room output colors character names as: "|520{name}|n"
+                    colored = f"{ROOM_DESC_CHARACTER_NAME_COLOR}{name_for_photographer}|n"
+                    replacement = f"{ROOM_DESC_CHARACTER_NAME_COLOR}{placeholder}|n"
+                    if colored in text:
+                        text = text.replace(colored, replacement)
+                    else:
+                        # Fallback if something emitted the name without the expected color wrapper.
+                        text = text.replace(name_for_photographer, placeholder)
+                    snapshot_chars[str(cid)] = {"sdesc": get_short_desc(char, looker=caller), "detail": detail}
+                except Exception:
+                    continue
+        except Exception:
+            snapshot_chars = {}
+
         try:
             photo = create_object(
                 "typeclasses.broadcast.Photograph",
@@ -188,6 +238,7 @@ class Camera(Object):
         except Exception:
             return None
         photo.db.snapshot_text = text
+        photo.db.snapshot_chars = snapshot_chars
         photo.db.room_name = room_name
         if not getattr(photo.db, "desc", None):
             photo.db.desc = (
@@ -323,6 +374,10 @@ class Photograph(Object):
     def at_object_creation(self):
         self.db.snapshot_text = ""
         self.db.room_name = ""
+        self.db.snapshot_chars = {}
+        # Per-viewer tags for people in this photo:
+        # { "<viewer_id>": { "<char_id>": "<alias>" } }
+        self.db.photo_recogs = {}
         self.db.label = None
         if not getattr(self.db, "desc", None):
             self.db.desc = "A glossy photograph. You can look at it to see what it captured."
@@ -348,7 +403,45 @@ class Photograph(Object):
         label = getattr(self.db, "label", None)
         if not snap:
             return super().return_appearance(looker, **kwargs)
+        # Remember last viewed photo to allow "photo recog ..." without "in <photo>".
+        try:
+            if looker and hasattr(looker, "ndb"):
+                looker.ndb.last_photograph = self
+        except Exception:
+            pass
+        # Resolve per-viewer character placeholders (<<CHAR:<dbref>>>) to viewer-aware display names.
+        snap_chars = getattr(self.db, "snapshot_chars", None) or {}
+        viewer_tags = {}
+        try:
+            viewer_id = str(getattr(looker, "id", ""))
+            viewer_tags = (getattr(self.db, "photo_recogs", None) or {}).get(viewer_id, {}) or {}
+        except Exception:
+            viewer_tags = {}
+        try:
+            pattern = re.compile(r"<<CHAR:(\d+)>>")
+
+            def _sub(match):
+                cid = match.group(1)
+                # Prefer viewer's per-photo tag if they set one.
+                try:
+                    tagged = (viewer_tags or {}).get(str(cid))
+                except Exception:
+                    tagged = None
+                if tagged:
+                    return tagged
+                obj = _get_object_by_id(cid)
+                if obj and hasattr(obj, "get_display_name"):
+                    try:
+                        return obj.get_display_name(looker)
+                    except Exception:
+                        pass
+                fallback = snap_chars.get(str(cid), {}).get("sdesc")
+                return fallback or "someone"
+
+            rendered = pattern.sub(_sub, snap)
+        except Exception:
+            rendered = snap
         header = f"|wPhotograph of {room_name}|n"
         if label:
             header += f" (labelled as {label})"
-        return f"{header}\n{snap}"
+        return f"{header}\n{rendered}"

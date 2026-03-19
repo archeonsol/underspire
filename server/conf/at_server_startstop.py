@@ -67,6 +67,13 @@ def at_server_start():
             key="matrix_connection_check",
             persistent=True,
         )
+    # Handset text buffer cleanup
+    if not ScriptDB.objects.filter(db_key="handset_message_cleanup").first():
+        create_script(
+            "typeclasses.scripts.HandsetMessageCleanupScript",
+            key="handset_message_cleanup",
+            persistent=True,
+        )
     # Staff pending channel: so staff can subscribe and see new requests
     if not list(search_channel(STAFF_PENDING_CHANNEL_ALIAS)):
         create_channel(

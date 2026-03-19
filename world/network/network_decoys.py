@@ -1,35 +1,6 @@
 import random
 import string
-import os
-import markovify
 from typing import Iterable
-from django.conf import settings
-
-# --- NEW: Markovify Setup ---
-
-def _get_markov_model():
-    """Builds the combined brain from your two corpus files."""
-    try:
-        path_a = os.path.join(settings.GAME_DIR, "world", "network", "corpusa.txt")
-        path_b = os.path.join(settings.GAME_DIR, "world", "network", "corpusb.txt")
-        path_c = os.path.join(settings.GAME_DIR, "world", "network", "corpusc.txt")
-
-        with open(path_a, "r", encoding="utf-8", errors="ignore") as f:
-                model_a = markovify.Text(f.read(), state_size=2)
-        with open(path_a, "r", encoding="utf-8", errors="ignore") as f:
-            model_b = markovify.Text(f.read(), state_size=2)
-        with open(path_c, "r", encoding="utf-8", errors="ignore") as f:
-            model_c = markovify.Text(f.read(), state_size=2)
-
-        # Mix: 1.0 weight for A, 0.7 for B (tweak as you like!)
-        combined = markovify.combine([model_a, model_b, model_c], [0.4, 0.7, 1.0])
-        combined.compile(inplace=True)
-        return combined
-    except Exception:
-        return None
-
-# Load the brain once so it stays in memory
-_MARKOV_BRAIN = _get_markov_model()
 
 # --- Your Existing Config ---
 
@@ -80,17 +51,8 @@ def generate_decoy_entries(
         else:
             alias = _fallback_alias(max_len=max(3, min(id_col_width, 14)))
 
-        # 2. Generate Tag (Using Markovify, Faker Sentence, or Pool)
-        tag = ""
-        if _MARKOV_BRAIN:
-            # Try to make a short sentence that fits the column width
-            tag = _MARKOV_BRAIN.make_short_sentence(tag_col_width, tries=20)
-        
-        if not tag: # If Markov fails or isn't loaded, try Faker
-            if fake:
-                tag = str(fake.sentence() or "").strip()
-            else: # Total fallback
-                tag = _fallback_tag(max_len=tag_col_width)
+        # 2. Generate Tag (From the shared tag pool)
+        tag = _fallback_tag(max_len=tag_col_width)
 
         # Clean up strings
         alias = alias.replace("\r", "").replace("\n", "").strip()

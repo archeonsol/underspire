@@ -13,6 +13,8 @@ Key features:
 - Future: calls, texts, contacts, camera, social media
 """
 
+import time
+
 from typeclasses.matrix.items import NetworkedItem
 from world.matrix_accounts import get_account, set_alias, get_alias, has_alias
 
@@ -36,27 +38,102 @@ class Handset(NetworkedItem):
 
         # Handset-specific attributes
         self.db.device_type = "handset"
-        self.db.has_storage = False  # Future: contacts, messages
+        # Handset storage (contacts + text buffer) is per-device.
+        self.db.has_storage = False  # Device-framework storage is separate; we use explicit attrs below.
         self.db.has_controls = True  # Has account/communication controls
         self.db.security_level = 0  # Personal device, low security
         self.db.is_jailbroken = False  # Future feature
 
-        # Register device commands
-        self.register_device_command(
-            "account",
-            "handle_account_info",
-            help_text="View your Matrix account information",
-            auth_level=0,
-            visibility_threshold=0
-        )
-        self.register_device_command(
-            "set_alias",
-            "handle_set_alias",
-            help_text="Set your Matrix alias: set_alias @name",
-            auth_level=0,
-            physical_only=True,
-            visibility_threshold=0
-        )
+        # Per-handset contact list (alias -> handset Matrix ID). Stored ONLY on this handset.
+        if not getattr(self.db, "contacts", None):
+            self.db.contacts = {}
+
+        # Per-handset text buffer (list of dicts). Stored ONLY on this handset.
+        if not getattr(self.db, "texts", None):
+            self.db.texts = []
+
+        # Per-handset photo album (list of dicts). Stored ONLY on this handset.
+        if not getattr(self.db, "photos", None):
+            self.db.photos = []
+        if not getattr(self.db, "next_photo_id", None):
+            self.db.next_photo_id = 1
+
+        # NOTE: Handset player command (`hs`) is now a global Character command
+        # to avoid cmdset ambiguity when multiple handsets exist in scope.
+
+        # Register device commands (used by operate / device interface).
+        self._ensure_handset_device_commands()
+
+    def at_cmdset_get(self, **kwargs):
+        """
+        Ensure handset device-commands exist for older handsets too.
+        """
+        # Remove any legacy handset-local cmdset that could cause ambiguous command matches.
+        try:
+            self.cmdset.remove("commands.handset_cmdset.HandsetCmdSet")
+        except Exception:
+            pass
+        try:
+            self._ensure_handset_device_commands()
+        except Exception:
+            pass
+        return super().at_cmdset_get(**kwargs)
+
+    def _ensure_handset_device_commands(self):
+        """
+        Ensure the handset has all expected device-commands registered.
+
+        This is safe to call multiple times and helps migrate older handset objects.
+        """
+        # NetworkedMixin stores these registrations on self.db.device_commands.
+        existing = getattr(self.db, "device_commands", None) or {}
+        if not isinstance(existing, dict):
+            existing = {}
+            self.db.device_commands = existing
+
+        if "account" not in existing:
+            self.register_device_command(
+                "account",
+                "handle_account_info",
+                help_text="View your Matrix account information",
+                auth_level=0,
+                visibility_threshold=0,
+            )
+        if "set_alias" not in existing:
+            self.register_device_command(
+                "set_alias",
+                "handle_set_alias",
+                help_text="Set your Matrix alias: set_alias @name",
+                auth_level=0,
+                physical_only=True,
+                visibility_threshold=0,
+            )
+        if "contacts" not in existing:
+            self.register_device_command(
+                "contacts",
+                "handle_contacts",
+                help_text="View your contacts",
+                auth_level=0,
+                visibility_threshold=0,
+            )
+        if "messages" not in existing:
+            self.register_device_command(
+                "messages",
+                "handle_messages",
+                help_text="View recent text messages (last 24h)",
+                auth_level=0,
+                visibility_threshold=0,
+            )
+
+        if "photos" not in existing:
+            # This is primarily used by the device interface menu; it routes to the photo viewer.
+            self.register_device_command(
+                "photos",
+                "handle_photos",
+                help_text="View photos saved on this handset",
+                auth_level=0,
+                visibility_threshold=0,
+            )
 
     def get_authenticated_user(self):
         """
@@ -73,6 +150,251 @@ class Handset(NetworkedItem):
             from typeclasses.characters import Character
             if isinstance(self.location, Character):
                 return self.location
+        return None
+
+    def handle_contacts(self, caller, *args):
+        """
+        Display contacts stored on this handset (device-local).
+        """
+        contacts = {}
+        try:
+            contacts = self.get_contacts() or {}
+        except Exception:
+            raw = getattr(self.db, "contacts", None) or {}
+            contacts = raw if isinstance(raw, dict) else {}
+
+        if not contacts:
+            caller.msg("No contacts saved on this handset.")
+            return True
+
+        lines = ["|c=== Handset Contacts (max 15) ===|n"]
+        for alias in sorted(contacts.keys()):
+            lines.append(f"|w{alias}|n: {contacts[alias]}")
+        caller.msg("\n".join(lines))
+        return True
+
+    def _prune_texts_24h(self):
+        """
+        Prune the handset-local text buffer to the last 24 hours.
+
+        Entries are dicts like:
+          {"t": <epoch seconds>, "ts": "<display timestamp>", "from": "^ID", "msg": "..."}
+        Legacy entries without "t" are dropped when pruning.
+        """
+        cutoff = time.time() - 86400
+        raw = list(getattr(self.db, "texts", []) or [])
+        kept = []
+        for entry in raw:
+            if not isinstance(entry, dict):
+                continue
+            t = entry.get("t", None)
+            if t is None:
+                continue
+            try:
+                if float(t) >= cutoff:
+                    kept.append(entry)
+            except Exception:
+                continue
+        if kept != raw:
+            self.db.texts = kept
+        return kept
+
+    def add_text_message(self, sender_id: str, msg: str, ts_display: str):
+        """
+        Add a text message to this handset's buffer.
+
+        Pruning is handled by a server-side cleanup script so opening/viewing the
+        menu won't unexpectedly delete messages.
+        """
+        sender_id = (sender_id or "").strip()
+        msg = (msg or "").strip()
+        if not sender_id or not msg:
+            return False
+        if not sender_id.startswith("^"):
+            sender_id = "^" + sender_id
+        entry = {"t": time.time(), "ts": ts_display, "from": sender_id, "msg": msg}
+        raw = list(getattr(self.db, "texts", []) or [])
+        raw.append(entry)
+        self.db.texts = raw
+        return True
+
+    def get_text_messages(self):
+        """
+        Get stored text messages.
+
+        Note: Pruning is done by a timed server script, not on view.
+        """
+        return list(getattr(self.db, "texts", []) or [])
+
+    def handle_messages(self, caller, *args):
+        """
+        Display handset text buffer (last 24 hours).
+        """
+        # Do not prune on view; cleanup script keeps this within 24h.
+        msgs = self.get_text_messages()
+        if not msgs:
+            caller.msg("No recent texts on this handset (last 24 hours).")
+            return True
+        lines = [f"|c=== Messages on {self.key} (last 24h) ===|n"]
+        for entry in msgs[-50:]:
+            ts = entry.get("ts", "")
+            frm = entry.get("from", "")
+            msg = entry.get("msg", "")
+            display = self.display_alias_or_id(frm)
+            lines.append(f"[{ts}]{display}: {msg}")
+        caller.msg("\n".join(lines))
+
+        # Mark messages as "viewed" for notification counts.
+        try:
+            self.db.last_texts_viewed_t = time.time()
+        except Exception:
+            pass
+        return True
+
+    # -------------------------------------------------------------------------
+    # Handset photo album (device-local)
+    # -------------------------------------------------------------------------
+
+    def add_photo(self, kind: str, title: str, snapshot_text: str, ts_display: str, snapshot_chars: dict | None = None):
+        """
+        Store a photo/selfie in the handset-local album.
+        """
+        kind = (kind or "photo").strip().lower()
+        title = (title or "").strip()
+        snapshot_text = (snapshot_text or "").rstrip()
+        ts_display = (ts_display or "").strip()
+        snapshot_chars = snapshot_chars or {}
+        
+        if not snapshot_text:
+            return False
+
+        # Assign the lowest available numeric id (fill gaps after deletions).
+        current_photos = getattr(self.db, "photos", None)
+        if current_photos is None:
+            current_photos_list = []
+        elif not isinstance(current_photos, list):
+            try:
+                from collections.abc import Iterable
+            except Exception:
+                Iterable = None
+            if Iterable is not None and isinstance(current_photos, Iterable) and not isinstance(current_photos, (str, bytes)):
+                current_photos_list = list(current_photos)
+            else:
+                current_photos_list = []
+        else:
+            current_photos_list = list(current_photos)
+
+        used = set()
+        for p in current_photos_list:
+            try:
+                pid = int((p or {}).get("id"))
+                if pid > 0:
+                    used.add(pid)
+            except Exception:
+                continue
+        next_id = 1
+        while next_id in used:
+            next_id += 1
+
+        entry = {
+            "id": next_id,
+            "t": time.time(),
+            "ts": ts_display,
+            "kind": kind,
+            "title": title,
+            "text": snapshot_text,
+            "chars": snapshot_chars,
+        }
+
+        try:
+            # Keep for any UI that wants a monotonic counter, but ids themselves fill gaps.
+            self.db.next_photo_id = max(int(getattr(self.db, "next_photo_id", 1) or 1), next_id + 1)
+        except Exception:
+            pass
+
+        # Always assign a fresh list object (avoid in-place mutation edge cases).
+        new_photos = list(current_photos_list)
+        new_photos.append(entry)
+
+        # Keep album bounded
+        if len(new_photos) > 100:
+            new_photos = new_photos[-100:]
+
+        try:
+            self.db.photos = new_photos
+        except Exception:
+            pass
+        
+        return entry["id"]
+
+    def handle_photos(self, caller, *args):
+        """
+        Open the handset photo viewer (device interface menu node).
+        """
+        try:
+            from evennia import EvMenu
+            from typeclasses.matrix.menu_formatters import get_matrix_formatters
+        except Exception:
+            caller.msg("|rPhoto viewer unavailable.|n")
+            return False
+        # Determine Matrix vs physical context for formatting.
+        try:
+            from typeclasses.matrix.avatars import MatrixAvatar
+            from_matrix = isinstance(caller, MatrixAvatar)
+        except Exception:
+            from_matrix = False
+        EvMenu(
+            caller,
+            "typeclasses.matrix.device_menu",
+            startnode="node_view_photos",
+            startnode_input=("", {"device": self, "from_matrix": from_matrix}),
+            cmd_on_exit=None,
+            persistent=False,
+            **get_matrix_formatters(),
+            device=self,
+            from_matrix=from_matrix,
+        )
+        return True
+
+    def get_photos(self):
+        """Return list of photo dicts (oldest -> newest)."""
+        raw = getattr(self.db, "photos", None)
+        if raw is None:
+            return []
+        # Evennia may deserialize Attributes into SaverList/SaverDict variants.
+        # Treat them as list/dict-like rather than requiring exact builtins.
+        try:
+            from collections.abc import Iterable, Mapping
+        except Exception:
+            Iterable = None
+            Mapping = None
+
+        if not isinstance(raw, list) and not isinstance(raw, tuple):
+            if Iterable is None or not isinstance(raw, Iterable) or isinstance(raw, (str, bytes)):
+                return []
+
+        out = []
+        for p in list(raw):
+            if Mapping is not None:
+                if isinstance(p, Mapping):
+                    out.append(dict(p))
+            else:
+                if isinstance(p, dict):
+                    out.append(p)
+        return out
+
+    def get_photo_by_id(self, photo_id: int):
+        """Find a photo dict by its stored numeric id."""
+        try:
+            pid = int(photo_id)
+        except Exception:
+            return None
+        for entry in self.get_photos():
+            try:
+                if int(entry.get("id", -1)) == pid:
+                    return entry
+            except Exception:
+                continue
         return None
 
     def _get_user_from_caller(self, caller):
@@ -230,3 +552,85 @@ class Handset(NetworkedItem):
             text += "\n|r[OFFLINE]|n No network coverage."
 
         return text
+
+    # -------------------------------------------------------------------------
+    # Handset phone/text helpers (used by handset commands).
+    # -------------------------------------------------------------------------
+
+    def get_phone_number(self):
+        """Phone number for this handset: its Matrix ID."""
+        return self.get_matrix_id()
+
+    def get_contacts(self):
+        """Return contacts dict (alias_lower -> matrix_id)."""
+        contacts = getattr(self.db, "contacts", None)
+        if not isinstance(contacts, dict):
+            contacts = {}
+            self.db.contacts = contacts
+        # Normalize keys to lowercase for matching.
+        normalized = {}
+        for k, v in contacts.items():
+            if not k or not v:
+                continue
+            normalized[str(k).strip().lower()] = str(v).strip()
+        if normalized != contacts:
+            self.db.contacts = normalized
+        return normalized
+
+    def save_contact(self, matrix_id: str, alias: str):
+        """Save a contact on this handset."""
+        matrix_id = (matrix_id or "").strip()
+        alias = (alias or "").strip()
+        if not matrix_id or not alias:
+            return False, "Usage: handset save <ID> as <alias>"
+        if not matrix_id.startswith("^"):
+            matrix_id = "^" + matrix_id
+        contacts = self.get_contacts()
+        # Enforce max contacts per handset (15). Updating an existing alias does not count as a new slot.
+        if alias.lower() not in contacts and len(contacts) >= 15:
+            return False, "|rContact list full.|n Max 15 contacts per handset."
+        contacts[alias.lower()] = matrix_id
+        self.db.contacts = contacts
+        return True, f"|gSaved|n {matrix_id} as |w{alias}|n."
+
+    def resolve_contact_or_id(self, raw: str):
+        """
+        Resolve an input token to a handset Matrix ID.
+        Accepts:
+          - a Matrix ID with or without '^'
+          - a saved contact alias (case-insensitive)
+        """
+        raw = (raw or "").strip()
+        if not raw:
+            return None
+        contacts = self.get_contacts()
+        key = raw.lower()
+        if key in contacts:
+            return contacts[key]
+        # Treat as raw ID, allow missing prefix.
+        if raw.startswith("^"):
+            return raw
+        # If it looks like a 6-char base32 token, allow it.
+        if len(raw) == 6:
+            return "^" + raw.upper()
+        return "^" + raw
+
+    def display_alias_or_id(self, matrix_id: str):
+        """Return saved alias for matrix_id if present, else matrix_id."""
+        matrix_id = (matrix_id or "").strip()
+        if not matrix_id:
+            return ""
+        if not matrix_id.startswith("^"):
+            matrix_id = "^" + matrix_id
+        for alias, mid in self.get_contacts().items():
+            if str(mid).strip().upper() == matrix_id.upper():
+                return alias
+        return matrix_id
+
+    def _call_state(self):
+        return str(getattr(self.ndb, "call_state", "idle") or "idle")
+
+    def _set_call_state(self, state: str, peer_dbref: int | None = None):
+        self.ndb.call_state = state
+        self.ndb.call_peer = peer_dbref
+

@@ -254,6 +254,7 @@ class Room(MatrixIdMixin, ObjectParent, DefaultRoom):
         Characters section: Shows character poses, including special states like
         sitting/lying (tracked but displayed in furniture section), grappled, on operating tables, etc.
         """
+        include_looker = kwargs.get("include_looker", True)
         characters = self.filter_visible(
             self.contents_get(content_type="character"), looker, **kwargs
         )
@@ -307,11 +308,13 @@ class Room(MatrixIdMixin, ObjectParent, DefaultRoom):
             hname = holder.get_display_name(looker, **kwargs)
             grappled_parts.append(f"{ROOM_DESC_CHARACTER_NAME_COLOR}{vname}|n is locked in the grasp of {ROOM_DESC_CHARACTER_NAME_COLOR}{hname}|n.")
         char_pose_parts = []
-        # Include looker if not already shown (helps you see your own @lp)
-        looker_shown = looker in on_table or looker in sitting_set or looker in lying_set or looker in grappled_set
         chars_to_show = list(characters)
-        if not looker_shown and looker not in chars_to_show:
-            chars_to_show.append(looker)
+        # Include looker if not already shown (helps you see your own @lp).
+        # Some callers (like Photograph capture) want a third-person snapshot and will set include_looker=False.
+        if include_looker:
+            looker_shown = looker in on_table or looker in sitting_set or looker in lying_set or looker in grappled_set
+            if not looker_shown and looker not in chars_to_show:
+                chars_to_show.append(looker)
         for char in chars_to_show:
             # If a character is sitting/lying/on a table, rely on the furniture/table display
             # instead of also showing a generic room pose (avoids "standing here" while seated/lying).
