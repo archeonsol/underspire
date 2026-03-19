@@ -13,6 +13,10 @@ Stat modifications route through the existing BuffHandler on Character so they
 flow through get_display_stat() / get_skill_level() like every other modifier.
 BuffHandler is non-persistent, so CyberwareBase.reapply_buffs() is called by
 Character.at_server_start() to restore effects after a reload.
+
+Armor contribution: set armor_values = {damage_type: protection_score} for
+cyberware that provides passive damage resistance (e.g. subdermal plating).
+Queried by world.combat.armor.get_armor_protection_for_location().
 """
 
 from evennia import DefaultObject
@@ -29,6 +33,7 @@ class CyberwareBase(DefaultObject):
             "left thigh": ("lock", "A chrome prosthetic leg."),
             "abdomen": ("append", "Faint lines of subdermal plating are visible."),
         }
+        armor_values = {}          # Optional. {damage_type: protection_score}
 
     mode "lock"   — fully replaces the character's naked for that body part.
                     The user cannot edit it while installed.
@@ -45,6 +50,13 @@ class CyberwareBase(DefaultObject):
 
     buff_class = None
     body_mods = {}
+    armor_values = {}  # {damage_type: protection_score} for passive resistance
+
+    # Surgery defaults: wound recorded when installed/removed via surgery.
+    # Override surgery_body_part to target a specific part; otherwise the first
+    # locked body_mods part is chosen automatically.
+    surgery_wound_hp = 8         # severity 2 wound (needs treatment + time to heal)
+    surgery_body_part = None     # auto-detect from body_mods if None
 
     def at_object_creation(self):
         super().at_object_creation()
@@ -114,3 +126,59 @@ class CyberwareBase(DefaultObject):
         """
         if self.buff_class:
             character.buffs.add(self.buff_class)
+
+    # ── Surgery hooks ────────────────────────────────────────────────────
+
+    def _get_surgery_part(self):
+        """Return the body part to wound during surgery, or None."""
+        if self.surgery_body_part:
+            return self.surgery_body_part
+        if not self.body_mods:
+            return None
+        # Prefer the first locked part; fall back to first appended.
+        for part, (mode, _) in self.body_mods.items():
+            if mode == "lock":
+                return part
+        return next(iter(self.body_mods))
+
+    def on_surgery_install(self, character, surgeon=None):
+        """
+        Medical footprint of surgical installation. Creates a treated wound
+        on the primary body part. Called by Character.install_cyberware()
+        after on_install() unless skip_surgery=True.
+
+        Override for custom surgical effects (e.g. heavier wounds for major
+        implants, lighter wounds for subdermal injections).
+        """
+        part = self._get_surgery_part()
+        if not part or self.surgery_wound_hp <= 0:
+            return
+        from world.medical import add_injury
+        add_injury(character, self.surgery_wound_hp, body_part=part,
+                   weapon_key="surgery")
+        # Mark treated immediately — surgery was just performed by a professional.
+        injuries = character.db.injuries or []
+        for inj in reversed(injuries):
+            if inj.get("body_part") == part and not inj.get("treated"):
+                inj["treated"] = True
+                break
+        character.db.injuries = injuries
+
+    def on_surgery_removal(self, character, surgeon=None):
+        """
+        Medical footprint of surgical removal. Creates a treated wound.
+        Called by Character.remove_cyberware() before on_uninstall()
+        unless skip_surgery=True.
+        """
+        part = self._get_surgery_part()
+        if not part or self.surgery_wound_hp <= 0:
+            return
+        from world.medical import add_injury
+        add_injury(character, self.surgery_wound_hp, body_part=part,
+                   weapon_key="surgery")
+        injuries = character.db.injuries or []
+        for inj in reversed(injuries):
+            if inj.get("body_part") == part and not inj.get("treated"):
+                inj["treated"] = True
+                break
+        character.db.injuries = injuries

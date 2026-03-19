@@ -24,6 +24,10 @@ class RPGCharacterMixin:
         Base: stored_level // 2 from world.rpg.xp (0-300 -> 0-150).
         Buffs: routed through Evennia's BuffHandler (obj.buffs) using a
         '<stat>_display' identifier, e.g. 'charisma_display'.
+
+        Note: buffs.check() can push the result above 150. This is
+        intentional — cyberware and other buffs are allowed to exceed
+        the natural cap.
         """
         from world.rpg.xp import _stat_level
 

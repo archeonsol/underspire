@@ -120,9 +120,20 @@ def _weapon_attack_table(weapon_key, weapon_obj, skill_level):
     return table
 
 
-def _body_part_and_multiplier(attack_value):
+def _body_part_and_multiplier(attack_value, defender=None):
+    # Filter out missing body parts — can't hit what isn't there.
+    # Chrome parts are still hittable (the blow lands, but biological
+    # trauma is suppressed in apply_trauma).
+    available = BODY_PARTS
+    if defender:
+        from world.body import get_missing_parts
+        missing = get_missing_parts(defender)
+        if missing:
+            available = [p for p in BODY_PARTS if p not in missing]
+            if not available:
+                available = BODY_PARTS  # shouldn't happen, but safe fallback
     normalized = (max(ROLL_MIN, min(ROLL_MAX, attack_value)) - ROLL_MIN) / (ROLL_MAX - ROLL_MIN)
-    base_index = random.randrange(len(BODY_PARTS))
+    base_index = random.randrange(len(available))
     bias_steps = 0
     if normalized > 0.25:
         bias_steps += 1
@@ -133,9 +144,9 @@ def _body_part_and_multiplier(attack_value):
     index = base_index
     if bias_steps > 0 and random.random() < 0.6:
         step = random.randint(1, bias_steps)
-        index = min(len(BODY_PARTS) - 1, base_index + step)
+        index = min(len(available) - 1, base_index + step)
     multiplier = 0.5 + normalized
-    return BODY_PARTS[index], multiplier
+    return available[index], multiplier
 
 
 def _defender_parry_skill(defender):
@@ -590,7 +601,7 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
             _remove_both_combat_tickers(attacker, defender)
             return
         effective_defender, hit_shield = _check_body_shield(defender, attack_value, attacker_rating=attacker_rating)
-        body_part, multiplier = _body_part_and_multiplier(attack_value)
+        body_part, multiplier = _body_part_and_multiplier(attack_value, defender=effective_defender)
         base = attack_move["damage"]
         if result == "CRITICAL":
             damage = int(base * 1.5 * multiplier)

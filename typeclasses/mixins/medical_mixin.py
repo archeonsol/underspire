@@ -25,6 +25,8 @@ class MedicalMixin:
     def hp(self):
         if self.db.current_hp is None:
             self.db.current_hp = self.max_hp
+        if self.db.current_hp > self.max_hp:
+            self.db.current_hp = self.max_hp
         return self.db.current_hp
 
     @property
@@ -36,6 +38,8 @@ class MedicalMixin:
     @property
     def stamina(self):
         if self.db.current_stamina is None:
+            self.db.current_stamina = self.max_stamina
+        if self.db.current_stamina > self.max_stamina:
             self.db.current_stamina = self.max_stamina
         return self.db.current_stamina
 
