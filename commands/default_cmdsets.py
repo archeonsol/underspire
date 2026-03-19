@@ -134,6 +134,7 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         from commands.matrix_cmds import CmdJackIn, CmdJackOut, CmdRoute
         from commands.network_cmds import CmdNetworkWho, CmdNetworkSend, CmdNetworkNtag
         from commands.handset_cmds import CmdHandset
+        from commands.cyberware_cmds import CmdCyberware
         from commands.staff_cmds import (
             CmdGiveXp, CmdStaffSheet, CmdStaffSetStat, CmdStaffSetSkill,
             CmdCreateItem, CmdTypeclasses, CmdSpawnItem, CmdSpawnArmor, CmdSpawnVehicle, CmdSpawnMedical, CmdSpawnOR,
@@ -318,6 +319,7 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdSpawnCreature())
         self.add(CmdCreatureSet())
         self.add(CmdMusic())
+        self.add(CmdCyberware())
 
 class AccountCmdSet(default_cmds.AccountCmdSet):
     """

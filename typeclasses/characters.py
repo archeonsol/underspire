@@ -121,6 +121,80 @@ class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, F
         self.db.blood_alcohol = 0.0
         # Amputations / severed limbs (body part keys from world.medical.BODY_PARTS)
         self.db.missing_body_parts = []
+        # Installed cyberware: slot string -> CyberwareBase object
+        self.db.cyberware = {}
+
+    def at_server_start(self):
+        """Re-apply cyberware buffs after a server restart (BuffHandler is non-persistent)."""
+        super().at_server_start()
+        cyberware = self.db.cyberware or {}
+        for obj in cyberware.values():
+            try:
+                obj.reapply_buffs(self)
+            except Exception as err:
+                logger.log_trace(f"characters.at_server_start reapply_buffs ({obj}): {err}")
+
+    def install_cyberware(self, cyberware_obj):
+        """
+        Install a piece of cyberware onto this character.
+
+        Returns True on success, or an error string on failure.
+        """
+        from world.cyberware import CyberwareBase
+        if not isinstance(cyberware_obj, CyberwareBase):
+            return "That is not a cyberware object."
+        slot = cyberware_obj.slot
+        if not slot:
+            return f"{cyberware_obj.key} has no slot defined."
+        cyberware = dict(self.db.cyberware or {})
+        if slot in cyberware:
+            existing = cyberware[slot]
+            return f"Slot '{slot}' is already occupied by {existing.key}."
+        cyberware_obj.on_install(self)
+        cyberware[slot] = cyberware_obj
+        self.db.cyberware = cyberware
+        return True
+
+    def remove_cyberware(self, slot_key, rip=False):
+        """
+        Remove an installed piece of cyberware by slot key.
+
+        rip=True is a forced removal (no surgery); rip=False is surgical.
+        Either way the object materialises in the room — staff disposes as needed.
+
+        Returns True on success, or an error string if the slot is empty.
+        """
+        cyberware = dict(self.db.cyberware or {})
+        obj = cyberware.get(slot_key)
+        if not obj:
+            return f"No cyberware installed in slot '{slot_key}'."
+        obj.on_uninstall(self)
+        del cyberware[slot_key]
+        self.db.cyberware = cyberware
+        return True
+
+    def get_cyberware(self, slot=None):
+        """
+        Return installed cyberware.
+
+        If slot is given, return the object in that slot (or None).
+        Otherwise return a copy of the full slot dict.
+        """
+        cyberware = self.db.cyberware or {}
+        if slot is not None:
+            return cyberware.get(slot)
+        return dict(cyberware)
+
+    def has_cyberware(self, obj_or_slot):
+        """
+        Return True if this character has the given cyberware installed.
+
+        Accepts a slot key string or a cyberware object.
+        """
+        cyberware = self.db.cyberware or {}
+        if isinstance(obj_or_slot, str):
+            return obj_or_slot in cyberware
+        return obj_or_slot in cyberware.values()
 
     def at_server_reload(self):
         """
