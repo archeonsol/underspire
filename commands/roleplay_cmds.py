@@ -278,6 +278,10 @@ class CmdDescribeBodypart(Command):
         if not part:
             caller.msg("Unknown body part. Use: " + ", ".join(_body_parts_usage_list()))
             return
+        locked = getattr(caller.db, "locked_descriptions", None) or {}
+        if part in locked:
+            caller.msg(f"|r{part.title()} is locked by installed cyberware and cannot be edited.|n")
+            return
         caller.get_body_descriptions()
         caller.db.body_descriptions[part] = rest
         caller.msg(f"Set your |w{part}|n description: {rest}")

@@ -198,8 +198,17 @@ def get_effective_body_descriptions(character):
     splinted_bones = getattr(character.db, "splinted_bones", None) or []
     stabilized_organs = getattr(character.db, "stabilized_organs", None) or {}
     _, poss = _pronoun_sub_poss(character)
+    locked = getattr(character.db, "locked_descriptions", None) or {}
+    appended = getattr(character.db, "appended_descriptions", None) or {}
     for part in BODY_PARTS:
         text = (raw_body.get(part) or "").strip()
+        # Cyberware layers: locked replaces user text entirely; appended adds to it.
+        if part in locked:
+            text = locked[part]
+        else:
+            part_appends = appended.get(part, {})
+            if part_appends:
+                text = (text + " " + " ".join(part_appends.values())).strip()
         # Wound lines: only for untreated injuries on this part
         part_injuries = untreated_by_part.get(part) or []
         if part_injuries:
