@@ -141,6 +141,22 @@ class CyberwareBase(DefaultObject):
                 return part
         return next(iter(self.body_mods))
 
+    def _apply_surgery_wound(self, character):
+        """Create and immediately treat a surgical wound on the primary body part."""
+        part = self._get_surgery_part()
+        if not part or self.surgery_wound_hp <= 0:
+            return
+        from world.medical import add_injury
+        add_injury(character, self.surgery_wound_hp, body_part=part,
+                   weapon_key="surgery")
+        # Mark treated immediately — surgery was performed by a professional.
+        injuries = character.db.injuries or []
+        for inj in reversed(injuries):
+            if inj.get("body_part") == part and not inj.get("treated"):
+                inj["treated"] = True
+                break
+        character.db.injuries = injuries
+
     def on_surgery_install(self, character, surgeon=None):
         """
         Medical footprint of surgical installation. Creates a treated wound
@@ -150,19 +166,7 @@ class CyberwareBase(DefaultObject):
         Override for custom surgical effects (e.g. heavier wounds for major
         implants, lighter wounds for subdermal injections).
         """
-        part = self._get_surgery_part()
-        if not part or self.surgery_wound_hp <= 0:
-            return
-        from world.medical import add_injury
-        add_injury(character, self.surgery_wound_hp, body_part=part,
-                   weapon_key="surgery")
-        # Mark treated immediately — surgery was just performed by a professional.
-        injuries = character.db.injuries or []
-        for inj in reversed(injuries):
-            if inj.get("body_part") == part and not inj.get("treated"):
-                inj["treated"] = True
-                break
-        character.db.injuries = injuries
+        self._apply_surgery_wound(character)
 
     def on_surgery_removal(self, character, surgeon=None):
         """
@@ -170,15 +174,4 @@ class CyberwareBase(DefaultObject):
         Called by Character.remove_cyberware() before on_uninstall()
         unless skip_surgery=True.
         """
-        part = self._get_surgery_part()
-        if not part or self.surgery_wound_hp <= 0:
-            return
-        from world.medical import add_injury
-        add_injury(character, self.surgery_wound_hp, body_part=part,
-                   weapon_key="surgery")
-        injuries = character.db.injuries or []
-        for inj in reversed(injuries):
-            if inj.get("body_part") == part and not inj.get("treated"):
-                inj["treated"] = True
-                break
-        character.db.injuries = injuries
+        self._apply_surgery_wound(character)
