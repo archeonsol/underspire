@@ -290,6 +290,15 @@ class CmdRoute(Command):
         router_dbref = getattr(device_location.db, 'network_router', None)
         if not router_dbref:
             caller.msg("|rError: Device's location has no router connection.|n")
+            # Trigger emergency disconnect
+            from typeclasses.matrix.avatars import MatrixAvatar
+            if isinstance(caller, MatrixAvatar):
+                rig = getattr(caller.db, 'rig', None)
+                if rig and hasattr(rig, 'disconnect'):
+                    operator = getattr(caller.db, 'operator', None)
+                    if operator:
+                        from typeclasses.matrix.devices.dive_rig import JACKOUT_EMERGENCY
+                        rig.disconnect(operator, severity=JACKOUT_EMERGENCY, reason="Network connection lost")
             return
 
         # Load the router
@@ -297,11 +306,29 @@ class CmdRoute(Command):
             router = Router.objects.get(pk=router_dbref)
         except Router.DoesNotExist:
             caller.msg("|rError: Router no longer exists.|n")
+            # Trigger emergency disconnect
+            from typeclasses.matrix.avatars import MatrixAvatar
+            if isinstance(caller, MatrixAvatar):
+                rig = getattr(caller.db, 'rig', None)
+                if rig and hasattr(rig, 'disconnect'):
+                    operator = getattr(caller.db, 'operator', None)
+                    if operator:
+                        from typeclasses.matrix.devices.dive_rig import JACKOUT_EMERGENCY
+                        rig.disconnect(operator, severity=JACKOUT_EMERGENCY, reason="Router connection lost")
             return
 
         # Check if router is online
         if not router.db.online:
             caller.msg(f"|rConnection lost: {router.key} is offline.|n")
+            # Trigger emergency disconnect
+            from typeclasses.matrix.avatars import MatrixAvatar
+            if isinstance(caller, MatrixAvatar):
+                rig = getattr(caller.db, 'rig', None)
+                if rig and hasattr(rig, 'disconnect'):
+                    operator = getattr(caller.db, 'operator', None)
+                    if operator:
+                        from typeclasses.matrix.devices.dive_rig import JACKOUT_EMERGENCY
+                        rig.disconnect(operator, severity=JACKOUT_EMERGENCY, reason="Router offline")
             return
 
         # Get router's location
