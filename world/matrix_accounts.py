@@ -19,6 +19,24 @@ import re
 ALIAS_PATTERN = re.compile(r'^[a-zA-Z0-9_]{2,10}$')
 
 
+def _sync_avatar_alias(character, alias):
+    """
+    Push an alias update directly to the character's avatar cache, if one exists.
+
+    Sets db.matrix_alias on the avatar without going through the rig, since
+    the alias is already known at the call site. Only updates if the character
+    is currently associated with a rig.
+    """
+    rig = character.db.sitting_on
+    if not rig:
+        return
+    from typeclasses.matrix.avatars import MatrixAvatar
+    for avatar in MatrixAvatar.objects.all():
+        if avatar.db.entry_device == rig and not avatar.db.dead:
+            avatar.db.matrix_alias = alias
+            break
+
+
 def get_accounts_script():
     """
     Get or create the global Matrix accounts registry script.
@@ -209,6 +227,9 @@ def set_alias(character, alias):
 
     # Save back to registry
     registry.db.accounts[dbref] = account
+
+    # Push alias to avatar cache if the character is currently jacked in
+    _sync_avatar_alias(character, alias)
 
     return True, f"Matrix alias set to @{alias}"
 

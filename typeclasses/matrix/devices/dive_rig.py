@@ -60,6 +60,50 @@ class DiveRig(Seat, NetworkedObject):
             self.db.diving_msg = "{name} is jacked into the Matrix, diving through {obj}."
 
     # ========================================
+    # Identity
+    # ========================================
+
+    def get_active_matrix_id(self, character=None):
+        """
+        Return the Matrix ID of the identity currently active on this rig.
+
+        Currently returns the diving character's own Matrix ID. In the future,
+        if a jailbroken handset is slotted, this will return the handset's ID
+        instead — making the rig the single point of change for identity spoofing.
+
+        Args:
+            character: The diving character. If None, reads from active_connection.
+                       Must be passed explicitly during jack-in before active_connection
+                       is established.
+        """
+        if character is None:
+            conn = self.db.active_connection
+            character = conn.get('character') if conn else None
+        if not character:
+            return None
+        # Future: if self.db.slotted_handset: return self.db.slotted_handset.get_matrix_id()
+        return character.get_matrix_id()
+
+    def get_active_alias(self, character=None):
+        """
+        Return the alias of the identity currently active on this rig.
+
+        Mirrors get_active_matrix_id — currently derives from the character,
+        future will derive from a slotted handset if present.
+
+        Args:
+            character: The diving character. If None, reads from active_connection.
+        """
+        if character is None:
+            conn = self.db.active_connection
+            character = conn.get('character') if conn else None
+        if not character:
+            return None
+        # Future: if self.db.slotted_handset: return get_alias_for_handset(...)
+        from world.matrix_accounts import get_alias
+        return get_alias(character)
+
+    # ========================================
     # Connection Management (Primary API)
     # ========================================
 
@@ -116,6 +160,9 @@ class DiveRig(Seat, NetworkedObject):
             'avatar': avatar,
             'connected_at': gametime.gametime()
         }
+
+        # Sync alias now that active_connection is set
+        avatar.sync_alias()
 
         # Log the connection
         logger.log_info(f"Matrix jack-in: {character.key} -> {avatar.key}")
@@ -463,15 +510,22 @@ class DiveRig(Seat, NetworkedObject):
 
         # Create avatar if it doesn't exist or needs respawn
         if not avatar:
-            avatar_name = f"{character.key} (Avatar)"
+            matrix_id = self.get_active_matrix_id(character)
+            if not matrix_id:
+                from evennia.utils import logger
+                logger.log_err(f"Cannot create avatar for {character}: no Matrix ID.")
+                return None
+
             avatar = create_object(
                 MatrixAvatar,
-                key=avatar_name,
+                key=f"{matrix_id} (Avatar)",
                 location=target_node
             )
 
             if not avatar:
                 return None
+
+            avatar.db.matrix_id = matrix_id
 
             # Set initial avatar description
             avatar.db.desc = "A formless blob of data with limitless potential, waiting to be shaped into something interesting."
