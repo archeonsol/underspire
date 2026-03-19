@@ -317,8 +317,8 @@ class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, F
             if (bg and str(bg) != "Unknown") or (stats and any(stats.values())):
                 self.db.needs_chargen = False
             else:
-                from evennia.utils.evmenu import EvMenu
-                EvMenu(self, "world.rpg.chargen", startnode="node_start")
+                from world.rpg.chargen import start_cinematic_chargen
+                start_cinematic_chargen(self)
                 return
         # CHECK: Are we jacked into the Matrix? Ask the rig to reconnect if valid.
         rig = self.db.sitting_on

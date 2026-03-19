@@ -1,0 +1,629 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{game_name}}</title>
+    
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;0,700;1,400&family=Fira+Code:wght@300;400;500&display=swap" rel="stylesheet">
+    
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+ 
+    <style>
+        :root {
+            --bg-deep:       #020204;
+            --bg-surface:    #08080c;
+            --bg-raised:     #0e0e14;
+            --text-primary:  #c8c8d0;
+            --text-dim:      #606070;
+            --text-ghost:    #2a2a35;
+            --accent-blood:  #8b1a1a;
+            --accent-ember:  #c43030;
+            --accent-glow:   rgba(200, 200, 208, 0.15);
+            --border-subtle: rgba(139, 26, 26, 0.2);
+            --vignette-intensity: 0.7;
+        }
+ 
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+ 
+        body {
+            background-color: var(--bg-deep);
+            color: var(--text-primary);
+            font-family: 'IBM Plex Mono', monospace;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            font-size: 14.5px;
+            line-height: 1.65;
+        }
+ 
+        /* CRT Effects */
+        .crt-frame {
+            position: fixed; inset: 0; pointer-events: none; z-index: 900;
+            background: radial-gradient(ellipse 85% 80% at 50% 50%, transparent 55%, rgba(0, 0, 0, var(--vignette-intensity)) 100%);
+        }
+        .scanlines {
+            position: fixed; inset: 0; pointer-events: none; z-index: 901;
+            background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0, 0, 0, 0.12) 2px, rgba(0, 0, 0, 0.12) 4px);
+            mix-blend-mode: multiply;
+        }
+        .flicker {
+            position: fixed; inset: 0; pointer-events: none; z-index: 902;
+            opacity: 0; background: rgba(200, 200, 208, 0.015);
+            animation: screenFlicker 8s infinite;
+        }
+        @keyframes screenFlicker {
+            0%, 96%, 100% { opacity: 0; }
+            96.5% { opacity: 1; }
+            97% { opacity: 0; }
+            97.5% { opacity: 0.5; }
+            98% { opacity: 0; }
+        }
+ 
+        /* HUD */
+        #hud {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 8px 24px; background: var(--bg-surface);
+            border-bottom: 1px solid var(--border-subtle);
+            font-size: 11.5px; letter-spacing: 0.08em; color: var(--text-dim);
+            text-transform: uppercase; flex-shrink: 0; z-index: 10; user-select: none;
+        }
+        #hud .hud-left, #hud .hud-right { display: flex; align-items: center; gap: 16px; }
+        .connection-dot {
+            width: 7px; height: 7px; border-radius: 50%;
+            background: var(--accent-blood); display: inline-block; margin-right: 6px;
+            transition: background 0.5s, box-shadow 0.5s;
+        }
+        .connection-dot.connected { background: #2d8a4e; box-shadow: 0 0 6px rgba(45, 138, 78, 0.6); }
+        .game-title { color: var(--accent-ember); font-weight: 500; font-size: 12px; letter-spacing: 0.15em; }
+        .clock { font-variant-numeric: tabular-nums; }
+ 
+        /* Output */
+        #output-wrapper { flex-grow: 1; position: relative; overflow: hidden; }
+        #output {
+            height: 100%; padding: 24px 28px 40px; overflow-y: auto;
+            word-wrap: break-word; white-space: pre-wrap; scroll-behavior: smooth;
+        }
+        #output .msg { padding: 1px 0; animation: msgIn 0.2s ease-out; }
+        @keyframes msgIn {
+            from { opacity: 0; transform: translateY(4px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+        #output .echo {
+            color: var(--text-dim); border-left: 2px solid var(--border-subtle);
+            padding-left: 12px; margin: 4px 0;
+        }
+        #output .sys { color: var(--accent-blood); font-size: 12px; letter-spacing: 0.06em; opacity: 0.7; }
+        #output a { color: var(--accent-ember); text-decoration: none; border-bottom: 1px solid var(--border-subtle); }
+        #output a:hover { color: #ff4444; border-color: #ff4444; }
+ 
+        /* Scrollbar */
+        #output::-webkit-scrollbar { width: 6px; }
+        #output::-webkit-scrollbar-track { background: transparent; }
+        #output::-webkit-scrollbar-thumb { background: rgba(139, 26, 26, 0.3); border-radius: 3px; }
+        #output::-webkit-scrollbar-thumb:hover { background: rgba(139, 26, 26, 0.5); }
+ 
+        /* Scroll-to-bottom */
+        #scroll-anchor {
+            position: absolute; bottom: 16px; right: 24px;
+            width: 36px; height: 36px; border-radius: 50%;
+            background: var(--bg-raised); border: 1px solid var(--border-subtle);
+            color: var(--accent-ember); font-size: 16px; cursor: pointer;
+            display: none; align-items: center; justify-content: center;
+            z-index: 50; transition: opacity 0.2s, transform 0.2s;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+        }
+        #scroll-anchor:hover { transform: scale(1.1); background: var(--accent-blood); color: #fff; }
+        #scroll-anchor.visible { display: flex; }
+ 
+        /* Input */
+        #input-container {
+            display: flex; padding: 14px 24px; background: var(--bg-surface);
+            border-top: 1px solid var(--border-subtle); align-items: center;
+            flex-shrink: 0; z-index: 10; position: relative;
+        }
+        #input-container::before {
+            content: ''; position: absolute; top: -1px; left: 10%; right: 10%; height: 1px;
+            background: linear-gradient(90deg, transparent, var(--accent-blood), var(--accent-ember), var(--accent-blood), transparent);
+            opacity: 0.4;
+        }
+        #prompt {
+            color: var(--accent-ember); margin-right: 14px; font-weight: 500; font-size: 18px;
+            user-select: none; text-shadow: 0 0 8px rgba(196, 48, 48, 0.4);
+        }
+        #inputfield {
+            flex-grow: 1; background: transparent; border: none; color: var(--text-primary);
+            font-family: 'Fira Code', 'IBM Plex Mono', monospace; font-size: 15px;
+            outline: none; caret-color: var(--accent-ember); letter-spacing: 0.02em;
+        }
+        #inputfield::placeholder { color: var(--text-ghost); font-style: italic; }
+        #char-count {
+            font-size: 10px; color: var(--text-ghost); margin-left: 12px;
+            font-variant-numeric: tabular-nums; min-width: 40px; text-align: right;
+        }
+        #char-count.warn { color: var(--accent-ember); }
+ 
+        /* Boot Overlay */
+        #boot-screen {
+            position: fixed; inset: 0; background: var(--bg-deep); z-index: 2000;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            font-family: 'IBM Plex Mono', monospace; transition: opacity 0.8s ease;
+        }
+        #boot-screen.fade-out { opacity: 0; pointer-events: none; }
+        .boot-text { color: var(--text-dim); font-size: 12px; letter-spacing: 0.1em; max-width: 500px; width: 90%; }
+        .boot-text .line { opacity: 0; transform: translateY(2px); transition: opacity 0.3s, transform 0.3s; }
+        .boot-text .line.visible { opacity: 1; transform: translateY(0); }
+        .boot-text .line.ok { color: #2d8a4e; }
+        .boot-text .line.warn { color: var(--accent-ember); }
+        .boot-text .line.title {
+            color: var(--accent-ember); font-size: 16px; font-weight: 700;
+            letter-spacing: 0.2em; margin-bottom: 16px;
+            text-shadow: 0 0 20px rgba(196, 48, 48, 0.5);
+        }
+ 
+        /* Volume */
+        #volume-control { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+        #volume-control svg { width: 14px; height: 14px; fill: var(--text-dim); transition: fill 0.2s; }
+        #volume-control:hover svg { fill: var(--text-primary); }
+        #volume-slider {
+            -webkit-appearance: none; appearance: none; width: 60px; height: 3px;
+            background: var(--text-ghost); border-radius: 2px; outline: none;
+        }
+        #volume-slider::-webkit-slider-thumb {
+            -webkit-appearance: none; width: 10px; height: 10px;
+            border-radius: 50%; background: var(--accent-ember); cursor: pointer;
+        }
+ 
+        /* ═══════════════════════════════════════
+           ANSI / XTERM COLOR SUPPORT
+           Evennia's text2html.js converts MUD
+           color codes to these classes.
+           ═══════════════════════════════════════ */
+ 
+        /* Standard ANSI foreground */
+        .ansi-black   { color: #4f4f4f; }
+        .ansi-red     { color: #ff4444; }
+        .ansi-green   { color: #44ff44; }
+        .ansi-yellow  { color: #ffff44; }
+        .ansi-blue    { color: #6688ff; }
+        .ansi-magenta { color: #ff44ff; }
+        .ansi-cyan    { color: #44ffff; }
+        .ansi-white   { color: #dddddd; }
+ 
+        /* Bright / bold ANSI foreground */
+        .ansi-bright-black   { color: #888888; }
+        .ansi-bright-red     { color: #ff6666; }
+        .ansi-bright-green   { color: #66ff66; }
+        .ansi-bright-yellow  { color: #ffff66; }
+        .ansi-bright-blue    { color: #88aaff; }
+        .ansi-bright-magenta { color: #ff66ff; }
+        .ansi-bright-cyan    { color: #66ffff; }
+        .ansi-bright-white   { color: #ffffff; }
+ 
+        /* ANSI background */
+        .ansi-bg-black   { background-color: #000000; }
+        .ansi-bg-red     { background-color: #aa0000; }
+        .ansi-bg-green   { background-color: #00aa00; }
+        .ansi-bg-yellow  { background-color: #aa5500; }
+        .ansi-bg-blue    { background-color: #0000aa; }
+        .ansi-bg-magenta { background-color: #aa00aa; }
+        .ansi-bg-cyan    { background-color: #00aaaa; }
+        .ansi-bg-white   { background-color: #aaaaaa; }
+ 
+        /* Text decoration classes */
+        .ansi-bold      { font-weight: 700; }
+        .ansi-dim       { opacity: 0.6; }
+        .ansi-italic    { font-style: italic; }
+        .ansi-underline { text-decoration: underline; text-underline-offset: 3px; }
+        .ansi-blink     { animation: ansiBlink 1s step-end infinite; }
+        .ansi-inverse   { filter: invert(1); }
+        .ansi-strike,
+        .ansi-strikethrough { text-decoration: line-through; }
+ 
+        @keyframes ansiBlink {
+            50% { opacity: 0; }
+        }
+ 
+        /* ═══════════════════════════════════════
+           XTERM 256-COLOR PALETTE
+           text2html.js uses class="color-NNN"
+           ═══════════════════════════════════════ */
+        .color-000 { color: #4f4f4f; } .color-001 { color: #aa0000; } .color-002 { color: #00aa00; } .color-003 { color: #aa5500; }
+        .color-004 { color: #0000aa; } .color-005 { color: #aa00aa; } .color-006 { color: #00aaaa; } .color-007 { color: #aaaaaa; }
+        .color-008 { color: #555555; } .color-009 { color: #ff5555; } .color-010 { color: #55ff55; } .color-011 { color: #ffff55; }
+        .color-012 { color: #5555ff; } .color-013 { color: #ff55ff; } .color-014 { color: #55ffff; } .color-015 { color: #ffffff; }
+        .color-016 { color: #000000; } .color-017 { color: #00005f; } .color-018 { color: #000087; } .color-019 { color: #0000af; }
+        .color-020 { color: #0000d7; } .color-021 { color: #0000ff; } .color-022 { color: #005f00; } .color-023 { color: #005f5f; }
+        .color-024 { color: #005f87; } .color-025 { color: #005faf; } .color-026 { color: #005fd7; } .color-027 { color: #005fff; }
+        .color-028 { color: #008700; } .color-029 { color: #00875f; } .color-030 { color: #008787; } .color-031 { color: #0087af; }
+        .color-032 { color: #0087d7; } .color-033 { color: #0087ff; } .color-034 { color: #00af00; } .color-035 { color: #00af5f; }
+        .color-036 { color: #00af87; } .color-037 { color: #00afaf; } .color-038 { color: #00afd7; } .color-039 { color: #00afff; }
+        .color-040 { color: #00d700; } .color-041 { color: #00d75f; } .color-042 { color: #00d787; } .color-043 { color: #00d7af; }
+        .color-044 { color: #00d7d7; } .color-045 { color: #00d7ff; } .color-046 { color: #00ff00; } .color-047 { color: #00ff5f; }
+        .color-048 { color: #00ff87; } .color-049 { color: #00ffaf; } .color-050 { color: #00ffd7; } .color-051 { color: #00ffff; }
+        .color-052 { color: #5f0000; } .color-053 { color: #5f005f; } .color-054 { color: #5f0087; } .color-055 { color: #5f00af; }
+        .color-056 { color: #5f00d7; } .color-057 { color: #5f00ff; } .color-058 { color: #5f5f00; } .color-059 { color: #5f5f5f; }
+        .color-060 { color: #5f5f87; } .color-061 { color: #5f5faf; } .color-062 { color: #5f5fd7; } .color-063 { color: #5f5fff; }
+        .color-064 { color: #5f8700; } .color-065 { color: #5f875f; } .color-066 { color: #5f8787; } .color-067 { color: #5f87af; }
+        .color-068 { color: #5f87d7; } .color-069 { color: #5f87ff; } .color-070 { color: #5faf00; } .color-071 { color: #5faf5f; }
+        .color-072 { color: #5faf87; } .color-073 { color: #5fafaf; } .color-074 { color: #5fafd7; } .color-075 { color: #5fafff; }
+        .color-076 { color: #5fd700; } .color-077 { color: #5fd75f; } .color-078 { color: #5fd787; } .color-079 { color: #5fd7af; }
+        .color-080 { color: #5fd7d7; } .color-081 { color: #5fd7ff; } .color-082 { color: #5fff00; } .color-083 { color: #5fff5f; }
+        .color-084 { color: #5fff87; } .color-085 { color: #5fffaf; } .color-086 { color: #5fffd7; } .color-087 { color: #5fffff; }
+        .color-088 { color: #870000; } .color-089 { color: #87005f; } .color-090 { color: #870087; } .color-091 { color: #8700af; }
+        .color-092 { color: #8700d7; } .color-093 { color: #8700ff; } .color-094 { color: #875f00; } .color-095 { color: #875f5f; }
+        .color-096 { color: #875f87; } .color-097 { color: #875faf; } .color-098 { color: #875fd7; } .color-099 { color: #875fff; }
+        .color-100 { color: #878700; } .color-101 { color: #87875f; } .color-102 { color: #878787; } .color-103 { color: #8787af; }
+        .color-104 { color: #8787d7; } .color-105 { color: #8787ff; } .color-106 { color: #87af00; } .color-107 { color: #87af5f; }
+        .color-108 { color: #87af87; } .color-109 { color: #87afaf; } .color-110 { color: #87afd7; } .color-111 { color: #87afff; }
+        .color-112 { color: #87d700; } .color-113 { color: #87d75f; } .color-114 { color: #87d787; } .color-115 { color: #87d7af; }
+        .color-116 { color: #87d7d7; } .color-117 { color: #87d7ff; } .color-118 { color: #87ff00; } .color-119 { color: #87ff5f; }
+        .color-120 { color: #87ff87; } .color-121 { color: #87ffaf; } .color-122 { color: #87ffd7; } .color-123 { color: #87ffff; }
+        .color-124 { color: #af0000; } .color-125 { color: #af005f; } .color-126 { color: #af0087; } .color-127 { color: #af00af; }
+        .color-128 { color: #af00d7; } .color-129 { color: #af00ff; } .color-130 { color: #af5f00; } .color-131 { color: #af5f5f; }
+        .color-132 { color: #af5f87; } .color-133 { color: #af5faf; } .color-134 { color: #af5fd7; } .color-135 { color: #af5fff; }
+        .color-136 { color: #af8700; } .color-137 { color: #af875f; } .color-138 { color: #af8787; } .color-139 { color: #af87af; }
+        .color-140 { color: #af87d7; } .color-141 { color: #af87ff; } .color-142 { color: #afaf00; } .color-143 { color: #afaf5f; }
+        .color-144 { color: #afaf87; } .color-145 { color: #afafaf; } .color-146 { color: #afafd7; } .color-147 { color: #afafff; }
+        .color-148 { color: #afd700; } .color-149 { color: #afd75f; } .color-150 { color: #afd787; } .color-151 { color: #afd7af; }
+        .color-152 { color: #afd7d7; } .color-153 { color: #afd7ff; } .color-154 { color: #afff00; } .color-155 { color: #afff5f; }
+        .color-156 { color: #afff87; } .color-157 { color: #afffaf; } .color-158 { color: #afffd7; } .color-159 { color: #afffff; }
+        .color-160 { color: #d70000; } .color-161 { color: #d7005f; } .color-162 { color: #d70087; } .color-163 { color: #d700af; }
+        .color-164 { color: #d700d7; } .color-165 { color: #d700ff; } .color-166 { color: #d75f00; } .color-167 { color: #d75f5f; }
+        .color-168 { color: #d75f87; } .color-169 { color: #d75faf; } .color-170 { color: #d75fd7; } .color-171 { color: #d75fff; }
+        .color-172 { color: #d78700; } .color-173 { color: #d7875f; } .color-174 { color: #d78787; } .color-175 { color: #d787af; }
+        .color-176 { color: #d787d7; } .color-177 { color: #d787ff; } .color-178 { color: #d7af00; } .color-179 { color: #d7af5f; }
+        .color-180 { color: #d7af87; } .color-181 { color: #d7afaf; } .color-182 { color: #d7afd7; } .color-183 { color: #d7afff; }
+        .color-184 { color: #d7d700; } .color-185 { color: #d7d75f; } .color-186 { color: #d7d787; } .color-187 { color: #d7d7af; }
+        .color-188 { color: #d7d7d7; } .color-189 { color: #d7d7ff; } .color-190 { color: #d7ff00; } .color-191 { color: #d7ff5f; }
+        .color-192 { color: #d7ff87; } .color-193 { color: #d7ffaf; } .color-194 { color: #d7ffd7; } .color-195 { color: #d7ffff; }
+        .color-196 { color: #ff0000; } .color-197 { color: #ff005f; } .color-198 { color: #ff0087; } .color-199 { color: #ff00af; }
+        .color-200 { color: #ff00d7; } .color-201 { color: #ff00ff; } .color-202 { color: #ff5f00; } .color-203 { color: #ff5f5f; }
+        .color-204 { color: #ff5f87; } .color-205 { color: #ff5faf; } .color-206 { color: #ff5fd7; } .color-207 { color: #ff5fff; }
+        .color-208 { color: #ff8700; } .color-209 { color: #ff875f; } .color-210 { color: #ff8787; } .color-211 { color: #ff87af; }
+        .color-212 { color: #ff87d7; } .color-213 { color: #ff87ff; } .color-214 { color: #ffaf00; } .color-215 { color: #ffaf5f; }
+        .color-216 { color: #ffaf87; } .color-217 { color: #ffafaf; } .color-218 { color: #ffafd7; } .color-219 { color: #ffafff; }
+        .color-220 { color: #ffd700; } .color-221 { color: #ffd75f; } .color-222 { color: #ffd787; } .color-223 { color: #ffd7af; }
+        .color-224 { color: #ffd7d7; } .color-225 { color: #ffd7ff; } .color-226 { color: #ffff00; } .color-227 { color: #ffff5f; }
+        .color-228 { color: #ffff87; } .color-229 { color: #ffffaf; } .color-230 { color: #ffffd7; } .color-231 { color: #ffffff; }
+        .color-232 { color: #080808; } .color-233 { color: #121212; } .color-234 { color: #1c1c1c; } .color-235 { color: #262626; }
+        .color-236 { color: #303030; } .color-237 { color: #3a3a3a; } .color-238 { color: #444444; } .color-239 { color: #4e4e4e; }
+        .color-240 { color: #585858; } .color-241 { color: #626262; } .color-242 { color: #6c6c6c; } .color-243 { color: #767676; }
+        .color-244 { color: #808080; } .color-245 { color: #8a8a8a; } .color-246 { color: #949494; } .color-247 { color: #9e9e9e; }
+        .color-248 { color: #a8a8a8; } .color-249 { color: #b2b2b2; } .color-250 { color: #bcbcbc; } .color-251 { color: #c6c6c6; }
+        .color-252 { color: #d0d0d0; } .color-253 { color: #dadada; } .color-254 { color: #e4e4e4; } .color-255 { color: #eeeeee; }
+ 
+        /* Xterm256 backgrounds */
+        .bg-color-000 { background-color: #000000; } .bg-color-001 { background-color: #aa0000; }
+        .bg-color-002 { background-color: #00aa00; } .bg-color-003 { background-color: #aa5500; }
+        .bg-color-004 { background-color: #0000aa; } .bg-color-005 { background-color: #aa00aa; }
+        .bg-color-006 { background-color: #00aaaa; } .bg-color-007 { background-color: #aaaaaa; }
+        .bg-color-008 { background-color: #555555; } .bg-color-009 { background-color: #ff5555; }
+        .bg-color-010 { background-color: #55ff55; } .bg-color-011 { background-color: #ffff55; }
+        .bg-color-012 { background-color: #5555ff; } .bg-color-013 { background-color: #ff55ff; }
+        .bg-color-014 { background-color: #55ffff; } .bg-color-015 { background-color: #ffffff; }
+ 
+        ::selection { background: rgba(139, 26, 26, 0.4); color: #fff; }
+ 
+        @media (max-width: 600px) {
+            #output { padding: 16px; font-size: 13px; }
+            #input-container { padding: 12px 16px; }
+            #hud { padding: 6px 16px; font-size: 10px; }
+        }
+    </style>
+</head>
+<body>
+ 
+    <div class="crt-frame"></div>
+    <div class="scanlines"></div>
+    <div class="flicker"></div>
+ 
+    <div id="boot-screen">
+        <div class="boot-text" id="boot-log"></div>
+    </div>
+ 
+    <div id="hud">
+        <div class="hud-left">
+            <span class="game-title">{{game_name}}</span>
+            <span><span class="connection-dot" id="conn-dot"></span><span id="conn-status">CONNECTING</span></span>
+        </div>
+        <div class="hud-right">
+            <div id="volume-control" title="Music volume">
+                <svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>
+                <input type="range" id="volume-slider" min="0" max="100" value="40" />
+            </div>
+            <span class="clock" id="clock">--:--</span>
+        </div>
+    </div>
+ 
+    <div id="output-wrapper">
+        <div id="output"></div>
+        <button id="scroll-anchor" title="Scroll to bottom">&#x25BE;</button>
+    </div>
+ 
+    <div id="input-container">
+        <span id="prompt">&#x276F;</span>
+        <input type="text" id="inputfield" autofocus autocomplete="off" spellcheck="false" placeholder="enter command..." />
+        <span id="char-count"></span>
+    </div>
+ 
+    <script language="javascript" type="text/javascript">
+        {% if websocket_enabled %}
+            var wsactive = true;
+        {% else %}
+            var wsactive = false;
+        {% endif %}
+ 
+        {% if browser_sessid %}
+           var csessid = "{{browser_sessid}}";
+        {% else %}
+           var csessid = false;
+        {% endif %}
+ 
+        {% if websocket_url %}
+            var wsurl = "{{websocket_url}}";
+        {% else %}
+            var wsurl = "ws://" + this.location.hostname + ":{{websocket_port}}";
+        {% endif %}
+ 
+        // Dummy plugin handler so text2html.js doesn't crash looking for GoldenLayout
+        window.plugin_handler = {
+            add: function(name, plugin) { console.log("[sys] plugin bypass: " + name); }
+        };
+    </script>
+ 
+    <script src="{% static 'webclient/js/evennia.js' %}"></script>
+    <script src="{% static 'webclient/js/plugins/text2html.js' %}"></script>
+ 
+    <script>
+        $(document).ready(function() {
+            var $output    = $('#output');
+            var $input     = $('#inputfield');
+            var $scrollBtn = $('#scroll-anchor');
+            var $charCount = $('#char-count');
+            var currentTrack = null;
+            var musicVolume  = 0.4;
+            var autoScroll   = true;
+ 
+            // ═══════════════════════════════════════
+            //  1. INITIALIZE EVENNIA IMMEDIATELY
+            //     Connection opens right away.
+            //     We do NOT pass onText here because
+            //     this Evennia version uses the emitter
+            //     system for receiving messages.
+            // ═══════════════════════════════════════
+            console.log("[sys] Booting Web Client...");
+            Evennia.init({
+                autoConnect: true
+            });
+ 
+            // ═══════════════════════════════════════
+            //  2. ATTACH ALL HANDLERS VIA EMITTER
+            //     Poll until emitter is ready, then
+            //     hook text, prompt, connection, and
+            //     audio events through it.
+            // ═══════════════════════════════════════
+            var emitterReady = setInterval(function() {
+                if (Evennia.emitter) {
+                    clearInterval(emitterReady);
+                    console.log("[sys] Emitter ready. Attaching handlers.");
+ 
+                    // --- RECEIVE TEXT FROM SERVER ---
+                    Evennia.emitter.on("text", function(args, kwargs) {
+                        var text = args[0];
+                        if (window.text2html) { text = window.text2html(text); }
+                        $output.append("<div class='msg'>" + text + "</div>");
+                        scrollToBottom();
+                    });
+ 
+                    // --- RECEIVE PROMPTS ---
+                    Evennia.emitter.on("prompt", function(args, kwargs) {
+                        var text = args[0];
+                        if (window.text2html) { text = window.text2html(text); }
+                        $output.append("<div class='msg' style='color:var(--accent-ember)'>" + text + "</div>");
+                        scrollToBottom();
+                    });
+ 
+                    // --- CONNECTION STATUS ---
+                    Evennia.emitter.on("connection_open", function() {
+                        console.log("[sys] WebSocket connected.");
+                        $('#conn-dot').addClass('connected');
+                        $('#conn-status').text('LINKED');
+                    });
+ 
+                    Evennia.emitter.on("connection_close", function() {
+                        console.log("[sys] WebSocket disconnected.");
+                        $('#conn-dot').removeClass('connected');
+                        $('#conn-status').text('SEVERED');
+                    });
+ 
+                    // --- AUDIO ---
+                    Evennia.emitter.on("play_music", function(args) {
+                        if (currentTrack) { currentTrack.pause(); currentTrack.currentTime = 0; }
+                        currentTrack = new Audio(args[0]);
+                        currentTrack.volume = musicVolume;
+                        currentTrack.loop = true;
+                        currentTrack.play().catch(function() {
+                            var forcePlay = function() {
+                                if (currentTrack) currentTrack.play();
+                                $(document).off('click keydown', forcePlay);
+                            };
+                            $(document).on('click keydown', forcePlay);
+                        });
+                        return true;
+                    });
+ 
+                    Evennia.emitter.on("stop_music", function() {
+                        if (currentTrack) {
+                            var fade = setInterval(function() {
+                                if (currentTrack.volume > 0.05) {
+                                    currentTrack.volume = Math.max(0, currentTrack.volume - 0.05);
+                                } else {
+                                    currentTrack.pause();
+                                    currentTrack.currentTime = 0;
+                                    clearInterval(fade);
+                                }
+                            }, 150);
+                        }
+                        return true;
+                    });
+                }
+            }, 50);
+ 
+            // ═══════════════════════════════════════
+            //  3. BOOT SEQUENCE (cosmetic only)
+            // ═══════════════════════════════════════
+            var bootLines = [
+                { text: "{{game_name}}", cls: "title", delay: 200 },
+                { text: "────────────────────────────────", cls: "", delay: 100 },
+                { text: "BIOS .......... HAEMATIC TERM v2.0", cls: "", delay: 150 },
+                { text: "MEM CHECK ..... 640K OK", cls: "ok", delay: 120 },
+                { text: "WEBSOCKET ..... " + (wsactive ? "ENABLED" : "POLLING"), cls: wsactive ? "ok" : "warn", delay: 200 },
+                { text: "AUDIO SYS ..... STANDBY", cls: "", delay: 100 },
+                { text: "CIPHER KEY .... ACCEPTED", cls: "ok", delay: 180 },
+                { text: "────────────────────────────────", cls: "", delay: 100 },
+                { text: "ESTABLISHING UPLINK...", cls: "warn", delay: 400 },
+            ];
+ 
+            var $bootLog = $('#boot-log');
+            function runBoot(index) {
+                if (index >= bootLines.length) {
+                    setTimeout(function() {
+                        $('#boot-screen').addClass('fade-out');
+                        setTimeout(function() { $('#boot-screen').remove(); }, 900);
+                    }, 600);
+                    return;
+                }
+                var line = bootLines[index];
+                var $line = $('<div class="line ' + line.cls + '">' + line.text + '</div>');
+                $bootLog.append($line);
+                setTimeout(function() { $line.addClass('visible'); }, 20);
+                setTimeout(function() { runBoot(index + 1); }, line.delay);
+            }
+            runBoot(0);
+ 
+            // ═══════════════════════════════════════
+            //  4. SCROLL MANAGEMENT
+            // ═══════════════════════════════════════
+            $output.on('scroll', function() {
+                var el = $output[0];
+                var nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+                autoScroll = nearBottom;
+                $scrollBtn.toggleClass('visible', !nearBottom);
+            });
+            $scrollBtn.on('click', function() {
+                $output.scrollTop($output[0].scrollHeight);
+            });
+            function scrollToBottom() {
+                if (autoScroll) { $output.scrollTop($output[0].scrollHeight); }
+            }
+ 
+            // ═══════════════════════════════════════
+            //  5. CLOCK
+            // ═══════════════════════════════════════
+            function updateClock() {
+                var now = new Date();
+                $('#clock').text(
+                    String(now.getHours()).padStart(2, '0') + ':' +
+                    String(now.getMinutes()).padStart(2, '0')
+                );
+            }
+            updateClock();
+            setInterval(updateClock, 15000);
+ 
+            // ═══════════════════════════════════════
+            //  6. CHARACTER COUNT
+            // ═══════════════════════════════════════
+            $input.on('input', function() {
+                var len = $input.val().length;
+                if (len > 0) {
+                    $charCount.text(len).toggleClass('warn', len > 200);
+                } else {
+                    $charCount.text('');
+                }
+            });
+ 
+            // ═══════════════════════════════════════
+            //  7. COMMAND INPUT & HISTORY
+            // ═══════════════════════════════════════
+            var cmdHistory = JSON.parse(localStorage.getItem("mud_cmd_history") || "[]");
+            var historyIndex = cmdHistory.length;
+            var currentDraft = "";
+ 
+            $input.on("keydown", function(e) {
+                // ENTER
+                if (e.key === "Enter" && !e.shiftKey) {
+                    var val = $input.val().trim();
+                    if (val) {
+                        Evennia.msg("text", [val], {});
+                        $output.append("<div class='msg echo'>&#x276F; " + $('<span>').text(val).html() + "</div>");
+                        scrollToBottom();
+ 
+                        if (cmdHistory.length === 0 || cmdHistory[cmdHistory.length - 1] !== val) {
+                            cmdHistory.push(val);
+                            if (cmdHistory.length > 100) cmdHistory.shift();
+                            localStorage.setItem("mud_cmd_history", JSON.stringify(cmdHistory));
+                        }
+                    }
+                    $input.val("");
+                    $charCount.text('');
+                    historyIndex = cmdHistory.length;
+                    currentDraft = "";
+                }
+ 
+                // UP ARROW
+                else if (e.key === "ArrowUp") {
+                    if (cmdHistory.length > 0) {
+                        e.preventDefault();
+                        if (historyIndex === cmdHistory.length) { currentDraft = $input.val(); }
+                        if (historyIndex > 0) { historyIndex--; $input.val(cmdHistory[historyIndex]); }
+                    }
+                }
+ 
+                // DOWN ARROW
+                else if (e.key === "ArrowDown") {
+                    if (cmdHistory.length > 0) {
+                        e.preventDefault();
+                        if (historyIndex < cmdHistory.length - 1) {
+                            historyIndex++;
+                            $input.val(cmdHistory[historyIndex]);
+                        } else if (historyIndex === cmdHistory.length - 1) {
+                            historyIndex++;
+                            $input.val(currentDraft);
+                        }
+                    }
+                }
+ 
+                // ESCAPE
+                else if (e.key === "Escape") {
+                    $input.val("");
+                    $charCount.text('');
+                    currentDraft = "";
+                    historyIndex = cmdHistory.length;
+                }
+ 
+                // CTRL+L
+                else if (e.key === "l" && e.ctrlKey) {
+                    e.preventDefault();
+                    $output.empty();
+                }
+            });
+ 
+            // Auto-focus
+            $(document).on("click", function() {
+                if (window.getSelection().toString() === "") { $input.focus(); }
+            });
+ 
+            // Volume slider
+            $('#volume-slider').on('input', function() {
+                musicVolume = this.value / 100;
+                if (currentTrack) currentTrack.volume = musicVolume;
+            });
+ 
+        });
+    </script>
+</body>
+</html>
+ 

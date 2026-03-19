@@ -1,583 +1,822 @@
-# D:\moo\mootest\world\chargen.py
-# Gutterpunk/arcanepunk chargen: occult Rite, blood-signs, marks. Dark/red UI. No XP spend; skills by marks.
+# world/chargen.py
+#
+# Gutterpunk / arcanepunk character generation.
+# Occult Rite, blood-signs, marks. Dark / red UI.
+# Skills awarded via marks. No XP spend at chargen.
+
 import random
 
 from evennia.objects.models import ObjectDB
-from world.levels import MAX_LEVEL, MAX_STAT_LEVEL, level_to_letter
+from evennia.utils.evtable import EvTable
+from evennia.utils import delay
+from evennia.utils.evmenu import EvMenu
+from evennia.utils.ansi import ANSIString
+from evennia.utils.utils import wrap  # The secret to perfect ANSI-safe wrapping
 
-STAT_KEYS = ["strength", "perception", "endurance", "charisma", "intelligence", "agility", "luck"]
-STAT_ABBREVS = {"str": "strength", "per": "perception", "end": "endurance", "cha": "charisma", "int": "intelligence", "agi": "agility", "lck": "luck"}
-STAT_DISPLAY_NAMES = {
-    "strength": "Strength", "perception": "Perception", "endurance": "Endurance",
-    "charisma": "Charisma", "intelligence": "Intelligence", "agility": "Agility", "luck": "Luck",
-}
+from world.levels import MAX_LEVEL, MAX_STAT_LEVEL, level_to_letter
 from world.skills import SKILL_KEYS, SKILL_DISPLAY_NAMES
 
-# UI column widths
-CHARGEN_NAME_W = 24
-CHARGEN_LETTER_W = 5
-CHARGEN_ADJ_W = 20
-CHARGEN_FLAVOR_W = 42
+# ══════════════════════════════════════════════════════════════════════════════
+# STAT DEFINITIONS
+# ══════════════════════════════════════════════════════════════════════════════
 
-# Ladder of 6 Marks: tiered by what defined them (~240 XP total, realistic distribution).
-# (count, level, tier_label) — Job = one strong skill, Hobbies = two solid, Basics = three foundational.
+STAT_KEYS = [
+    "strength", "perception", "endurance",
+    "charisma", "intelligence", "agility", "luck",
+]
+STAT_ABBREVS = {
+    "str": "strength", "per": "perception", "end": "endurance",
+    "cha": "charisma",  "int": "intelligence", "agi": "agility",
+    "lck": "luck",
+}
+STAT_DISPLAY_NAMES = {
+    "strength":     "Strength",
+    "perception":   "Perception",
+    "endurance":    "Endurance",
+    "charisma":     "Charisma",
+    "intelligence": "Intelligence",
+    "agility":      "Agility",
+    "luck":         "Luck",
+}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GAME BALANCE CONSTANTS
+# ══════════════════════════════════════════════════════════════════════════════
+
 MARKS_LADDER = [
-    (1, 105, "Job"),      # Grade E — "Their Job" (~80 XP)
-    (2, 81, "Hobbies"),   # Grade H — "Their Hobbies" (~40 XP each)
-    (3, 52, "Basics"),    # Grade L — "Their Basics" (~26 XP each)
+    (1, 105, "Job"),      # Grade E — primary skill
+    (2,  81, "Hobbies"),  # Grade H — secondary skills
+    (3,  52, "Basics"),   # Grade L — foundational skills
 ]
-CHARGEN_MARKS_TOTAL = sum(n for n, _, _ in MARKS_LADDER)  # 6
+CHARGEN_MARKS_TOTAL = sum(n for n, _, _ in MARKS_LADDER)
 
-# Revised for 2.0 XP per level math to target ~450 XP starting power
 STAT_RANDOM_RANGES_BY_PRIORITY = [
-    (35, 50),   # 1st: (70-100 XP)
-    (25, 35),   # 2nd
-    (15, 25),   # 3rd
-    (10, 15),   # 4th
-    (5, 10),    # 5th
-    (2, 5),     # 6th
-    (0, 2),     # 7th
+    (35, 50), (25, 35), (15, 25), (10, 15), (5, 10), (2, 5), (0, 2),
 ]
-
-# HP design: max_hp = BASE_HP (26.5) + end_display + max(0, (str_display-100)*0.5). Display = get_display_stat (stored//2).
-# Tiers: excellent <115, spectacular 115-129, magnificent 130-151, miraculous 152+.
-# XP from 0 (endurance only): Spectacular 356 (end 89 display / 178 stored), Magnificent 473 (104/208), Miraculous 1131 (126/252).
-# XP from cgen (end 50): Spectacular ~256, Magnificent ~373, Miraculous ~1031.
-XP_FOR_SPECTACULAR_HP = 256   # end 50 → 178 stored (89 display) = 115 HP
-XP_FOR_MAGNIFICENT_HP = 373   # end 50 → 208 stored (104 display) = 130 HP
-XP_FOR_MIRACULOUS_HP = 1031   # end 50 → 252 stored (126 display) = 152 HP (end-only)
-AVG_CGEN_HP = 50              # ~23 end display average across priority slots (no str bonus at cgen)
-MAX_CGEN_HP = 68              # end 1st (85→42 display), str 2nd; no str bonus below 100
-
-# Stat cap (min, max) per priority slot (1st = highest cap band, 7th = lowest). Narrow ranges so priority
-# choice isn't invalidated by a bad roll; tanks (end+str 1st/2nd) are guaranteed to reach miraculous.
 STAT_CAP_RANGES_BY_PRIORITY = [
-    (270, 300),   # 1st: high band, 300 max available
-    (263, 275),   # 2nd: high enough for miraculous with 1st
-    (240, 262),   # 3rd
-    (220, 239),   # 4th
-    (200, 219),   # 5th
-    (180, 199),   # 6th
-    (160, 179),   # 7th: low narrow band
+    (270, 300), (263, 275), (240, 262), (220, 239),
+    (200, 219), (180, 199), (160, 179),
 ]
 
+# ══════════════════════════════════════════════════════════════════════════════
+# FLAVOR COPY
+# ══════════════════════════════════════════════════════════════════════════════
 
-def _compute_stat_caps(order):
-    """Generate 7 stat caps from priority-based ranges (0-300 scale). Not shown to player."""
+STAT_PRIORITY_BLURB = {
+    "strength":     "|wstr|n  Load-muscle. Carrying what breaks others. The tunnels, the floods, the dead weight.",
+    "perception":   "|wper|n  Exits first, hands second, eyes third. The gap between a sound and a threat.",
+    "endurance":    "|wend|n  The undercity specializes in attrition. You outlasted things that ended others.",
+    "charisma":     "|wcha|n  Weight, not charm. People stop before they've decided to. Sometimes that's enough.",
+    "intelligence": "|wint|n  The right question at the wrong time kills you. You learned when not to ask.",
+    "agility":      "|wagi|n  The maintenance ducts aren't built for bodies. You learned to use them anyway.",
+    "luck":         "|wlck|n  The ceiling held. The Inquisitor's eyes slid past. You've never learned to rely on it.",
+}
+
+MARKS_TIER_INTRO = {
+    "Job": (
+        "|R\"What kept you fed. The skill you showed up with when the shift changed "
+        "and you needed a reason to be there. Not ambition — practice. "
+        "What you were.\"|n\n\n"
+        "|xChoose |Rone|x skill. This mark cuts deepest.|n"
+    ),
+    "Hobbies": (
+        "|R\"The work you did when no one was counting. What you kept doing "
+        "after the quota was met — in the maintenance corridors, in the hours "
+        "between. Two marks. The Rite reads repetition.\"|n\n\n"
+        "|xChoose |Rtwo|x skills.|n"
+    ),
+    "Basics": (
+        "|R\"What the undercity eventually teaches everyone. How to move without "
+        "sound. How to close a wound with what's available. How to make a face "
+        "that doesn't say what you're thinking. Three marks. The floor.\"|n\n\n"
+        "|xChoose |Rthree|x skills.|n"
+    ),
+}
+
+BACKGROUNDS = [
+    (
+        "Corporate Hab-Sector",
+        "Corporate Hab-Sector",
+        "The sealed sectors smell of processed air and other people's decisions. "
+        "Nutrition, a bunk, fluorescent light engineered to approximate daylight "
+        "without quite achieving it. You had quotas, compliance reviews, the "
+        "particular silence of people who know better than to ask certain questions. "
+        "You learned to want things the system doesn't catalog. That's usually how it starts."
+    ),
+    (
+        "The Smog-Lungs (Labour)",
+        "Smog-Lungs",
+        "Twelve-hour shifts in the refineries. The respirator that doesn't filter "
+        "everything — you learn this slowly, in the cough you've had since your "
+        "late teens. The supervisors say the exposure levels are within tolerance. "
+        "The tolerance levels are set by the same Authority that owns the refineries "
+        "and the clinic that treats the exposure. You stopped trusting tolerance a long time ago."
+    ),
+    (
+        "Undercity Rat",
+        "Undercity Rat",
+        "No sector assignment. No ration card — or a number the system stopped "
+        "looking for. The deep tunnels: trade routes that appear on no official map, "
+        "commerce that happens in the gaps of the Authority's attention. You learned "
+        "to read silence — which kind means nothing, which kind means something is "
+        "already in the walls with you."
+    ),
+    (
+        "Barracks-Child",
+        "Barracks-Child",
+        "The Guard housing blocks are adjacent to the barracks. You grew up counting "
+        "checkpoint steps, learning the weight of a mag-rifle by sight, reading the "
+        "expression on a face that has just been authorized to use force. Whether you "
+        "loved what you grew up near or feared it or both — the Rite doesn't care. "
+        "It reads the shape it left on you."
+    ),
+    (
+        "Apostate Sympathizer",
+        "Apostate Sympathizer",
+        "The Inquisition defines heresy in the present tense — it updates, revises, "
+        "reaches backward to reclassify what was permitted last cycle. Your family "
+        "whispered. You learned to read tone before words, to know which silences "
+        "were neutral and which were the kind that ended with a door and then nothing. "
+        "You know what the Inquisition hunts. You know how good it is at finding it."
+    ),
+    (
+        "Inquisitorial Servant",
+        "Inquisitorial Servant",
+        "There are many ways to serve. You filed requisitions, or ran messages, or "
+        "did the thing that happens after the door closes that no one refers to by "
+        "name. You've seen the Inquisition from inside the procedure. You've watched "
+        "the machinery. Whatever you decided about what you saw — you're here now, "
+        "in a room that doesn't appear in any Inquisitorial record. Not yet."
+    ),
+]
+
+HEIGHT_RANGES_CM = {"short": (152, 165), "average": (166, 178), "tall": (180, 195)}
+WEIGHT_RANGES_KG = {"thin": (45, 58), "average": (59, 82), "heavy": (83, 110)}
+
+_CHARGEN_TEMP_ATTRS = (
+    "stat_points", "skill_points", "chargen_xp", "skill_chargen_xp",
+    "chargen_marks_used", "chargen_mark_tier_index", "chargen_mark_tier_picks_left",
+    "stat_priority_order",
+)
+
+_BLOCKED_MENU_ESCAPES = {"q", "quit", "exit", "@quit", "@q", "logout", "disconnect"}
+
+
+def _is_blocked_menu_escape(raw_string: str) -> bool:
+    return (raw_string or "").strip().lower() in _BLOCKED_MENU_ESCAPES
+
+# ══════════════════════════════════════════════════════════════════════════════
+# UI HELPERS
+# ══════════════════════════════════════════════════════════════════════════════
+
+_UI_WIDTH  = 72
+_BAR_WIDTH = 14  
+
+_GRADE_COLORS = {
+    "S": "|Y", "A": "|G", "B": "|g", "C": "|c",
+    "D": "|w", "E": "|W", "F": "|x", "H": "|w", "L": "|x", "-": "|x",
+}
+
+def _grade_color(letter: str) -> str:
+    return _GRADE_COLORS.get(letter.upper(), "|w")
+
+def _bar(value: int, max_val: int = MAX_STAT_LEVEL, width: int = 10) -> str:
+    """Flexible width progress bar."""
+    if max_val <= 0:
+        return "|x" + "░" * width + "|n"
+    filled = max(0, min(width, int(round(value / max_val * width))))
+    empty  = width - filled
+    ratio  = filled / width if width else 0
+    color  = "|r" if ratio > 0.65 else ("|R" if ratio > 0.30 else "|x")
+    return color + "▓" * filled + "|x" + "░" * empty + "|n"
+
+def _shorten_skill(name: str) -> str:
+    """Safely abbreviates long skill names to prevent table line-wrapping."""
+    name = name.replace("Mechanical Engineering", "Mech Engineer")
+    name = name.replace("Electrical Engineering", "Elec Engineer")
+    name = name.replace("Systems Security", "Sys Security")
+    name = name.replace("Arms & Armor Tech", "Arms & Armor")
+    return name[:13] # Force truncation at 13 characters just to be safe
+
+
+def _slab(title: str, text: str, status: str = None, width: int = _UI_WIDTH) -> str:
+    """
+    Auto-wrapping bordered narrative panel. Passes text through Evennia's 
+    ANSI-aware wrap function so it never bleeds out of the box, while respecting
+    explicit manual line breaks and preserving indentations on short lines.
+    """
+    inner = width - 4 
+    out   = []
+
+    raw_title = f" [ {title} ] "
+    pad_total = width - 2 - len(raw_title)
+    pad_l     = pad_total // 2
+    pad_r     = pad_total - pad_l
+    out.append(f"|r╔{'═' * pad_l}|R{raw_title}|r{'═' * pad_r}╗|n")
+
+    # Split by SINGLE newline to respect explicit manual line breaks
+    explicit_lines = text.split("\n")
+    for line in explicit_lines:
+        if not line.strip():
+            # Preserve intentional blank lines
+            empty_pad = ANSIString("  ").ljust(inner + 2)
+            out.append(f"|r║|n{empty_pad}|r║|n")
+        else:
+            ansi_line = ANSIString(line)
+            if len(ansi_line) <= inner:
+                # THE SECRET SAUCE: If it fits perfectly, SKIP wrapping to keep your exact spaces!
+                padded = ANSIString(f"  {line}").ljust(inner + 2)
+                out.append(f"|r║|n{padded}|r║|n")
+            else:
+                # If it's too long, wrap it, and SPLIT THE STRING into a list!
+                wrapped_string = wrap(line, width=inner)
+                for w_line in wrapped_string.split("\n"):
+                    padded = ANSIString(f"  {w_line}").ljust(inner + 2)
+                    out.append(f"|r║|n{padded}|r║|n")
+
+    if status:
+        out.append(f"|r╠{'─' * (width - 2)}╣|n")
+        status_padded = ANSIString(f"  |r>>|n |x{status}|n").ljust(inner + 2)
+        out.append(f"|r║|n{status_padded}|r║|n")
+
+    out.append(f"|r╚{'═' * (width - 2)}╝|n")
+    return "\n".join(out)
+
+
+def _render_ladder(caller) -> str:
+    tier_idx   = int(getattr(caller.db, "chargen_mark_tier_index",    0) or 0)
+    picks_left = int(getattr(caller.db, "chargen_mark_tier_picks_left", 0) or 0)
+    rows = []
+    for i, (total_picks, _level, label) in enumerate(MARKS_LADDER):
+        if i < tier_idx:
+            made = total_picks
+        elif i == tier_idx:
+            made = total_picks - picks_left
+        else:
+            made = 0
+        blocks = []
+        for p in range(total_picks):
+            blocks.append("|R▓▓▓▓|n" if p < made else "|x░░░░|n")
+        rows.append(f"  |w{label:<9}|n {' '.join(blocks)}")
+    return "\n".join(rows)
+
+
+# We shrink the bar slightly so two columns can comfortably fit side-by-side in a 72-char terminal
+_BAR_WIDTH = 10  
+
+# Shrunk slightly to give the text columns enough room to fit long words
+_BAR_WIDTH = 7  
+
+def _stat_table(caller, stats: dict) -> str:
+    tbl = EvTable(
+        "|xTrait|n", "|xGr|n", "|xPower|n",
+        "|xTrait|n", "|xGr|n", "|xPower|n", 
+        border="cells", border_color="r",
+    )
+    tbl.reformat_column(0, width=14, align="l") 
+    tbl.reformat_column(1, width=4,  align="c") 
+    tbl.reformat_column(2, width=14, align="l") # 10 char bar + 4 padding
+    tbl.reformat_column(3, width=14, align="l") 
+    tbl.reformat_column(4, width=4,  align="c") 
+    tbl.reformat_column(5, width=14, align="l") 
+    
+    items = list(STAT_DISPLAY_NAMES.items())
+    
+    for i in range(0, len(items), 2):
+        row_data = []
+        
+        # --- LEFT COLUMN DATA ---
+        k1, n1 = items[i]
+        cur1   = stats.get(k1, 0) or 0
+        let1   = level_to_letter(cur1, MAX_STAT_LEVEL)
+        row_data.extend([f"|w{n1}|n", f"{_grade_color(let1)}{let1}|n", _bar(cur1, MAX_STAT_LEVEL, width=10)])
+        
+        # --- RIGHT COLUMN DATA ---
+        if i + 1 < len(items):
+            k2, n2 = items[i + 1]
+            cur2   = stats.get(k2, 0) or 0
+            let2   = level_to_letter(cur2, MAX_STAT_LEVEL)
+            row_data.extend([f"|w{n2}|n", f"{_grade_color(let2)}{let2}|n", _bar(cur2, MAX_STAT_LEVEL, width=10)])
+        else:
+            row_data.extend(["", "", ""])
+            
+        tbl.add_row(*row_data)
+        
+    return str(tbl)
+
+
+def _skill_table(skills: dict) -> str:
+    """
+    8-Column grid that includes selection numbers, completely eliminating 
+    the need for EvMenu to print a massive list at the bottom.
+    """
+    def _compact_line(idx: int, skey: str) -> str:
+        name = _shorten_skill(SKILL_DISPLAY_NAMES.get(skey, skey.replace("_", " ").title()))
+        cur = skills.get(skey, 0) or 0
+        letter = level_to_letter(cur, MAX_LEVEL) if cur else "-"
+        bar = _bar(cur, MAX_LEVEL, width=5) if cur else "|x░░░░░|n"
+        return f"|y{idx:>2}|n |w{name:<15}|n {_grade_color(letter)}{letter}|n {bar}"
+
+    try:
+        tbl = EvTable(
+            "|x#|n", "|xSkill|n", "|xGr|n", "|xProf|n",
+            "|x#|n", "|xSkill|n", "|xGr|n", "|xProf|n",
+            border="cells", border_color="r",
+        )
+        # The math here totals exactly 72 characters wide with borders included
+        tbl.reformat_column(0, width=4, align="r")
+        tbl.reformat_column(1, width=15, align="l")
+        tbl.reformat_column(2, width=4,  align="c")
+        tbl.reformat_column(3, width=9,  align="l")  # 5 char bar + 4 padding
+        tbl.reformat_column(4, width=4, align="r")
+        tbl.reformat_column(5, width=15, align="l")
+        tbl.reformat_column(6, width=4,  align="c")
+        tbl.reformat_column(7, width=9,  align="l")
+
+        for i in range(0, len(SKILL_KEYS), 2):
+            row_data = []
+
+            # --- LEFT COLUMN ---
+            sk1 = SKILL_KEYS[i]
+            id1 = i + 1
+            name1 = _shorten_skill(SKILL_DISPLAY_NAMES.get(sk1, sk1.replace("_", " ").title()))
+            cur1 = skills.get(sk1, 0) or 0
+            let1 = level_to_letter(cur1, MAX_LEVEL) if cur1 else "-"
+            bar1 = _bar(cur1, MAX_LEVEL, width=5) if cur1 else f"|x░░░░░|n"
+            row_data.extend([f"|y{id1}|n", f"|w{name1}|n", f"{_grade_color(let1)}{let1}|n", bar1])
+
+            # --- RIGHT COLUMN ---
+            if i + 1 < len(SKILL_KEYS):
+                sk2 = SKILL_KEYS[i + 1]
+                id2 = i + 2
+                name2 = _shorten_skill(SKILL_DISPLAY_NAMES.get(sk2, sk2.replace("_", " ").title()))
+                cur2 = skills.get(sk2, 0) or 0
+                let2 = level_to_letter(cur2, MAX_LEVEL) if cur2 else "-"
+                bar2 = _bar(cur2, MAX_LEVEL, width=5) if cur2 else f"|x░░░░░|n"
+                row_data.extend([f"|y{id2}|n", f"|w{name2}|n", f"{_grade_color(let2)}{let2}|n", bar2])
+            else:
+                row_data.extend(["", "", "", ""])
+
+            tbl.add_row(*row_data)
+
+        return str(tbl)
+    except Exception:
+        # Narrow clients can force EvTable to collapse below minimum cell width.
+        # Fall back to a simple, non-tabular renderer instead of crashing chargen.
+        lines = ["|x# Skill            Gr Prof|n"]
+        for idx, skey in enumerate(SKILL_KEYS, start=1):
+            lines.append(_compact_line(idx, skey))
+        return "\n".join(lines)
+# ──────────────────────────────────────────────────────────────────────────────
+# Stat generation
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _compute_stat_caps(order: list) -> dict:
     caps = [random.randint(lo, hi) for lo, hi in STAT_CAP_RANGES_BY_PRIORITY]
     return {stat: caps[i] for i, stat in enumerate(order)}
 
-
-def _randomize_stats_from_priority(order):
-    """Set starting stats from priority order: each stat gets a random value in its slot's range (beginner spread)."""
+def _randomize_stats(order: list) -> dict:
     stats = {}
     for i, stat in enumerate(order):
         lo, hi = STAT_RANDOM_RANGES_BY_PRIORITY[i]
         stats[stat] = random.randint(lo, hi)
     return stats
 
+def _count_marks_placed(skills: dict) -> int:
+    return sum(1 for v in (skills or {}).values() if isinstance(v, int) and v > 0)
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# CINEMATIC LAUNCHER 
+# ══════════════════════════════════════════════════════════════════════════════
 
-# Flavor for stat priority CYOA (what defined you)
-STAT_PRIORITY_FLAVOR = {
-    "strength": "|wBrute force|n — You carried what others couldn't. The tunnels, the pits, the loads that break backs.",
-    "perception": "|wAwareness|n — You learned to see the threat before it saw you. A flicker in the dark, a wrong step.",
-    "endurance": "|wEndurance|n — You outlasted. Hunger, cold, the long shifts. The undercity takes; you didn't break.",
-    "charisma": "|wCharisma|n — You talked your way through. Deals, lies, or a moment of trust when it mattered.",
-    "intelligence": "|wCunning|n — You thought when others swung. The right wire, the right word, the right moment.",
-    "agility": "|wReflexes|n — You moved when standing still meant death. The ducts, the patrols, the things in the deep.",
-    "luck": "|wLuck|n — You were there when the ceiling didn't fall. The bullet missed. The Inquisitor looked the other way.",
-}
+def start_cinematic_chargen(caller):
+    def _send(msg):
+        caller.msg(msg)
 
-# Flavor for stat allocation (short in-world description)
-STAT_ALLOC_FLAVOR = {
-    "strength": "Raw power. The mines and the pits reward it.",
-    "perception": "Eyes in the dark. You notice what others miss.",
-    "endurance": "Stamina. The long haul, the long night.",
-    "charisma": "Presence. You sway people — or fool them.",
-    "intelligence": "Wits. Systems, patterns, the edge of thought.",
-    "agility": "Speed and grace. The undercity favors the quick.",
-    "luck": "Fortune. Sometimes the only thing between you and the end.",
-}
+    caller.msg(play_music="/static/media/thegrid.ogg")
 
-# Backgrounds: (display_name, db.background value, stat_points, flavor paragraph)
-BACKGROUNDS = [
-    (
-        "Corporate Hab-Sector",
-        "Corporate Hab-Sector",
-        5,
-        "You grew up in the sealed sectors where the Authority's clerks and contractors live. Clean air, rations, and the constant hum of compliance. You learned to speak their language — and to want more than the script allowed.",
-    ),
-    (
-        "The Smog-Lungs (Labour)",
-        "Smog-Lungs",
-        5,
-        "The lower levels. Factories, refineries, the breath that tastes of metal and soot. You worked. You carried. You survived the shifts that grind people into the floor. The undercity runs on your back.",
-    ),
-    (
-        "Undercity Rat",
-        "Undercity Rat",
-        5,
-        "You had no sector. You had the ducts, the black markets, and the things that move when the lights flicker. You stole, you ran, you made a life in the cracks the Authority hasn't sealed.",
-    ),
-    (
-        "Barracks-Child",
-        "Barracks-Child",
-        5,
-        "You were raised in the shadow of the Guard. Maybe a parent wore the uniform; maybe you just lived close enough to learn the weight of a mag-weapon and the look of someone who has permission to use it.",
-    ),
-    (
-        "Apostate Sympathizer",
-        "Apostate Sympathizer",
-        5,
-        "Heresy is whatever the Inquisition says it is. You grew up in a cell, a safe house, or a family that whispered. You know what it costs to believe something the Authority forbids.",
-    ),
-    (
-        "Inquisitorial Servant",
-        "Inquisitorial Servant",
-        5,
-        "You served the Inquisition — scribe, runner, or something darker. You've seen how they root out dissent. You know the forms, the procedures. You know what they do to the ones they take.",
-    ),
-]
+    caller.msg("\033[2J\033[H")
+
+    delay(0.5,  lambda: _send("\n|xThe stone holds heat it should not have.|n"))
+    delay(3.0,  lambda: _send(
+        "\n|xYou were not brought here. You arrived.|n\n"
+        "|xThere is a difference — the Rite already knows which.|n"
+    ))
+    delay(6.5,  lambda: _send(
+        "\n|xAbove you: something burning that is not a candle.|n\n"
+        "|xAround you: grooves cut into the rock in a pattern you almost recognize.|n"
+    ))
+    delay(10.0, lambda: _send(
+        "\n|xA hand enters your field of vision. Waiting. Not reaching.|n\n"
+        "|xIt has done this before. Many times.|n"
+    ))
+    delay(13.5, lambda: _send(
+        "\n|R\"The name the Authority gave you is already ash.|n\n"
+        "|R Speak the other one.\"|n"
+    ))
+    delay(17.0, lambda: _send(
+        "\n|xYou have been in this room before.|n\n"
+        "|xYou just don't remember it yet.|n\n"
+    ))
+    # Keep the ritual non-escapable from menu commands like `quit`.
+    delay(19.5, lambda: EvMenu(caller, "world.chargen", startnode="node_name", auto_quit=False))
 
 
-# ==========================================
-# INTRO — the Rite (occult / gutterpunk)
-# ==========================================
+# ══════════════════════════════════════════════════════════════════════════════
+# CHARGEN MENU NODES
+# ══════════════════════════════════════════════════════════════════════════════
 
-def node_start(caller):
-    text = (
-        "|x|n\n"
-        "|r╔══════════════════════════════════════════════════════════════╗|n\n"
-        "|r║|n  |RTHE RITE|n\n"
-        "|r╚══════════════════════════════════════════════════════════════╝|n\n\n"
-        "|xDarkness. Then the smell of |rblood|n and rust and something older.|n\n\n"
-        "You are on your back. Stone beneath you — cold, carved with grooves that catch the light like |rveins|n. "
-        "Above, a low ceiling. Candles or coils; the air shimmers. This is not a clinic. This is |ra binding|n.\n\n"
-        "A figure leans over you. You cannot see the face. A hand touches your brow. The voice is not a machine:\n\n"
-        "|r\"You are empty. The Pact will fill you. Your past will become the sigil. Your name will become the key.\"|n\n\n"
-        "You have no choice. The Rite has already begun.\n\n"
-        "|rAccept.|n"
-    )
-    options = [{"desc": "|rI accept. Begin the Rite.|n", "goto": "node_name"}]
-    return text, options
+def node_start(caller, raw_string="", **kwargs):
+    return node_name(caller, raw_string=raw_string, **kwargs)
 
-
-def node_name(caller, raw_string, **kwargs):
-    text = (
-        "|r── BLOOD-SIGN ──|n\n\n"
-        "The figure waits. No file. No tag. Only the name you will wear when you rise.\n\n"
+def node_name(caller, raw_string="", **kwargs):
+    text_body = (
+        "|xThe figure doesn't ask. It waits — which implies certainty.\n"
+        "That a name is coming. That you have one ready.\n"
+        "That the only question is when you'll say it out loud.|n\n\n"
+        "|xYour ration-card name is already gone. That one belonged to the system.\n"
+        "This one belongs to the blood.|n\n\n"
         "|R\"Speak the name. The one the Below will know.\"|n\n\n"
-        "|xEnter the name you will bear|n (2–30 characters; letters, numbers, spaces, hyphens, apostrophes):"
+        "|x(2–30 characters: letters, numbers, spaces, hyphens, apostrophes)|n"
     )
+    text    = _slab("BLOOD-SIGN", text_body, status="INPUT REQUIRED")
     options = [{"key": "_default", "goto": "node_apply_name"}]
     return text, options
 
-
 def node_apply_name(caller, raw_string, **kwargs):
-    name = (raw_string or "").strip()
+    if _is_blocked_menu_escape(raw_string):
+        caller.msg("\n|r[!] You cannot leave during the Rite. Complete character creation.|n\n")
+        return node_name(caller)
+
+    name = (raw_string or "").strip().title()
+
     if len(name) < 2:
-        caller.msg("|rName must be at least 2 characters.|n")
-        return node_name(caller, "", **kwargs)
+        caller.msg("\n|r[!] The sigil rejects this — too short. Speak a true name.|n\n")
+        return node_name(caller)
     if len(name) > 30:
-        caller.msg("|rName must be 30 characters or fewer.|n")
-        return node_name(caller, "", **kwargs)
-    for c in name:
-        if not (c.isalnum() or c in " -'"):
-            caller.msg("|rOnly letters, numbers, spaces, hyphens, apostrophes are allowed in names.|n")
-            return node_name(caller, "", **kwargs)
-    # Reject only if another player character already has this name (case-insensitive). Objects/NPCs are allowed to share it.
+        caller.msg("\n|r[!] The sigil rejects this — too long. Thirty characters or fewer.|n\n")
+        return node_name(caller)
+    for ch in name:
+        if not (ch.isalnum() or ch in " -'"):
+            caller.msg("\n|r[!] The sigil rejects those characters. Letters, numbers, spaces, hyphens, apostrophes.|n\n")
+            return node_name(caller)
+
     existing = ObjectDB.objects.filter(
         db_key__iexact=name,
         db_typeclass_path="typeclasses.characters.Character",
     ).exclude(id=caller.id)
     if existing.exists():
-        caller.msg("|rThat name is already taken. Choose another.|n")
-        return node_name(caller, "", **kwargs)
+        caller.msg("\n|r[!] That name is already claimed. Choose another.|n\n")
+        return node_name(caller)
+
     caller.key = name
     if hasattr(caller, "aliases") and caller.aliases:
         try:
             caller.aliases.add(name)
         except Exception:
             pass
+
     return node_intro_lore(caller, raw_string, **kwargs)
 
-
-def node_intro_lore(caller, raw_string, **kwargs):
-    text = (
-        "|r── THE PACT ──|n\n\n"
-        "The colony is |xunderground|n. Above: a world of poison, mutation, and things that have forgotten the shape of man. "
-        "The city survives because it |rsends people out|n — scavengers, runners, blood for the machine.\n\n"
-        "Below, the |RAuthority|n holds the only law. Its Guards carry mag-steel. Its |rInquisitors|n burn what they call heresy. "
-        "Most keep their heads down. You didn't. Or you couldn't. Or you were born in the wrong trench.\n\n"
-        "The Rite will etch you into something the system can |ruse|n — or something that uses the system.\n\n"
+def node_intro_lore(caller, raw_string="", **kwargs):
+    text_body = (
+        "|xThe colony runs on recycled air and the bodies of people "
+        "who didn't make it through the filters. The Authority manages both.|n\n\n"
+        "|xAbove the sealed gates: the Scar. What the Collapse made of the surface — "
+        "topsoil that metabolized the wrong way, a sky that poisons on contact, "
+        "things that adapted to conditions no longer called living.|n\n\n"
+        "|xDown here, the law is a uniform and a willingness to use it "
+        "before you've finished asking. The |RInquisition|x is quieter. "
+        "They don't carry weapons to the door. The ones they take "
+        "don't have time to see what they carry instead.|n\n\n"
+        "|xYou are here because you ran out of other rooms. "
+        "Or because something found you that you haven't named yet.|n\n\n"
         "|R\"Your origin. Where did you come from?\"|n"
     )
+    text    = _slab("THE PACT", text_body, status=f"IDENTITY LOGGED: {caller.key.upper()}")
     options = [{"desc": "|rContinue|n", "goto": "node_background"}]
     return text, options
 
-
-# ==========================================
-# BACKGROUND
-# ==========================================
-
 def node_background(caller):
-    text = (
-        "|r── ORIGIN ──|n\n\n"
-        "|R\"Where did you come from? The sigil needs an anchor. A story written in bone.\"|n\n\n"
-        "Choose |ronce|n. There is no going back."
+    text_body = (
+        "|xThe Rite needs a point of origin. Blood has a longer memory than language. "
+        "Where you came from shapes what you became.|n\n\n"
+        "|xChoose |Ronce|x. The Rite does not offer second drafts.|n"
     )
+    text    = _slab("ORIGIN", text_body, status="SELECT BACKGROUND ANCHOR")
     options = []
-    for disp_name, _bg_key, _points, _flavor in BACKGROUNDS:
+    for i, (disp_name, _bg_key, _flavor) in enumerate(BACKGROUNDS):
         options.append({
-            "desc": "|x%s|n" % disp_name,
-            "goto": ("node_apply_background", {"bg_index": BACKGROUNDS.index((disp_name, _bg_key, _points, _flavor))}),
+            "desc": f"  |w{disp_name}|n",
+            "goto": ("node_apply_background", {"bg_index": i}),
         })
     return text, options
 
-
-def node_apply_background(caller, raw_string, **kwargs):
-    idx = kwargs.get("bg_index", 0)
-    if idx < 0 or idx >= len(BACKGROUNDS):
-        idx = 0
-    disp_name, bg_key, points, flavor = BACKGROUNDS[idx]
+def node_apply_background(caller, raw_string="", **kwargs):
+    idx = max(0, min(kwargs.get("bg_index", 0), len(BACKGROUNDS) - 1))
+    disp_name, bg_key, flavor = BACKGROUNDS[idx]
     caller.db.background = bg_key
-    text = (
-        "|r'ORIGIN LOCKED.'|n\n\n"
-        "%s\n\n"
+
+    text_body = (
+        f"|x{flavor}|n\n\n"
         "|R\"The sigil reads you. Now — the traits that kept you alive. In order.\"|n"
-    ) % flavor
+    )
+    text    = _slab("ANCHOR LOCKED", text_body, status=f"ORIGIN: {disp_name.upper()}")
     options = [{"desc": "|rContinue|n", "goto": "node_priority_intro"}]
     return text, options
 
-
-# ==========================================
-# STAT PRIORITY (7 choices → cap order + random spread)
-# ==========================================
-
-def node_priority_intro(caller, raw_string, **kwargs):
-    text = (
-        "|r── TRAIT EXTRACTION ──|n\n\n"
-        "The Rite is not reading words. It is reading |rinstinct|n. The things that kept you alive when the Below tried to break you.\n\n"
-        "You will give, in order, the traits that defined you — from most defining to least. The |Rorder|n matters.\n\n"
-        "Stats (long → short): strength (str), perception (per), endurance (end), charisma (cha), intelligence (int), agility (agi), luck (lck).\n\n"
-        "|R\"Speak them in order. Greatest to least. All seven.\"|n\n"
-        "|xExample:|n str end agi per cha int lck"
+def node_priority_intro(caller, raw_string="", **kwargs):
+    # --- THE FIX: We changed "\n" to "\n\n" right here ---
+    blurb_lines = "\n\n".join([f"|x{b}|n" for b in STAT_PRIORITY_BLURB.values()])
+    
+    text_body = (
+        "|xThe Rite doesn't ask what you know. Knowledge is catalogueable, "
+        "transferable, drillable. The Rite asks what you survived. "
+        "Survival leaves a different mark — the kind that moves before thought, "
+        "that's already decided before you know you're deciding.|n\n\n"
+        "|xRank them. Not what you hope you are. What the last decade already proved.|n\n\n"
+        f"{blurb_lines}\n\n"
+        "|R\"Speak them in order. Greatest to least. All seven.\"|n\n\n"
+        "|x  Example:|n  |wstr end agi per cha int lck|n\n"
+        "|x  (Full names or abbreviations accepted.)|n"
     )
+    text    = _slab("TRAIT EXTRACTION", text_body, status="AWAITING SEVEN-POINT SEQUENCE")
     options = [{"key": "_default", "goto": "node_apply_priority_order"}]
     return text, options
 
-
 def node_apply_priority_order(caller, raw_string, **kwargs):
-    """
-    Free-input stat priority: user must enter all seven stats in order, e.g. 'str end agi per cha int lck'.
-    We map abbrevs/long names to STAT_KEYS and preserve order. All seven must be given; no partial input.
-    """
-    raw = (raw_string or "").lower().replace(",", " ")
-    tokens = [tok for tok in raw.split() if tok]
-    if not tokens:
-        caller.msg("|rEnter all seven stats from most important to least, e.g.: str end agi per cha int lck.|n")
-        return node_priority_intro(caller, "", **kwargs)
-    order = []
+    if _is_blocked_menu_escape(raw_string):
+        caller.msg("\n|r[!] You cannot leave during the Rite. Complete character creation.|n\n")
+        return node_priority_intro(caller)
+
+    raw    = (raw_string or "").lower().replace(",", " ")
+    tokens = [t for t in raw.split() if t]
+    order  = []
     for tok in tokens:
-        full = STAT_ABBREVS.get(tok, tok)
-        if full in STAT_KEYS and full not in order:
+        full = STAT_ABBREVS.get(tok) or (tok if tok in STAT_KEYS else None)
+        if full and full not in order:
             order.append(full)
+
     if not order:
-        caller.msg("|rNo valid stats found. Use stat names or abbrevs: str, per, end, cha, int, agi, lck.|n")
-        return node_priority_intro(caller, "", **kwargs)
+        caller.msg("\n|r[!] No valid stats found. Use: str per end cha int agi lck|n\n")
+        return node_priority_intro(caller)
+
     if len(order) != len(STAT_KEYS) or set(order) != set(STAT_KEYS):
-        missing = [s for s in STAT_KEYS if s not in order]
-        abbrevs = [k for k, v in STAT_ABBREVS.items() if v in missing]
-        caller.msg("|rYou must list all seven stats in order, greatest to least. Missing: %s. Example: str end agi per cha int lck|n" % ", ".join(abbrevs))
-        return node_priority_intro(caller, "", **kwargs)
-    caller.db.stat_caps = _compute_stat_caps(order)
-    caller.db.stats = _randomize_stats_from_priority(order)
-    text = "|r'SIGIL SEQUENCE COMPLETE.'|n\n\nProceeding to readout — then the |Rladder of marks|n."
-    options = [{"desc": "|rContinue|n", "goto": "node_stats"}]
+        missing     = [s for s in STAT_KEYS if s not in order]
+        miss_abbrev = [k for k, v in STAT_ABBREVS.items() if v in missing]
+        caller.msg(f"\n|r[!] All seven required. Missing: {', '.join(miss_abbrev)}|n\n")
+        return node_priority_intro(caller)
+
+    caller.db.stat_priority_order = order
+    caller.db.stat_caps           = _compute_stat_caps(order)
+    caller.db.stats               = _randomize_stats(order)
+
+    text_body = (
+        "|xSequence accepted. The blood has settled.|n\n\n"
+        "|xProceeding to readout.|n"
+    )
+    text    = _slab("SEQUENCE ACCEPTED", text_body, status="CALCULATING POTENTIAL")
+    options = [{"desc": "|rView Readout|n", "goto": "node_stats"}]
     return text, options
 
-
-# ==========================================
-# STAT READOUT
-# ==========================================
-
-def node_stats(caller, raw_string, **kwargs):
+def node_stats(caller, raw_string="", **kwargs):
     stats = caller.db.stats or {}
-    lines = []
-    for key, name in STAT_DISPLAY_NAMES.items():
-        cur = stats.get(key, 0)
-        if not isinstance(cur, int):
-            cur = 0
-        letter = level_to_letter(cur, MAX_STAT_LEVEL)
-        adj = caller.get_stat_grade_adjective(letter, key)
-        flav = STAT_ALLOC_FLAVOR.get(key, "")
-        name_pad = "|x" + name.ljust(CHARGEN_NAME_W) + "|n"
-        letter_part = "|r" + ("[%s] " % letter).ljust(CHARGEN_LETTER_W) + "|n"
-        adj_pad = adj.ljust(CHARGEN_ADJ_W)
-        flav_str = flav[:CHARGEN_FLAVOR_W] if len(flav) > CHARGEN_FLAVOR_W else flav
-        lines.append("  %s %s %s  %s" % (name_pad, letter_part, adj_pad, flav_str))
-    text = (
-        "|r── SIGIL READOUT ──|n\n\n"
-        "The Rite has mapped you. Current profile:\n\n"
-        "%s\n\n"
-        "Confirm. Then the sigil will etch the |Rladder of marks|n — what you were, in order."
-    ) % "\n".join(lines)
-    options = [{"desc": "|rConfirm|n", "goto": "node_skills_intro"}]
+    
+    text_body = (
+        "|xThe Rite reads, not assigns. These are not figures the system invented. "
+        "This is what you've already become, rendered back to you.|n"
+    )
+    header = _slab("SIGIL READOUT", text_body, status="AWAITING CONFIRMATION")
+    table  = _stat_table(caller, stats)
+
+    text    = f"{header}\n\n{table}"
+    options = [{"desc": "|rConfirm — proceed to marks|n", "goto": "node_skills_intro"}]
     return text, options
 
+def node_skills_intro(caller, raw_string="", **kwargs):
+    caller.db.skills                       = caller.db.skills or {}
+    caller.db.chargen_mark_tier_index      = 0
+    caller.db.chargen_mark_tier_picks_left = MARKS_LADDER[0][0]
 
-# ==========================================
-# SKILL ALLOCATION — Ladder of 6 Marks (Job / Hobbies / Basics)
-# ==========================================
-
-# Narrative copy for each tier (in-character; "grade" is background-type framing).
-MARKS_TIER_INTRO = {
-    "Job": (
-        "|r── YOUR JOB ──|n\n\n"
-        "|R\"The sigil reads what put food on the table. The thing you did when the shifts changed. "
-        "Your |rjob|n — the skill that kept you in the system, or outside it.\"|n\n\n"
-        "Choose |rone|n skill. This will be etched deepest."
-    ),
-    "Hobbies": (
-        "|r── YOUR HOBBIES ──|n\n\n"
-        "|R\"Next: what you did when nobody was watching. The things that kept you |rsane|n — "
-        "or sharp. Side work. Fixes. The range. The deck. Two marks.\"|n\n\n"
-        "Choose |rtwo|n skills. The sigil remembers what you did to stay human."
-    ),
-    "Basics": (
-        "|r── THE BASICS ──|n\n\n"
-        "|R\"Last: what everyone learns to survive down here. How to move. How to patch a wound. "
-        "How to talk your way past a checkpoint. |rThree|n marks. The foundation.\"|n\n\n"
-        "Choose |rthree|n skills. The minimum the undercity demands."
-    ),
-}
-
-
-def node_skills_intro(caller, raw_string, **kwargs):
-    caller.db.skills = getattr(caller.db, "skills", None) or {}
-    caller.db.chargen_mark_tier_index = 0
-    count, level, label = MARKS_LADDER[0]
-    caller.db.chargen_mark_tier_picks_left = count
-    text = (
-        "|r── THE LADDER OF MARKS ──|n\n\n"
-        "|R\"The sigil can etch |rskills|n into you. Not study — |rblood-memory|n. What you were, "
-        "before the Rite. In order: the thing that defined your days, then what you did to stay alive in the gaps, "
-        "then the basics every rat learns.\"|n\n\n"
-        "You will place |R%d|n marks in three steps. Each step locks a layer of who you were.\n\n"
-        "|R\"First: what was your job?\"|n"
-    ) % CHARGEN_MARKS_TOTAL
-    options = [{"desc": "|rContinue|n", "goto": "node_skills"}]
+    text_body = (
+        "|xSkills aren't trained in the Rite. They're recovered. "
+        "The blood-memory reads what you already did — the years before "
+        "this room, the work and the survival and the things you did "
+        "when there was no other option.|n\n\n"
+        "|xThe Rite doesn't teach you. It remembers for you.|n\n\n"
+        f"|xYou will place |R{CHARGEN_MARKS_TOTAL} marks|x in three steps. "
+        "Each step locks a layer of who you were.|n"
+    )
+    text    = _slab("THE LADDER OF MARKS", text_body, status="ETCHING ROUTINE STANDBY")
+    options = [{"desc": "|rBegin Etching|n", "goto": "node_skills"}]
     return text, options
 
-
-def node_skills(caller, raw_string, **kwargs):
-    tier_index = int(getattr(caller.db, "chargen_mark_tier_index", 0) or 0)
+def node_skills(caller, raw_string="", **kwargs):
+    tier_index = int(getattr(caller.db, "chargen_mark_tier_index",    0) or 0)
     picks_left = int(getattr(caller.db, "chargen_mark_tier_picks_left", 0) or 0)
-    skills = caller.db.skills or {}
+    skills     = caller.db.skills or {}
+
+    if picks_left <= 0:
+        tier_index += 1
+        caller.db.chargen_mark_tier_index = tier_index
+        if tier_index < len(MARKS_LADDER):
+            caller.db.chargen_mark_tier_picks_left = MARKS_LADDER[tier_index][0]
+            picks_left = MARKS_LADDER[tier_index][0]
+        else:
+            return node_skills_done(caller, raw_string, **kwargs)
 
     if tier_index >= len(MARKS_LADDER):
         return node_skills_done(caller, raw_string, **kwargs)
 
     count, tier_level, tier_label = MARKS_LADDER[tier_index]
-    tier_level = min(tier_level, MAX_LEVEL)
-    intro_text = MARKS_TIER_INTRO.get(tier_label, "")
+    
+    if picks_left == count:
+        intro_text = MARKS_TIER_INTRO.get(tier_label, "") + "\n\n"
+    else:
+        intro_text = ""
 
-    skill_lines = []
-    for sk in SKILL_KEYS:
-        name = SKILL_DISPLAY_NAMES.get(sk, sk.replace("_", " ").title())
-        cur = skills.get(sk, 0)
-        if not isinstance(cur, int):
-            cur = 0
-        letter = level_to_letter(cur, MAX_LEVEL)
-        name_pad = "|x" + name.ljust(CHARGEN_NAME_W) + "|n"
-        letter_part = "|r[%s]|n" % letter
-        skill_lines.append("  %s  %s" % (name_pad, letter_part))
+    ladder = _render_ladder(caller)
+    tbl    = _skill_table(skills)
+    
+    # Custom prompt instead of EvMenu options
+    pick_num = count - picks_left + 1
+    prompt_action = f"your job" if tier_label == "Job" else f"skill {pick_num} of {count}"
+    pick_prompt = f"  |r>>|n Choose {prompt_action}. Type a number |w(1-{len(SKILL_KEYS)})|n or |w'skip'|n."
+    
+    header = f"{intro_text}{ladder}"
+    text   = f"{header}\n\n{tbl}\n\n{pick_prompt}"
 
-    if picks_left <= 0:
-        caller.db.chargen_mark_tier_index = tier_index + 1
-        if tier_index + 1 < len(MARKS_LADDER):
-            next_count = MARKS_LADDER[tier_index + 1][0]
-            caller.db.chargen_mark_tier_picks_left = next_count
-        return node_skills(caller, raw_string, **kwargs)
-
-    pick_prompt = "Choose the skill that was |ryour job|n." if tier_label == "Job" else (
-        "Choose skill %d of %d for |r%s|n." % (count - picks_left + 1, count, tier_label.lower())
-    )
-    text = (
-        "%s\n\n"
-        "Current etchings:\n"
-        "%s\n\n"
-        "%s"
-    ) % (intro_text, "\n".join(skill_lines), pick_prompt)
-    options = []
-    for skill_key in SKILL_KEYS:
-        cur = skills.get(skill_key, 0)
-        if not isinstance(cur, int):
-            cur = 0
-        if cur < tier_level:
-            name = SKILL_DISPLAY_NAMES.get(skill_key, skill_key.replace("_", " ").title())
-            options.append({
-                "desc": "|r%s|n" % name,
-                "goto": ("node_apply_mark", {"skill": skill_key}),
-            })
-    options.append({
-        "desc": "|xSkip to identity|n" if picks_left > 0 else "|rContinue to identity|n",
-        "goto": "node_gender",
-    })
+    # We return a single default option to suppress the massive EvMenu list
+    options = [{"key": "_default", "goto": "node_apply_mark"}]
     return text, options
 
 
-def node_skills_done(caller, raw_string, **kwargs):
-    """All 6 marks placed; show summary and go to identity."""
-    skills = caller.db.skills or {}
-    skill_lines = []
-    for sk in SKILL_KEYS:
-        name = SKILL_DISPLAY_NAMES.get(sk, sk.replace("_", " ").title())
-        cur = skills.get(sk, 0)
-        if not isinstance(cur, int):
-            cur = 0
-        letter = level_to_letter(cur, MAX_LEVEL)
-        name_pad = "|x" + name.ljust(CHARGEN_NAME_W) + "|n"
-        letter_part = "|r[%s]|n" % letter
-        skill_lines.append("  %s  %s" % (name_pad, letter_part))
-    text = (
-        "|r'SIGIL ETCHING COMPLETE.'|n\n\n"
-        "The ladder is fixed. Your job, your hobbies, your basics — locked in blood-memory.\n\n"
-        "%s\n\n"
-        "|R\"Now. How will the world name you?\"|n"
-    ) % "\n".join(skill_lines)
-    options = [{"desc": "|rContinue|n", "goto": "node_gender"}]
-    return text, options
-
-
-def node_apply_mark(caller, raw_string, **kwargs):
-    """Apply one mark at the current tier level; advance picks; next tier if tier exhausted."""
-    skill_key = kwargs.get("skill")
-    if skill_key not in SKILL_KEYS:
+def node_apply_mark(caller, raw_string="", **kwargs):
+    if _is_blocked_menu_escape(raw_string):
+        caller.msg("\n|r[!] You cannot leave during the Rite. Complete character creation.|n\n")
         return node_skills(caller, raw_string, **kwargs)
-    tier_index = int(getattr(caller.db, "chargen_mark_tier_index", 0) or 0)
+
+    raw = (raw_string or "").strip().lower()
+    tier_index = int(getattr(caller.db, "chargen_mark_tier_index",    0) or 0)
     picks_left = int(getattr(caller.db, "chargen_mark_tier_picks_left", 0) or 0)
-    if tier_index >= len(MARKS_LADDER) or picks_left <= 0:
+
+    # Handle skipping
+    if raw in ("skip", "done", "continue", "0"):
+        if picks_left <= 0:
+            return node_skills(caller, raw_string, **kwargs)
+        else:
+            caller.db.chargen_mark_tier_picks_left = 0
+            return node_skills(caller, raw_string, **kwargs)
+
+    # Parse the typed number
+    try:
+        choice = int(raw)
+        if choice < 1 or choice > len(SKILL_KEYS):
+            raise ValueError
+        skill_key = SKILL_KEYS[choice - 1]
+    except ValueError:
+        caller.msg("\n|r[!] Invalid choice. Enter a number from the table, or 'skip'.|n\n")
         return node_skills(caller, raw_string, **kwargs)
+
     count, tier_level, tier_label = MARKS_LADDER[tier_index]
-    tier_level = min(tier_level, MAX_LEVEL)
     skills = caller.db.skills or {}
-    cur = skills.get(skill_key, 0)
-    if not isinstance(cur, int):
-        cur = 0
+    cur    = skills.get(skill_key, 0) or 0
+
     if cur >= tier_level:
+        caller.msg("\n|r[!] That skill is already etched to this depth.|n\n")
         return node_skills(caller, raw_string, **kwargs)
+
     if not caller.db.skills:
         caller.db.skills = {}
+        
     caller.db.skills[skill_key] = tier_level
     caller.db.chargen_mark_tier_picks_left = picks_left - 1
     return node_skills(caller, raw_string, **kwargs)
 
+def node_skills_done(caller, raw_string="", **kwargs):
+    ladder = _render_ladder(caller)
+    tbl    = _skill_table(caller.db.skills or {})
 
-# ==========================================
-# GENDER / IDENTITY
-# ==========================================
-
-def node_gender(caller, raw_string, **kwargs):
-    text = (
-        "|r── IDENTITY ──|n\n\n"
-        "|R\"How will the world name you? The sigil needs a pronoun — how others will see you in the logs.\"|n\n\n"
-        "  |xMale|n → he, his, him\n"
-        "  |xFemale|n → she, her, her\n"
-        "  |xNonbinary|n → they, their, them"
+    text_body = (
+        "|xThe ladder is fixed. Your job, your hobbies, your basics — locked in blood-memory.\n"
+        "The Rite doesn't forget. Neither will you.|n"
     )
+    header  = _slab("ETCHING COMPLETE", text_body, status="SAVING NEURAL PATHWAYS")
+    text    = f"{header}\n\n{ladder}\n\n{tbl}\n"
+    options = [{"desc": "|rProceed to Identity|n", "goto": "node_gender"}]
+    return text, options
+
+# ─── Identity ─────────────────────────────────────────────────────────────────
+
+def node_gender(caller, raw_string="", **kwargs):
+    text_body = (
+        "|R\"How will the world name you? The sigil needs a pronoun — not a definition. "
+        "A handle. The word the logs will use when they find you.\"|n\n\n"
+        "  |wMale|n      →  he / his / him\n"
+        "  |wFemale|n    →  she / her / her\n"
+        "  |wNonbinary|n →  they / their / them"
+    )
+    text    = _slab("THE VESSEL", text_body, status="PRONOUN IDENTIFIER REQUIRED")
     options = [
-        {"desc": "|rMale|n", "goto": ("node_apply_gender", {"gender": "male"})},
-        {"desc": "|rFemale|n", "goto": ("node_apply_gender", {"gender": "female"})},
-        {"desc": "|rNonbinary|n", "goto": ("node_apply_gender", {"gender": "nonbinary"})},
+        {"desc": "  |wMale|n",      "goto": ("node_apply_gender", {"gender": "male"})},
+        {"desc": "  |wFemale|n",    "goto": ("node_apply_gender", {"gender": "female"})},
+        {"desc": "  |wNonbinary|n", "goto": ("node_apply_gender", {"gender": "nonbinary"})},
     ]
     return text, options
 
+def node_apply_gender(caller, raw_string="", **kwargs):
+    caller.db.gender  = kwargs.get("gender", "nonbinary")
+    caller.db.pronoun = caller.db.gender
+    return node_build_prompt(caller)
 
-def node_apply_gender(caller, raw_string, **kwargs):
-    gender = kwargs.get("gender", "nonbinary")
-    caller.db.gender = gender
-    caller.db.pronoun = gender
-    text = "|r'IDENTITY LOCKED.'|n\n\n|R\"How do you stand? Speak height and frame.\"|n\n\n" \
-           "Examples: |x'tall heavy'|n, |x'short average'|n, |x'average thin'|n."
-    options = [{"key": "_default", "goto": "node_apply_build_and_weight"}]
+def node_build_prompt(caller, raw_string="", **kwargs):
+    text_body = (
+        "|R\"Last entry. The physical record. "
+        "What the world sees before it decides what you are.\"|n\n\n"
+        "  Height:  |wshort|n   |waverage|n   |wtall|n\n"
+        "  Frame:   |wthin|n    |waverage|n   |wheavy|n\n\n"
+        "  |xExample:|n  tall heavy  ·  short average  ·  average thin"
+    )
+    text    = _slab("PHYSICALITY", text_body, status="AWAITING BUILD PARAMETERS")
+    options = [{"key": "_default", "goto": "node_apply_build"}]
     return text, options
 
+def node_apply_build(caller, raw_string, **kwargs):
+    if _is_blocked_menu_escape(raw_string):
+        caller.msg("\n|r[!] You cannot leave during the Rite. Complete character creation.|n\n")
+        return node_build_prompt(caller)
 
-# Height category -> (min_cm, max_cm) for random assignment. Narrative choice only.
-HEIGHT_RANGES_CM = {
-    "short": (152, 165),
-    "average": (166, 178),
-    "tall": (180, 195),
-}
+    raw    = (raw_string or "").lower()
+    tokens = [t for t in raw.replace(",", " ").split() if t]
+    height = next((t for t in tokens if t in HEIGHT_RANGES_CM), None)
+    weight = next((t for t in tokens if t in WEIGHT_RANGES_KG), None)
 
-# Weight category -> (min_kg, max_kg) for random assignment. Narrative choice only.
-WEIGHT_RANGES_KG = {
-    "thin": (45, 58),
-    "average": (59, 82),
-    "heavy": (83, 110),
-}
-
-
-def node_apply_build_and_weight(caller, raw_string, **kwargs):
-    """
-    Free-input build: player types e.g. 'tall heavy' or 'short average'.
-    We parse height and weight words; any missing part defaults to 'average'.
-    """
-    raw = (raw_string or "").lower()
-    tokens = [tok for tok in raw.replace(",", " ").split() if tok]
-    height = None
-    weight = None
-    for tok in tokens:
-        if tok in HEIGHT_RANGES_CM and height is None:
-            height = tok
-        if tok in WEIGHT_RANGES_KG and weight is None:
-            weight = tok
     if not height and not weight:
-        caller.msg("|rDescribe height and/or frame using: short/average/tall and thin/average/heavy.|n")
-        caller.msg("|xExamples:|n tall heavy   short average   average thin")
-        # Re-present prompt
-        return node_apply_gender(caller, "", **kwargs)
+        caller.msg("\n|r[!] Use height (short/average/tall) and/or frame (thin/average/heavy).|n\n")
+        return node_build_prompt(caller)
 
-    height_category = height or "average"
-    weight_category = weight or "average"
+    h_cat = height or "average"
+    w_cat = weight or "average"
+    h_min, h_max = HEIGHT_RANGES_CM[h_cat]
+    w_min, w_max = WEIGHT_RANGES_KG[w_cat]
 
-    h_min, h_max = HEIGHT_RANGES_CM.get(height_category, (166, 178))
-    w_min, w_max = WEIGHT_RANGES_KG.get(weight_category, (59, 82))
+    caller.db.height_category = h_cat
+    caller.db.height_cm       = random.randint(h_min, h_max)
+    caller.db.weight_category = w_cat
+    caller.db.weight_kg       = random.randint(w_min, w_max)
 
-    caller.db.height_category = height_category
-    caller.db.height_cm = random.randint(h_min, h_max)
-    caller.db.weight_category = weight_category
-    caller.db.weight_kg = random.randint(w_min, w_max)
-
-    text = "|r'BUILD LOCKED.'|n\n\n|R\"The Rite is complete. Rise.\"|n"
-    options = [{"desc": "|rFinalize|n", "goto": "node_finish"}]
+    text_body = (
+        "|R\"The Rite is complete. Rise.\"|n\n\n"
+        f"  |x{h_cat.capitalize()} · {w_cat}|n  →  |w{caller.db.height_cm} cm  /  {caller.db.weight_kg} kg|n"
+    )
+    text    = _slab("BUILD LOCKED", text_body, status="RITUAL FINALIZATION READY")
+    options = [{"desc": "|rAwaken|n", "goto": "node_finish"}]
     return text, options
 
+# ─── Finish ───────────────────────────────────────────────────────────────────
 
-# ==========================================
-# FINISH
-# ==========================================
-
-def node_finish(caller, raw_string, **kwargs):
+def node_finish(caller, raw_string="", **kwargs):
+    caller.msg(stop_music=True)
     caller.db.needs_chargen = False
-    for attr in ("stat_points", "skill_points", "chargen_xp", "skill_chargen_xp", "chargen_marks_used", "chargen_mark_tier_index", "chargen_mark_tier_picks_left",):
-        if hasattr(caller.db, attr) and getattr(caller, "attributes", None) and caller.attributes.has(attr):
+    for attr in _CHARGEN_TEMP_ATTRS:
+        if getattr(caller, "attributes", None) and caller.attributes.has(attr):
             try:
                 caller.attributes.remove(attr)
             except Exception:
                 pass
-    text = (
-        "|r╔══════════════════════════════════════════════════════════════╗|n\n"
-        "|r║|n  |RTHE RITE IS COMPLETE|n\n"
-        "|r╚══════════════════════════════════════════════════════════════╝|n\n\n"
-        "The candles gutter. The grooves in the stone no longer glow. You are no longer empty.\n\n"
-        "You stand. The figure is gone. Somewhere a door opens onto |xdarkness|n — the undercity, the ducts, "
-        "the first step of the rest of your life. The Authority will tag you. The Inquisitors will hunt. "
-        "And in the deep, something that was never human waits.\n\n"
-        "|RYou are in the world.|n"
-    )
-    return text, []
 
+    stats         = caller.db.stats or {}
+    skills        = caller.db.skills or {}
+    bg            = getattr(caller.db, "background", "Unknown")
+    etched        = [SKILL_DISPLAY_NAMES.get(sk, sk) for sk in SKILL_KEYS if (skills.get(sk) or 0) > 0]
+    skill_summary = ", ".join(etched) if etched else "none"
+    stat_summary  = "  ".join(
+        f"|x{name[:3].upper()}|n |R{level_to_letter(stats.get(k, 0) or 0, MAX_STAT_LEVEL)}|n"
+        for k, name in STAT_DISPLAY_NAMES.items()
+    )
+
+    text_body = (
+        "|xThe burning thing above you goes out in stages. "
+        "The grooves in the stone are just grooves again. "
+        "Whatever made this a ritual is already somewhere else.|n\n\n"
+        "|xThe figure is not gone. It was never quite there.|n\n\n"
+        "|xThe door opened at some point without you noticing. "
+        "The undercity is on the other side — the tunnels, the grey-market "
+        "corridors, the Authority's blind spots. Your file exists in their "
+        "system. A number. A face. Some things omitted that would change "
+        "the context of the rest.|n\n\n"
+        "|xIn the old sections — the tunnels the maps don't mark, "
+        "the collapsed sectors where the Inquisition doesn't patrol — "
+        "something has been waiting since before the colony was built. "
+        "It doesn't know your name yet.|n\n\n"
+        "|xYou don't know yet what you became in that room. "
+        "You'll find out.|n\n\n"
+        "|x───────────────────────────────────────────────|n\n"
+        f"  |xOrigin|n  {bg}\n"
+        f"  |xStats|n   {stat_summary}\n"
+        f"  |xMarks|n   {skill_summary}\n"
+        "|x───────────────────────────────────────────────|n"
+    )
+    text = _slab("THE RITE IS COMPLETE", text_body, status="CONNECTION ESTABLISHED")
+    return text, []

@@ -1,70 +1,140 @@
+# world/main_menu.py
 """
 Main menu (soul registry) after login. Account-level: choose to return to a body or forge a new one.
 Matches death-lobby tone: bureaucratic, faintly grim, no auto-puppet.
 """
+
 from django.conf import settings
 from evennia.utils.evmenu import EvMenu
 from evennia.utils.create import create_object
+from evennia.utils.ansi import ANSIString
+from evennia.utils.utils import wrap
 
+# ══════════════════════════════════════════════════════════════════════════════
+# UI HELPERS (Bureaucratic Terminal Aesthetic)
+# ══════════════════════════════════════════════════════════════════════════════
+
+_UI_WIDTH = 72
+_BLOCKED_MENU_ESCAPES = {"q", "quit", "exit", "@quit", "@q", "logout", "disconnect"}
+
+
+def _is_blocked_menu_escape(raw_string: str) -> bool:
+    return (raw_string or "").strip().lower() in _BLOCKED_MENU_ESCAPES
+
+def _registry_panel(title: str, text: str, status: str = None, width: int = _UI_WIDTH) -> str:
+    """
+    Auto-wrapping bordered narrative panel styled like a sterile mainframe.
+    Uses stark grey and amber/cyan to contrast with the blood-red of Chargen.
+    """
+    inner = width - 4 
+    out   = []
+
+    raw_title = f" [ {title} ] "
+    pad_total = width - 2 - len(raw_title)
+    pad_l     = pad_total // 2
+    pad_r     = pad_total - pad_l
+    
+    out.append(f"|x┌{'─' * pad_l}|y{raw_title}|x{'─' * pad_r}┐|n")
+
+    explicit_lines = text.split("\n")
+    for line in explicit_lines:
+        if not line.strip():
+            empty_pad = ANSIString("  ").ljust(inner + 2)
+            out.append(f"|x│|n{empty_pad}|x│|n")
+        else:
+            ansi_line = ANSIString(line)
+            if len(ansi_line) <= inner:
+                # Fits perfectly, preserve spaces!
+                padded = ANSIString(f"  {line}").ljust(inner + 2)
+                out.append(f"|x│|n{padded}|x│|n")
+            else:
+                # Wrap and split into a list!
+                wrapped_string = wrap(line, width=inner)
+                for w_line in wrapped_string.split("\n"):
+                    padded = ANSIString(f"  {w_line}").ljust(inner + 2)
+                    out.append(f"|x│|n{padded}|x│|n")
+
+    if status:
+        out.append(f"|x├{'─' * (width - 2)}┤|n")
+        status_padded = ANSIString(f"  |c>>|n |w{status}|n").ljust(inner + 2)
+        out.append(f"|x│|n{status_padded}|x│|n")
+
+    out.append(f"|x└{'─' * (width - 2)}┘|n")
+    return "\n".join(out)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MENU NODES
+# ══════════════════════════════════════════════════════════════════════════════
 
 def node_start(caller, raw_string, **kwargs):
     """Soul registry — the first thing you see after logging in."""
-    text = (
-        "|ySOUL REGISTRY|n\n\n"
-        "No body. No pain. Just you and the terminal. The same soft light, the same hum.\n"
-        "A sign on the wall says |wPLEASE WAIT. A representative will assist you shortly.|n\n"
-        "Nobody has ever seen a representative. You have time.\n\n"
-        "|cSelect an option below:|n\n"
+    if _is_blocked_menu_escape(raw_string):
+        caller.msg("\n|r[!] Sign-out is only available via the menu option.|n\n")
+    
+    text_body = (
+        "|wNo body. No pain. Just you and the terminal.|n "
+        "The same soft light, the same hum.\n\n"
+        "A faded physical sign on the wall reads: "
+        "|xPLEASE WAIT. A REPRESENTATIVE WILL ASSIST YOU SHORTLY.|n\n\n"
+        "Nobody has ever seen a representative. You have time."
     )
     
-    # Check if the account has any bound characters
-    chars = list(caller.characters.all()) if hasattr(caller, "characters") else []
+    text = _registry_panel("SOUL REGISTRY", text_body, status="SYSTEM IDLE. AWAITING INPUT.")
     
-    # Start with an empty list of options
+    chars = list(caller.characters.all()) if hasattr(caller, "characters") else []
     options = []
     
-    # Conditionally add the first option
     if chars:
-        # They have at least one character, so they can play.
-        options.append({"desc": "Return to your body", "goto": "node_select_character"})
+        options.append({"desc": "|cReturn to your body|n", "goto": "node_select_character"})
     else:
-        # They have no characters, so they must create one.
-        options.append({"desc": "Forge a new soul", "goto": "node_create_character"})
+        options.append({"desc": "|yForge a new soul|n", "goto": "node_create_character"})
         
-    # Always add the rules and sign out options at the bottom
-    options.append({"desc": "Read the directives", "goto": "node_rules"})
-    options.append({"desc": "Sign out", "goto": "node_quit"})
+    options.append({"desc": "|wRead the directives|n", "goto": "node_rules"})
+    options.append({"desc": "|xSign out|n", "goto": "node_quit"})
     
     return text, options
 
 
 def node_select_character(caller, raw_string, **kwargs):
     """List the account's characters."""
+    if _is_blocked_menu_escape(raw_string):
+        caller.msg("\n|r[!] Sign-out is only available via the menu option.|n\n")
+
     chars = list(caller.characters.all()) if hasattr(caller, "characters") else []
 
     if not chars:
-        text = (
-            "|rNo vessel on file.|n\n"
-            "Your soul is not bound to any body. You went to the light, or you have never forged one.\n"
-            "Choose |wForge a new soul|n from the main menu to create a character and enter the world.\n"
+        text_body = (
+            "|rERROR: NO VESSEL ON FILE.|n\n\n"
+            "Your soul is not bound to any body. You went to the light, or you "
+            "have never forged one.\n\n"
+            "Return to the main menu and select |yForge a new soul|n to enter the world."
         )
+        text = _registry_panel("NO VESSEL FOUND", text_body, status="CONNECTION FAILED")
         options = [{"desc": "Back to Soul Registry", "goto": "node_start"}]
         return text, options
 
-    text = "|ySouls bound to your account:|n\n"
+    text_body = "|wSouls currently bound to your account:|n"
+    text = _registry_panel("VESSEL SELECTION", text_body, status=f"FOUND {len(chars)} REGISTERED VESSEL(S)")
+    
     options = []
     for char in chars:
-        options.append({"desc": char.key, "goto": ("node_puppet_character", {"char": char})})
-    options.append({"desc": "Back to Soul Registry", "goto": "node_start"})
+        options.append({"desc": f"|c{char.key}|n", "goto": ("node_puppet_character", {"char": char})})
+    options.append({"desc": "|xBack to Soul Registry|n", "goto": "node_start"})
+    
     return text, options
 
 
 def node_puppet_character(caller, raw_string, **kwargs):
     """Puppets the chosen character and cleanly closes the menu."""
+    if _is_blocked_menu_escape(raw_string):
+        caller.msg("\n|r[!] Sign-out is only available via the menu option.|n\n")
+        return "node_start"
+
     char = kwargs.get("char")
 
     if not char:
-        caller.msg("|rError: No character selected.|n")
+        caller.msg("\n|r[!] Error: No character selected.|n\n")
         return "node_start"
 
     sessions = caller.sessions.get() if hasattr(caller, "sessions") else []
@@ -72,35 +142,39 @@ def node_puppet_character(caller, raw_string, **kwargs):
         return "node_start"
     session = sessions[0]
 
-    # If we are already puppeting this character, just close the menu and return.
     current = getattr(session, "puppet", None)
     if current is char:
-        caller.msg("\n|gReturning to your body...|n\n")
-        # Let EvMenu exit naturally; nothing else to do.
+        caller.msg("\n|c>> Downloading consciousness... Returning to body.|n\n")
         return "", None
 
-    caller.msg("\n|gReturning to your body...|n\n")
+    caller.msg("\n|c>> Downloading consciousness... Returning to body.|n\n")
 
     try:
         char.db._suppress_become_message = True
         caller.puppet_object(session, char)
     except RuntimeError:
-        caller.msg("|rThat body is no longer available.|n")
+        caller.msg("\n|r[!] Synchronization failed. That body is no longer available.|n\n")
         return "node_start"
 
-    # We're now puppeting; return an empty node so EvMenu exits cleanly.
     return "", None
 
 
 def node_create_character(caller, raw_string, **kwargs):
     """Create a new character (forges a vessel and runs chargen). One per account."""
+    if _is_blocked_menu_escape(raw_string):
+        caller.msg("\n|r[!] Sign-out is only available via the menu option.|n\n")
+        return "node_start"
+
     chars = list(caller.characters.all()) if hasattr(caller, "characters") else []
     max_chars = getattr(settings, "MAX_NR_CHARACTERS", 1)
+    
     if len(chars) >= max_chars:
-        text = (
-            "|rYou already have a vessel on file.|n\n"
-            "One soul per account. Return to your body from the main menu, or go to the light and forge again.\n"
+        text_body = (
+            "|rAUTHORIZATION DENIED: YOU ALREADY HAVE A VESSEL ON FILE.|n\n\n"
+            "This registry allows one soul per account. Return to your body from "
+            "the main menu, or go to the light and forge again."
         )
+        text = _registry_panel("QUOTA EXCEEDED", text_body, status="REQUEST REJECTED")
         options = [{"desc": "Back to Soul Registry", "goto": "node_start"}]
         return text, options
 
@@ -109,7 +183,6 @@ def node_create_character(caller, raw_string, **kwargs):
         return "node_start"
     session = sessions[0]
 
-    # Create a blank character; at_post_puppet will run chargen (world.chargen)
     start_loc = getattr(settings, "DEFAULT_HOME", None)
     temp_name = "NewSoul_%s" % caller.id
     new_char = create_object(
@@ -118,36 +191,46 @@ def node_create_character(caller, raw_string, **kwargs):
         location=start_loc,
         home=start_loc,
     )
+    
     if not new_char:
-        caller.msg("|rThe registry could not forge a vessel. Try again or contact staff.|n")
+        caller.msg("\n|r[!] The registry could not forge a vessel. Try again or contact staff.|n\n")
         return "node_start"
 
     caller.characters.add(new_char)
-    # Close the menu first so it doesn't stay stuck on screen after we puppet
+    
     menu = getattr(caller.ndb, "_evmenu", None) if hasattr(caller, "ndb") else None
     if menu and hasattr(menu, "close_menu"):
         try:
             menu.close_menu()
         except Exception:
             pass
-    caller.msg("\n|gForging a new vessel...|n\n")
+            
+    caller.msg("\n|y>> Forging a new vessel... Dispatching to the Rite.|n\n")
+    
     try:
-        new_char.db._suppress_become_message = True  # no "You become NewSoul_..." before Rite
+        new_char.db._suppress_become_message = True  
         caller.puppet_object(session, new_char)
     except RuntimeError:
-        caller.msg("|rSomething went wrong. You remain at the registry.|n")
+        caller.msg("\n|r[!] Critical error. You remain at the registry.|n\n")
         return "node_start"
-    return None  # Menu already closed; chargen runs in Character.at_post_puppet
+        
+    return None 
 
 
 def node_rules(caller, raw_string, **kwargs):
     """Short server directives."""
-    text = (
-        "|y*** DIRECTIVES ***|n\n"
-        "1. Death is permanent. When you flatline and time runs out — or someone ends you — you are gone. Your body becomes a corpse. You may have a shard (clone) stored, or you may go to the light and forge a new soul.\n"
-        "2. Stay in character. The world is harsh; play it straight.\n"
-        "3. Do not exploit. Report bugs; do not abuse them.\n"
+    if _is_blocked_menu_escape(raw_string):
+        caller.msg("\n|r[!] Sign-out is only available via the menu option.|n\n")
+        return "node_start"
+
+    text_body = (
+        "|w1. PERMANENCE:|n Death is final. When you flatline and time runs out — "
+        "or someone ends you — you are gone. Your body becomes a corpse. You may "
+        "have a shard stored, or you may go to the light and forge a new soul.\n\n"
+        "|w2. IMMERSION:|n Stay in character. The world is harsh; play it straight.\n\n"
+        "|w3. INTEGRITY:|n Do not exploit. Report anomalies; do not abuse them."
     )
+    text = _registry_panel("REGISTRY DIRECTIVES", text_body, status="READ CAREFULLY")
     options = [{"desc": "Back to Soul Registry", "goto": "node_start"}]
     return text, options
 
@@ -155,7 +238,8 @@ def node_rules(caller, raw_string, **kwargs):
 def node_quit(caller, raw_string, **kwargs):
     """Disconnect from the game."""
     sessions = caller.sessions.get() if hasattr(caller, "sessions") else []
-    caller.msg("|ySigning out. Goodbye.|n")
+    caller.msg("\n|x>> Terminating connection. Goodbye.|n\n")
+    
     for session in sessions:
         try:
             if getattr(session, "sessionhandler", None):
@@ -169,5 +253,4 @@ def node_quit(caller, raw_string, **kwargs):
 
 def start_main_menu(caller):
     """Launch the Soul Registry menu after login."""
-    # Don't run "look" on exit: after choosing a character we puppet and don't want any OOC/menu text re-sent.
-    EvMenu(caller, "world.main_menu", startnode="node_start", cmd_on_exit=None)
+    EvMenu(caller, "world.main_menu", startnode="node_start", cmd_on_exit=None, auto_quit=False)
