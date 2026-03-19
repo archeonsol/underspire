@@ -4,6 +4,7 @@ from evennia.utils.utils import compress_whitespace, lazy_property
 
 from world.multipuppet import multi_puppet_relay
 from typeclasses.mixins import FurnitureMixin, MedicalMixin, RPGCharacterMixin, RoleplayMixin
+from typeclasses.matrix.mixins.matrix_id import MatrixIdMixin
 
 
 # Body-part groups for merging descriptions into three paragraphs (head/face, upper body, lower body)

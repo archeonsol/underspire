@@ -38,13 +38,16 @@ class MatrixIdMixin:
     def at_object_delete(self):
         """
         Clean up Matrix ID when object is deleted.
-        This frees the ID for reuse.
+
+        NOTE: ID recycling is disabled. Matrix IDs are permanent and never reused.
+        This preserves historical references in logs, messages, and records.
         """
-        try:
-            unregister_matrix_id(self)
-        except Exception:
-            # Don't let registry errors prevent deletion
-            pass
+        # Recycling disabled - IDs remain in registry permanently
+        # try:
+        #     unregister_matrix_id(self)
+        # except Exception:
+        #     # Don't let registry errors prevent deletion
+        #     pass
         return super().at_object_delete()
 
     def _should_have_matrix_id(self):
