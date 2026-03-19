@@ -206,24 +206,10 @@ class MatrixConnectionScript(DefaultScript):
                             avatar.handle_proxy_disconnect()
                             proxy_disconnected += 1
 
-        # Check teleop connections - iterate all objects and check for controlled_by attribute
-        # (Can't filter by attribute directly)
-        from typeclasses.matrix.devices.teleop_rig import TeleopRig
-        all_teleop_rigs = TeleopRig.objects.all()
-        teleop_disconnected = 0
-        for rig in all_teleop_rigs:
-            # Check if this rig has an active control session
-            if not getattr(rig.db, 'controlled_target', None):
-                continue
-
-            # Validate the connection
-            if hasattr(rig, 'validate_connection') and not rig.validate_connection():
-                teleop_disconnected += 1
-
         # Optional: log disconnection activity
-        if dive_disconnected > 0 or teleop_disconnected > 0 or proxy_disconnected > 0:
+        if dive_disconnected > 0 or proxy_disconnected > 0:
             from evennia.utils import logger
-            logger.log_info(f"Connection check: disconnected {dive_disconnected} dive session(s), {teleop_disconnected} teleop session(s), {proxy_disconnected} proxy tunnel(s)")
+            logger.log_info(f"Connection check: disconnected {dive_disconnected} dive session(s), {proxy_disconnected} proxy tunnel(s)")
 
     def at_start(self):
         """Called when script starts (including after server restart)."""

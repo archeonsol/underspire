@@ -5,11 +5,11 @@ Typeclasses for The Frame - the city's virtual network infrastructure.
 
 This module contains all Frame/cyberspace related typeclasses:
 - rooms.py: Virtual locations (MatrixNode - spine nodes, device interfaces, etc.)
-- devices/: Physical Matrix devices (DiveRig, TeleopRig, Hub, etc.)
+- devices/: Physical Matrix devices (DiveRig, Hub, Handset, etc.)
 - avatars.py: Virtual presence objects (MatrixAvatar)
 - items.py: Matrix items (NetworkedItem, MatrixItem, Program and subclasses)
 - objects.py: Networked physical objects
-- mixins/: Shared functionality (NetworkedMixin, PuppetRigMixin)
+- mixins/: Shared functionality (NetworkedMixin, MatrixIdMixin)
 
 Programs are executable items that avatars carry and run via 'exec' command:
 - SysInfoProgram: Device information utility
