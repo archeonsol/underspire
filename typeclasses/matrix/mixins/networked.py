@@ -53,8 +53,8 @@ class NetworkedMixin(MatrixIdMixin):
         from evennia.utils.create import create_object
 
         # Check if cluster already exists
-        checkpoint_dbref = getattr(self.db, 'checkpoint_node', None)
-        interface_dbref = getattr(self.db, 'interface_node', None)
+        checkpoint_dbref = self.db.checkpoint_node
+        interface_dbref = self.db.interface_node
 
         checkpoint = None
         interface = None
@@ -85,7 +85,7 @@ class NetworkedMixin(MatrixIdMixin):
             self.db.interface_node = None
 
         # Create new cluster
-        device_type = getattr(self.db, 'device_type', 'device')
+        device_type = self.db.device_type or 'device'
 
         # Get Matrix ID for this device
         matrix_id = self.get_matrix_id()
@@ -122,7 +122,7 @@ class NetworkedMixin(MatrixIdMixin):
         interface.db.node_type = "device_interface"
 
         # Set interface description - devices override interface_desc to customize
-        device_desc = getattr(self.db, 'interface_desc', None)
+        device_desc = self.db.interface_desc
         if device_desc:
             interface.db.desc = device_desc
         else:
@@ -132,7 +132,6 @@ class NetworkedMixin(MatrixIdMixin):
             )
 
         # Create exits between rooms
-        from evennia.utils.create import create_object
         from typeclasses.matrix.exits import MatrixExit
 
         # Checkpoint -> Interface (locked until ICE defeated or on ACL)
@@ -311,6 +310,8 @@ class NetworkedMixin(MatrixIdMixin):
         try:
             return handler(caller, *args)
         except Exception as e:
+            from evennia.utils import logger
+            logger.log_err(f"Device command '{command_name}' on {self} raised: {e}")
             caller.msg(f"|rCommand execution failed: {e}|n")
             return False
 
@@ -421,11 +422,10 @@ class NetworkedMixin(MatrixIdMixin):
             return
         if isinstance(self.db.acl, dict):
             return
-        if not isinstance(self.db.acl, dict):
-            old_acl = list(self.db.acl)
-            self.db.acl = {}
-            for char_pk in old_acl:
-                self.db.acl[char_pk] = 5
+        old_acl = list(self.db.acl)
+        self.db.acl = {}
+        for char_pk in old_acl:
+            self.db.acl[char_pk] = 5
 
     def add_to_acl(self, character, level=5):
         """
@@ -515,8 +515,7 @@ class NetworkedMixin(MatrixIdMixin):
         for char_pk, level in self.db.acl.items():
             try:
                 obj = ObjectDB.objects.get(pk=char_pk)
-                # Check if it's a MatrixAvatar
-                if obj.typeclass_path and 'MatrixAvatar' in obj.typeclass_path:
+                if isinstance(obj.typeclass, MatrixAvatar):
                     names.append(f"{obj.key} (matrix, level {level})")
                 else:
                     names.append(f"{obj.key} (physical, level {level})")
