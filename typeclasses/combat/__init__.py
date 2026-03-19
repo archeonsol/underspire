@@ -1,0 +1,1 @@
+"""Combat-focused typeclasses package."""
