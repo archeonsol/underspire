@@ -41,13 +41,12 @@ class Handset(NetworkedItem):
         self.db.security_level = 0  # Personal device, low security
         self.db.is_jailbroken = False  # Future feature
 
-        # Register device commands (physical only - accessed via 'use handset')
+        # Register device commands
         self.register_device_command(
             "account",
             "handle_account_info",
             help_text="View your Matrix account information",
-            auth_level=0,
-            physical_only=True
+            auth_level=0
         )
         self.register_device_command(
             "set_alias",
@@ -106,15 +105,18 @@ class Handset(NetworkedItem):
         - Current alias (if set)
         - Future: account creation date, reputation, etc.
 
+        Authenticates via whoever is holding the handset (works from Matrix or physical).
+
         Args:
-            caller: The character using the command
+            caller: The character/avatar using the command
 
         Returns:
             bool: Always True
         """
-        user = self._get_user_from_caller(caller)
+        # Always authenticate via who's holding the device
+        user = self.get_authenticated_user()
         if not user:
-            caller.msg("|rHandset authentication failed.|n")
+            caller.msg("|rHandset authentication failed. Nobody is holding this device.|n")
             return False
 
         # Get account data
