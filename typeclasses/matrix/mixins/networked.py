@@ -34,7 +34,7 @@ class NetworkedMixin(MatrixIdMixin):
         self.db.security_level = 0
         self.db.has_storage = False
         self.db.has_controls = False
-        self.db.acl = []  # Access Control List - list of character dbrefs with permission
+        self.db.acl = {}  # Access Control List - dict of {char_pk: level} with permission
         self.db.storage = []  # File storage (list of dicts with filename, filetype, contents)
         self.db.device_commands = {}  # Registered commands: {command_name: handler_function_name}
         self.db.interface_desc = None  # Custom description for device interface room
@@ -425,7 +425,9 @@ class NetworkedMixin(MatrixIdMixin):
         Old entries default to level 5 (medium access).
         Safe to call even if acl is already a dict or doesn't exist.
         """
-        if not hasattr(self.db, 'acl') or not self.db.acl:
+        if not hasattr(self.db, 'acl'):
+            return
+        if isinstance(self.db.acl, dict):
             return
         if not isinstance(self.db.acl, dict):
             old_acl = list(self.db.acl)
