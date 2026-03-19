@@ -135,13 +135,14 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         from commands.network_cmds import CmdNetworkWho, CmdNetworkSend, CmdNetworkNtag
         from commands.handset_cmds import CmdHandset
         from commands.staff_cmds import (
-            CmdStats, CmdGiveXp, CmdStaffSheet, CmdStaffSetStat, CmdStaffSetSkill,
+            CmdGiveXp, CmdStaffSheet, CmdStaffSetStat, CmdStaffSetSkill,
             CmdCreateItem, CmdTypeclasses, CmdSpawnItem, CmdSpawnArmor, CmdSpawnVehicle, CmdSpawnMedical, CmdSpawnOR,
             CmdSpawnCreature, CmdCreatureSet, CmdDespawn, CmdNpc, CmdMakeNpc, CmdNpcSet, CmdSpawnPerfume, CmdBadSmellRoom,
             CmdGoto, CmdGotoRoom, CmdSummon, CmdSetVoid, CmdVoid, CmdRelease, CmdBoot, CmdFind, CmdAnnounce, CmdRestore, CmdDebugKill,
             CmdSpawnSeat, CmdSpawnBed, CmdSpawnPod, CmdSpawnDiveRig, CmdSpawnCamera, CmdSpawnTelevision,
             CmdEmoteDebug, CmdDamageVehicle, CmdMusic
         )
+        from commands.sheet_cmds import CmdStats
         from commands.player_cmds import CmdXp
         from commands.notes_cmds import CmdAddNote, CmdNotes, CmdNoteSearch
         from commands.builder_commands import (
@@ -359,7 +360,7 @@ class AccountCmdSet(default_cmds.AccountCmdSet):
         self.add(StaffCharCreate())
         self.remove(CmdCharDelete)
         self.add(StaffCharDelete())
-        from commands.staff_cmds import CmdStats
+        from commands.sheet_cmds import CmdStats
         from commands.staff_cmds import CmdNextNote, CmdGmViewNotes
         from commands.death_cmds import CmdGoLight, CmdGoShard
         from commands.multipuppet_cmds import CmdAddPuppet, CmdPuppetList, CmdPuppetSlot

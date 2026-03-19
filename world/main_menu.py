@@ -9,6 +9,7 @@ from evennia.utils.evmenu import EvMenu
 from evennia.utils.create import create_object
 from evennia.utils.ansi import ANSIString
 from evennia.utils.utils import wrap
+from world.ui_utils import fade_rule
 
 # ══════════════════════════════════════════════════════════════════════════════
 # UI HELPERS (Bureaucratic Terminal Aesthetic)
@@ -20,6 +21,7 @@ _BLOCKED_MENU_ESCAPES = {"q", "quit", "exit", "@quit", "@q", "logout", "disconne
 
 def _is_blocked_menu_escape(raw_string: str) -> bool:
     return (raw_string or "").strip().lower() in _BLOCKED_MENU_ESCAPES
+
 
 def _registry_panel(title: str, text: str, status: str = None, width: int = _UI_WIDTH) -> str:
     """
@@ -35,7 +37,7 @@ def _registry_panel(title: str, text: str, status: str = None, width: int = _UI_
     pad_r     = pad_total - pad_l
     
     # Render only the left border of the panel to avoid right-panel misalignment.
-    out.append(f"|x┌{'─' * pad_l}|y{raw_title}|x{'─' * pad_r}|n")
+    out.append(f"|x┌{'─' * pad_l}|y{raw_title}|x{fade_rule(pad_r, '─')}|n")
 
     explicit_lines = text.split("\n")
     for line in explicit_lines:
@@ -56,11 +58,11 @@ def _registry_panel(title: str, text: str, status: str = None, width: int = _UI_
                     out.append(f"|x│|n{padded}")
 
     if status:
-        out.append(f"|x├{'─' * (width - 2)}|n")
+        out.append(f"|x├{fade_rule(width - 2, '─')}|n")
         status_padded = ANSIString(f"  |c>>|n |w{status}|n").ljust(inner + 2)
         out.append(f"|x│|n{status_padded}")
 
-    out.append(f"|x└{'─' * (width - 2)}|n")
+    out.append(f"|x└{fade_rule(width - 2, '─')}|n")
     return "\n".join(out)
 
 

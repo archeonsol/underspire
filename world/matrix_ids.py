@@ -49,9 +49,9 @@ def get_registry_script():
         script = script[0]
 
     # Ensure attributes exist and are not None
-    if not script.db.id_to_dbref:
+    if script.db.id_to_dbref is None:
         script.db.id_to_dbref = {}
-    if not script.db.dbref_to_id:
+    if script.db.dbref_to_id is None:
         script.db.dbref_to_id = {}
 
     return script

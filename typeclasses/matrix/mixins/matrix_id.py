@@ -8,7 +8,7 @@ should inherit from this mixin. IDs are automatically assigned on creation and
 cleaned up on deletion.
 """
 
-from world.matrix_ids import register_matrix_id, unregister_matrix_id, get_matrix_id
+from world.matrix_ids import register_matrix_id, get_matrix_id
 
 
 class MatrixIdMixin:

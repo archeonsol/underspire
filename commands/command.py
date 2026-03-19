@@ -185,7 +185,6 @@ from commands.multipuppet_cmds import (
 
 # staff_cmds
 from commands.staff_cmds import (
-    CmdStats,
     CmdGiveXp,
     CmdStaffSheet,
     CmdStaffSetStat,
@@ -222,6 +221,9 @@ from commands.staff_cmds import (
     CmdEmoteDebug,
     CmdDamageVehicle,
 )
+
+# sheet_cmds
+from commands.sheet_cmds import CmdStats
 
 # player_cmds
 from commands.player_cmds import CmdXp

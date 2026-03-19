@@ -1,5 +1,9 @@
 """
-Staff commands: stats, xp, givexp, charsheet, setstat, setskill, create, typeclasses, spawn (item/armor/vehicle/medical/or/seat/bed/pod/camera/tv/creature), creatureset, despawn, npc, makenpc, npcset, @goto, @gotoroom, @summon, @setvoid, @void, release (@release), boot, @find, announce, restore, debugkill, emotedebug, damagevehicle. CmdPending imported from roleplay_cmds.
+Staff commands: givexp, charsheet, setstat, setskill, create, typeclasses,
+spawn (item/armor/vehicle/medical/or/seat/bed/pod/camera/tv/creature),
+creatureset, despawn, npc, makenpc, npcset, @goto, @gotoroom, @summon,
+@setvoid, @void, release (@release), boot, @find, announce, restore,
+debugkill, emotedebug, damagevehicle. CmdPending imported from roleplay_cmds.
 """
 
 from datetime import datetime
@@ -10,187 +14,8 @@ from evennia.commands.default.account import CmdCharCreate, CmdCharDelete
 from evennia.utils import logger
 from evennia.utils.evtable import EvTable
 from evennia.utils.evmore import EvMore
+from world.ui_utils import fade_rule
 from world.utils import get_containing_room
-
-
-class CmdStats(Command):
-    """
-    Display your character sheet: SPECIAL stats, skills, XP, and when the soul was last fragmented (shard date).
-
-    Usage:
-      @stats
-      @sheet
-    """
-    key = "@stats"
-    aliases = ["@sheet", "@score"]
-    locks = "cmd:all()"
-    help_category = "General"
-
-    def func(self):
-        from world.rpg.chargen import STAT_KEYS
-        from world.skills import SKILL_KEYS, SKILL_DISPLAY_NAMES
-        from evennia.utils.utils import inherits_from
-        caller = self.caller
-        data_source = caller  # Who we get stats/skills from
-
-        # If caller is Account (no db.stats), use session's puppet so stats/sheet work when puppeted
-        if not getattr(caller.db, "stats", None) and getattr(self, "session", None):
-            try:
-                puppet = getattr(self.session, "puppet", None)
-                if puppet:
-                    caller = puppet
-                    data_source = puppet
-            except Exception as e:
-                logger.log_trace("staff_cmds.CmdStats session puppet fallback: %s" % e)
-
-        # If this is a MatrixAvatar, get stats from controlling character but send output to avatar
-        if inherits_from(caller, "typeclasses.matrix.avatars.MatrixAvatar"):
-            controlling_char = caller.get_controlling_character() if hasattr(caller, 'get_controlling_character') else None
-            if not controlling_char:
-                caller.msg("You are not connected to a physical body. Cannot view stats.")
-                return
-            # Use the controlling character for stats/skills but keep caller as avatar for messaging
-            data_source = controlling_char
-
-        if not getattr(data_source, "db", None) or not hasattr(data_source.db, "stats"):
-            caller.msg("Puppet a character to view your sheet.")
-            return
-        _db = data_source.db
-        stats = _db.stats or {}
-        skills = _db.skills or {}
-        bg = _db.background or "Unknown"
-        display_name = data_source.name or "Unknown"
-        xp = int(getattr(_db, "xp", 0) or 0)
-
-        # Soul last fragmented: from character's clone_snapshot (shard is per-character)
-        snapshot = getattr(_db, "clone_snapshot", None)
-        fragmented_str = ""
-        if snapshot and snapshot.get("fragmented_at"):
-            try:
-                from datetime import datetime
-                ts = snapshot["fragmented_at"]
-                if isinstance(ts, (int, float)):
-                    dt = datetime.utcfromtimestamp(ts)
-                else:
-                    dt = ts
-                fragmented_str = dt.strftime("%Y-%m-%d %H:%M") + " UTC"
-            except Exception as e:
-                logger.log_trace("staff_cmds.CmdStats fragmented_at format: %s" % e)
-
-        from world.levels import get_stat_grade, get_skill_grade
-        from world.rpg.xp import _stat_level, _skill_level
-        # Original tall structure; grades from exact thresholds (stats: stored level, skills: level)
-        w = 50
-        # Render only the left border of each box to avoid right-panel misalignment.
-        edge = "|x├" + "─" * (w - 2) + "|n"
-        output = "|x┌" + "─" * (w - 2) + "|n\n"
-        output += "|x│|n |R■|n |wSOUL READOUT|n  |x—|n  " + display_name.ljust(18) + "\n"
-        output += "|x│|n   |wOrigin|n " + (bg or "Unknown").ljust(w - 18) + "\n"
-        output += edge + "\n"
-        output += "|x│|n |wXP|n " + str(xp).ljust(w - 10) + "\n"
-        if fragmented_str:
-            output += "|x│|n |wLast fragmented|n " + fragmented_str.ljust(w - 21) + "\n"
-        output += edge + "\n"
-        output += "|x│|n |R CORE|n" + " ".ljust(w - 9) + "\n"
-
-        # --- Stat buffs/debuffs: compare base vs effective display levels for all stats.
-        # Base display level: from stored stat only (no temporary modifiers).
-        base_stat_display = {}
-        for key in STAT_KEYS:
-            try:
-                stored = int(_stat_level(data_source, key) or 0)
-                base_stat_display[key] = max(0, min(150, stored // 2))
-            except Exception:
-                base_stat_display[key] = 0
-        # Effective display level: routed through character helpers, which
-        # now apply buffs via the BuffHandler (see RPGCharacterMixin).
-        effective_stat_display = {}
-        for key in STAT_KEYS:
-            try:
-                effective_stat_display[key] = int(
-                    data_source.get_display_stat(key) if hasattr(data_source, "get_display_stat") else base_stat_display.get(key, 0)
-                )
-            except Exception:
-                effective_stat_display[key] = base_stat_display.get(key, 0)
-
-        for key in STAT_KEYS:
-            stored = data_source.get_stat_level(key) if hasattr(data_source, "get_stat_level") else 0
-            letter = get_stat_grade(stored)
-            adj = data_source.get_stat_grade_adjective(letter, key) if hasattr(data_source, "get_stat_grade_adjective") else letter
-            label = key.capitalize()
-            eff_disp = effective_stat_display.get(key, 0)
-            base_disp = base_stat_display.get(key, 0)
-            delta = eff_disp - base_disp
-            marker = ""
-            if delta != 0:
-                # Show a green + for buffs, red - for debuffs after the adjective to keep columns aligned.
-                marker = " |g+|n" if delta > 0 else " |r-|n"
-            output += "|x│|n   |w{}|n  |R[{}]|n {}{}\n".format(label.ljust(12), letter, adj, marker)
-
-        output += edge + "\n"
-        output += "|x│|n |R IMPLANTS|n" + " ".ljust(w - 14) + "\n"
-
-        # --- Skill buffs/debuffs: compare base vs effective numeric skill levels.
-        # Base skill level: from stored value only.
-        base_skill_levels = {}
-        for key in SKILL_KEYS:
-            try:
-                base_skill_levels[key] = int(_skill_level(data_source, key))
-            except Exception:
-                base_skill_levels[key] = int((skills.get(key, 0) or 0))
-
-        # Effective skill level: current get_skill_level may include temporary bonuses.
-        effective_skill_levels = {}
-        for key in SKILL_KEYS:
-            try:
-                effective_skill_levels[key] = int(
-                    data_source.get_skill_level(key) if hasattr(data_source, "get_skill_level") else (skills.get(key, 0) or 0)
-                )
-            except Exception:
-                effective_skill_levels[key] = base_skill_levels.get(key, int((skills.get(key, 0) or 0)))
-
-        skill_label_width = 24
-        for key in SKILL_KEYS:
-            level = effective_skill_levels.get(key, 0)
-            if not level:
-                continue
-            letter = get_skill_grade(level)
-            adj = data_source.get_skill_grade_adjective(letter) if hasattr(data_source, "get_skill_grade_adjective") else letter
-            label = SKILL_DISPLAY_NAMES.get(key, key.replace("_", " ").title())
-            base_lv = base_skill_levels.get(key, 0)
-            delta = level - base_lv
-            marker = ""
-            if delta != 0:
-                marker = " |g+|n" if delta > 0 else " |r-|n"
-            output += "|x│|n   |w{}|n  |R[{}]|n {}{}\n".format(label.ljust(skill_label_width), letter, adj, marker)
-        output += "|x└" + "─" * (w - 2) + "|n\n"
-        caller.msg(output)
-
-
-class CmdXp(Command):
-    """
-    View XP and spend it to advance stats, skills, or languages.
-
-    Usage:
-      @xp                             - show XP and next-raise costs for stats/skills/languages
-      @xp advance stat <name> [N]     - spend XP to raise a stat by N levels (default 1)
-      @xp advance skill <name> [N]     - spend XP to raise a skill by N levels (default 1)
-      @xp advance language <name> [N]  - spend 10 XP per raise to add % to a language (default 1 raise)
-    Languages: 0-400% (basic/learning/fluent/native). % gained per 10 XP depends on Intelligence.
-    Number of languages you can learn is limited by Intelligence (average = 1 other language).
-
-    XP: 2 per 6h window, max 4 drops per 24h (8 XP/day).
-    """
-    key = "@xp"
-    aliases = ["@advance", "@progress"]
-    locks = "cmd:all()"
-    help_category = "General"
-
-    def func(self):
-        # This command was moved to commands.player_cmds.CmdXp.
-        # Keep a stub here in case something imports it from staff_cmds by mistake.
-        caller = self.caller
-        caller.msg("XP spending has moved. Please use @xp as provided by the player command set.")
 
 
 class CmdStaffSheet(Command):
@@ -230,8 +55,10 @@ class CmdStaffSheet(Command):
             logger.log_trace("staff_cmds.CmdStaffSheet vitals: %s" % e)
             hp_str = st_str = load_str = "---"
         w = 50
-        line = "|c+" + "=" * (w - 2) + "+|n"
-        thin = "|c|" + "-" * (w - 2) + "||n"
+        strong_rule = fade_rule(w - 2, "=")
+        thin_rule = fade_rule(w - 2, "-")
+        line = "|c+" + strong_rule + "+|n"
+        thin = "|c|" + thin_rule + "||n"
         npc_tag = " |r[NPC]|n" if getattr(_db, "is_npc", False) else ""
         output = line + "\n"
         output += "|c||n  |W STAFF READOUT |w {}|n{}\n".format((target.name or "Unknown"), npc_tag)
