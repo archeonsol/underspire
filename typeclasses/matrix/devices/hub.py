@@ -80,12 +80,29 @@ class Hub(NetworkedObject):
         # Register standard ACL management commands
         self.register_acl_commands()
 
-        # Add owner to ACL by default with full access
-        if self.location and hasattr(self.location, 'pk'):
-            # If placed in a character's inventory on creation
-            from typeclasses.characters import Character
-            if isinstance(self.location, Character):
-                self.add_to_acl(self.location, level=10)  # Owner gets root access
+        # Owner ACL is granted in at_object_receive, not here.
+        # Location at creation time is limbo, not a character.
+
+    def at_object_receive(self, moved_obj, source_location, **kwargs):
+        """
+        Grant root ACL to the first character to receive this hub,
+        but only if it has no owner yet (fresh device).
+        """
+        super().at_object_receive(moved_obj, source_location, **kwargs)
+
+    def at_pre_move(self, destination, **kwargs):
+        """Grant root access to a character when the hub moves into their inventory."""
+        result = super().at_pre_move(destination, **kwargs)
+        if result is False:
+            return False
+
+        from typeclasses.characters import Character
+        if isinstance(destination, Character):
+            acl = getattr(self.db, 'acl', {}) or {}
+            if not acl:
+                self.add_to_acl(destination, level=10)
+
+        return result
 
     def handle_describe(self, caller, *args):
         """

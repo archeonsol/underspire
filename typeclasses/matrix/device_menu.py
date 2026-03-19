@@ -18,7 +18,8 @@ def device_main_menu(caller, raw_string, **kwargs):
     device = kwargs.get("device")
     from_matrix = kwargs.get("from_matrix", False)
     if not device:
-        return "node_error", kwargs
+        caller.msg("|rError: Device interface unavailable.|n")
+        return None
 
     # Build menu text
     text = f"|c=== {device.key} Interface ===|n\n\n"
@@ -198,7 +199,7 @@ def node_read_file(caller, raw_string, **kwargs):
     from_matrix = kwargs.get("from_matrix", False)
 
     if raw_string.strip().lower() == "back":
-        return _browse_files(caller, "", **kwargs)
+        return ("node_browse_files", kwargs)
 
     filename = raw_string.strip()
     file_obj = device.get_file(filename)
@@ -252,13 +253,13 @@ def node_view_acl(caller, raw_string, **kwargs):
 def node_error(caller, raw_string, **kwargs):
     """Error state - device not found or invalid."""
     text = "|rError: Device interface unavailable.|n\n"
-    return text, {"key": "_default", "goto": "node_exit"}
+    return text, [{"key": "_default", "desc": None, "goto": "node_exit"}]
 
 
 def node_exit(caller, raw_string, **kwargs):
     """Exit the menu."""
     caller.msg("Disconnecting from device interface.")
-    return None, None
+    return None
 
 
 def start_device_menu(caller, device, from_matrix=False):
