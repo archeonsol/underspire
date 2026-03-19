@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{game_name}}</title>
     
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;0,700;1,400&family=Fira+Code:wght@300;400;500&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;0,700;1,400&family=Fira+Code:wght@300;400;500&family=JetBrains+Mono:wght@300;400;500;700&family=Source+Code+Pro:wght@300;400;500;700&family=Inconsolata:wght@300;400;500;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
     
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
  
@@ -36,7 +36,7 @@
             flex-direction: column;
             overflow: hidden;
             font-size: 14.5px;
-            line-height: 1.65;
+            line-height: 1.1;
         }
  
         /* CRT Effects */
@@ -85,11 +85,12 @@
         #output {
             height: 100%; padding: 24px 28px 40px; overflow-y: auto;
             word-wrap: break-word; white-space: pre-wrap; scroll-behavior: smooth;
+            line-height: 1.1;
         }
-        #output .msg { padding: 1px 0; animation: msgIn 0.2s ease-out; }
+        #output .msg { padding: 0; margin: 0; animation: msgIn 0.2s ease-out; line-height: inherit; display: block; }
         @keyframes msgIn {
-            from { opacity: 0; transform: translateY(4px); }
-            to   { opacity: 1; transform: translateY(0); }
+            from { opacity: 0; }
+            to   { opacity: 1; }
         }
         #output .echo {
             color: var(--text-dim); border-left: 2px solid var(--border-subtle);
@@ -136,7 +137,7 @@
         #inputfield {
             flex-grow: 1; background: transparent; border: none; color: var(--text-primary);
             font-family: 'Fira Code', 'IBM Plex Mono', monospace; font-size: 15px;
-            outline: none; caret-color: var(--accent-ember); letter-spacing: 0.02em;
+            outline: none; caret-color: var(--accent-ember);
         }
         #inputfield::placeholder { color: var(--text-ghost); font-style: italic; }
         #char-count {
@@ -307,6 +308,141 @@
  
         ::selection { background: rgba(139, 26, 26, 0.4); color: #fff; }
  
+        /* Settings gear button */
+        #settings-btn {
+            background: none; border: none; cursor: pointer; padding: 2px;
+            display: flex; align-items: center; justify-content: center;
+        }
+        #settings-btn svg {
+            width: 15px; height: 15px; fill: var(--text-dim);
+            transition: fill 0.2s, transform 0.3s;
+        }
+        #settings-btn:hover svg { fill: var(--text-primary); transform: rotate(45deg); }
+ 
+        /* Settings panel */
+        #settings-overlay {
+            position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+            z-index: 3000; display: none; align-items: center; justify-content: center;
+        }
+        #settings-overlay.open { display: flex; }
+ 
+        #settings-panel {
+            background: var(--bg-surface); border: 1px solid var(--border-subtle);
+            border-radius: 6px; padding: 28px 32px; width: 380px; max-width: 90vw;
+            max-height: 85vh; overflow-y: auto; overflow-x: visible;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.7), 0 0 40px rgba(139,26,26,0.1);
+            animation: panelIn 0.2s ease-out;
+            position: relative; z-index: 3001;
+        }
+        @keyframes panelIn {
+            from { opacity: 0; transform: scale(0.95) translateY(8px); }
+            to   { opacity: 1; transform: scale(1) translateY(0); }
+        }
+ 
+        #settings-panel h2 {
+            font-family: 'IBM Plex Mono', monospace;
+            color: var(--accent-ember); font-size: 13px; font-weight: 500;
+            letter-spacing: 0.15em; text-transform: uppercase;
+            margin: 0 0 20px 0; padding-bottom: 10px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+ 
+        .settings-section {
+            margin-bottom: 20px;
+        }
+        .settings-section:last-child { margin-bottom: 0; }
+ 
+        .settings-label {
+            font-size: 11px; color: var(--text-dim); text-transform: uppercase;
+            letter-spacing: 0.1em; margin-bottom: 8px; display: block;
+        }
+ 
+        /* Custom select */
+        .settings-select {
+            width: 100%; padding: 8px 12px;
+            background: var(--bg-deep); color: var(--text-primary);
+            border: 1px solid var(--border-subtle); border-radius: 4px;
+            font-family: inherit; font-size: 13px; outline: none;
+            cursor: pointer;
+            position: relative; z-index: 3001;
+        }
+        .settings-select:hover { border-color: var(--accent-blood); }
+        .settings-select:focus { border-color: var(--accent-ember); }
+        .settings-select option { background: var(--bg-deep); color: var(--text-primary); }
+ 
+        /* Slider row */
+        .settings-slider-row {
+            display: flex; align-items: center; gap: 12px;
+        }
+        .settings-slider {
+            flex-grow: 1; -webkit-appearance: none; appearance: none;
+            height: 3px; background: var(--text-ghost); border-radius: 2px; outline: none;
+        }
+        .settings-slider::-webkit-slider-thumb {
+            -webkit-appearance: none; width: 12px; height: 12px;
+            border-radius: 50%; background: var(--accent-ember); cursor: pointer;
+        }
+        .settings-slider-val {
+            font-size: 12px; color: var(--text-dim);
+            min-width: 32px; text-align: right; font-variant-numeric: tabular-nums;
+        }
+ 
+        /* Toggle switch */
+        .settings-toggle {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 6px 0;
+        }
+        .settings-toggle + .settings-toggle { border-top: 1px solid var(--border-dim, rgba(255,255,255,0.04)); }
+ 
+        .toggle-label { font-size: 13px; color: var(--text-primary); }
+ 
+        .toggle-switch {
+            position: relative; width: 36px; height: 20px; cursor: pointer;
+        }
+        .toggle-switch input { opacity: 0; width: 0; height: 0; }
+        .toggle-track {
+            position: absolute; inset: 0; background: var(--text-ghost);
+            border-radius: 10px; transition: background 0.2s;
+        }
+        .toggle-knob {
+            position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+            background: var(--text-dim); border-radius: 50%;
+            transition: transform 0.2s, background 0.2s;
+        }
+        .toggle-switch input:checked ~ .toggle-track { background: var(--accent-blood); }
+        .toggle-switch input:checked ~ .toggle-knob {
+            transform: translateX(16px); background: var(--accent-ember);
+        }
+ 
+        /* Close button */
+        #settings-close {
+            display: block; width: 100%; margin-top: 20px; padding: 8px;
+            background: var(--bg-deep); color: var(--text-dim);
+            border: 1px solid var(--border-subtle); border-radius: 4px;
+            font-family: inherit; font-size: 12px; letter-spacing: 0.1em;
+            text-transform: uppercase; cursor: pointer; transition: all 0.15s;
+        }
+        #settings-close:hover { color: var(--text-primary); border-color: var(--accent-blood); }
+ 
+        /* Font preview */
+        .font-preview {
+            margin-top: 6px; padding: 8px 10px;
+            background: var(--bg-deep); border-radius: 3px;
+            font-size: 13px; color: var(--text-dim);
+            border: 1px solid rgba(255,255,255,0.03);
+        }
+ 
+        /* Ember particle canvas */
+        #ember-canvas {
+            position: fixed;
+            inset: 0;
+            width: 100vw;
+            height: 100vh;
+            pointer-events: none;
+            z-index: 1;
+            opacity: 0.6;
+        }
+ 
         @media (max-width: 600px) {
             #output { padding: 16px; font-size: 13px; }
             #input-container { padding: 12px 16px; }
@@ -319,6 +455,7 @@
     <div class="crt-frame"></div>
     <div class="scanlines"></div>
     <div class="flicker"></div>
+    <canvas id="ember-canvas"></canvas>
  
     <div id="boot-screen">
         <div class="boot-text" id="boot-log"></div>
@@ -335,10 +472,96 @@
                 <input type="range" id="volume-slider" min="0" max="100" value="40" />
             </div>
             <span class="clock" id="clock">--:--</span>
+            <button id="settings-btn" title="Settings">
+                <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.31.06-.63.06-.94 0-.31-.02-.63-.06-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.49.49 0 00-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.48.48 0 00-.48-.41h-3.84a.48.48 0 00-.48.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 00-.59.22L2.74 8.87a.48.48 0 00.12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.48-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1112 8.4a3.6 3.6 0 010 7.2z"/></svg>
+            </button>
         </div>
     </div>
  
     <div id="output-wrapper">
+ 
+    <!-- Settings Panel -->
+    <div id="settings-overlay">
+        <div id="settings-panel">
+            <h2>Terminal Settings</h2>
+ 
+            <div class="settings-section">
+                <span class="settings-label">Output Font</span>
+                <select class="settings-select" id="set-font">
+                    <option value="'IBM Plex Mono', monospace">IBM Plex Mono</option>
+                    <option value="'Fira Code', monospace">Fira Code</option>
+                    <option value="'JetBrains Mono', monospace">JetBrains Mono</option>
+                    <option value="'Source Code Pro', monospace">Source Code Pro</option>
+                    <option value="'Inconsolata', monospace">Inconsolata</option>
+                    <option value="'Share Tech Mono', monospace">Share Tech Mono</option>
+                    <option value="monospace">System Monospace</option>
+                </select>
+                <div class="font-preview" id="font-preview">The quick brown fox jumps over the lazy dog. 0123456789</div>
+            </div>
+ 
+            <div class="settings-section">
+                <span class="settings-label">Font Size</span>
+                <div class="settings-slider-row">
+                    <input type="range" class="settings-slider" id="set-fontsize" min="10" max="22" step="1" value="14" />
+                    <span class="settings-slider-val" id="fontsize-val">14px</span>
+                </div>
+            </div>
+ 
+            <div class="settings-section">
+                <span class="settings-label">Line Height</span>
+                <div class="settings-slider-row">
+                    <input type="range" class="settings-slider" id="set-lineheight" min="1.0" max="2.0" step="0.1" value="1.1" />
+                    <span class="settings-slider-val" id="lineheight-val">1.6</span>
+                </div>
+            </div>
+ 
+            <div class="settings-section">
+                <span class="settings-label">Effects</span>
+                <div class="settings-toggle">
+                    <span class="toggle-label">Scanlines</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="set-scanlines" checked />
+                        <span class="toggle-track"></span>
+                        <span class="toggle-knob"></span>
+                    </label>
+                </div>
+                <div class="settings-toggle">
+                    <span class="toggle-label">Screen Flicker</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="set-flicker" checked />
+                        <span class="toggle-track"></span>
+                        <span class="toggle-knob"></span>
+                    </label>
+                </div>
+                <div class="settings-toggle">
+                    <span class="toggle-label">Vignette</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="set-vignette" checked />
+                        <span class="toggle-track"></span>
+                        <span class="toggle-knob"></span>
+                    </label>
+                </div>
+                <div class="settings-toggle">
+                    <span class="toggle-label">Ember Particles</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="set-embers" checked />
+                        <span class="toggle-track"></span>
+                        <span class="toggle-knob"></span>
+                    </label>
+                </div>
+                <div class="settings-toggle">
+                    <span class="toggle-label">Message Animations</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="set-msganim" checked />
+                        <span class="toggle-track"></span>
+                        <span class="toggle-knob"></span>
+                    </label>
+                </div>
+            </div>
+ 
+            <button id="settings-close">Close</button>
+        </div>
+    </div>
         <div id="output"></div>
         <button id="scroll-anchor" title="Scroll to bottom">&#x25BE;</button>
     </div>
@@ -611,8 +834,10 @@
                 }
             });
  
-            // Auto-focus
-            $(document).on("click", function() {
+            // Auto-focus (skip when settings panel is open)
+            $(document).on("click", function(e) {
+                if ($('#settings-overlay').hasClass('open')) return;
+                if ($(e.target).closest('#hud, #settings-overlay').length) return;
                 if (window.getSelection().toString() === "") { $input.focus(); }
             });
  
@@ -622,7 +847,261 @@
                 if (currentTrack) currentTrack.volume = musicVolume;
             });
  
+            // ═══════════════════════════════════════
+            //  8. SETTINGS PANEL
+            // ═══════════════════════════════════════
+            var SETTINGS_KEY = 'mud_terminal_settings';
+            var SETTINGS_VER = 2; // Bump this to force a reset
+            var defaults = {
+                _ver: SETTINGS_VER,
+                font: "'IBM Plex Mono', monospace",
+                fontSize: 14,
+                lineHeight: 1.1,
+                scanlines: true,
+                flicker: true,
+                vignette: true,
+                embers: true,
+                msgAnim: true
+            };
+ 
+            function loadSettings() {
+                try {
+                    var saved = JSON.parse(localStorage.getItem(SETTINGS_KEY));
+                    if (!saved || saved._ver !== SETTINGS_VER) {
+                        // Stale or missing — nuke and use fresh defaults
+                        localStorage.removeItem(SETTINGS_KEY);
+                        return $.extend({}, defaults);
+                    }
+                    return $.extend({}, defaults, saved);
+                }
+                catch(e) { return $.extend({}, defaults); }
+            }
+ 
+            function saveSettings(s) {
+                localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+            }
+ 
+            function applySettings(s) {
+                // Font
+                $output.css('font-family', s.font);
+                $('#font-preview').css('font-family', s.font);
+ 
+                // Font size & line height
+                $output.css({ 'font-size': s.fontSize + 'px', 'line-height': s.lineHeight });
+                $('#fontsize-val').text(s.fontSize + 'px');
+                $('#lineheight-val').text(s.lineHeight.toFixed(1));
+ 
+                // Sync controls
+                $('#set-font').val(s.font);
+                $('#set-fontsize').val(s.fontSize);
+                $('#set-lineheight').val(s.lineHeight);
+                $('#set-scanlines').prop('checked', s.scanlines);
+                $('#set-flicker').prop('checked', s.flicker);
+                $('#set-vignette').prop('checked', s.vignette);
+                $('#set-embers').prop('checked', s.embers);
+                $('#set-msganim').prop('checked', s.msgAnim);
+ 
+                // Effects visibility
+                $('.scanlines').toggle(s.scanlines);
+                $('.flicker').toggle(s.flicker);
+                $('.crt-frame').toggle(s.vignette);
+                $('#ember-canvas').toggle(s.embers);
+                window.embersEnabled = s.embers;
+ 
+                // Message animation toggle
+                if (s.msgAnim) {
+                    $('<style id="msg-anim-override">').text('').appendTo('head');
+                    $('#msg-anim-override').remove();
+                } else {
+                    $('#msg-anim-override').remove();
+                    $('<style id="msg-anim-override">')
+                        .text('#output .msg { animation: none !important; }')
+                        .appendTo('head');
+                }
+            }
+ 
+            var settings = loadSettings();
+            applySettings(settings);
+ 
+            // Open / Close
+            $('#settings-btn').on('click', function(e) {
+                e.stopPropagation();
+                $('#settings-overlay').addClass('open');
+            });
+            $('#settings-close').on('click', function() {
+                $('#settings-overlay').removeClass('open');
+                $input.focus();
+            });
+            $('#settings-overlay').on('click', function(e) {
+                if (e.target === this) {
+                    $(this).removeClass('open');
+                    $input.focus();
+                }
+            });
+            // ESC closes settings too
+            $(document).on('keydown', function(e) {
+                if (e.key === 'Escape' && $('#settings-overlay').hasClass('open')) {
+                    e.stopImmediatePropagation();
+                    $('#settings-overlay').removeClass('open');
+                    $input.focus();
+                }
+            });
+ 
+            // Font select
+            $('#set-font').on('change', function() {
+                settings.font = $(this).val();
+                applySettings(settings); saveSettings(settings);
+            });
+ 
+            // Font size
+            $('#set-fontsize').on('input', function() {
+                settings.fontSize = parseInt(this.value);
+                applySettings(settings); saveSettings(settings);
+            });
+ 
+            // Line height
+            $('#set-lineheight').on('input', function() {
+                settings.lineHeight = parseFloat(this.value);
+                applySettings(settings); saveSettings(settings);
+            });
+ 
+            // Toggles
+            $('#set-scanlines, #set-flicker, #set-vignette, #set-embers, #set-msganim').on('change', function() {
+                settings.scanlines = $('#set-scanlines').is(':checked');
+                settings.flicker   = $('#set-flicker').is(':checked');
+                settings.vignette  = $('#set-vignette').is(':checked');
+                settings.embers    = $('#set-embers').is(':checked');
+                settings.msgAnim   = $('#set-msganim').is(':checked');
+                applySettings(settings); saveSettings(settings);
+            });
+ 
         });
+    </script>
+ 
+    <!-- ═══════════════════════════════════════
+         EMBER PARTICLE SYSTEM
+         Drifting embers / motes that rise slowly
+         through the terminal background.
+         ═══════════════════════════════════════ -->
+    <script>
+    (function() {
+        if (typeof window.embersEnabled === 'undefined') window.embersEnabled = true;
+        var canvas = document.getElementById('ember-canvas');
+        var ctx = canvas.getContext('2d');
+        var particles = [];
+        var MAX_PARTICLES = 40;
+        var animId;
+ 
+        // Color palette: blood reds, deep ambers, faint ash
+        var palette = [
+            { r: 139, g: 26,  b: 26  },  // blood
+            { r: 180, g: 40,  b: 20  },  // deep ember
+            { r: 200, g: 60,  b: 30  },  // hot ember
+            { r: 160, g: 50,  b: 25  },  // smolder
+            { r: 100, g: 20,  b: 15  },  // dark coal
+            { r: 80,  g: 70,  b: 65  },  // ash
+            { r: 60,  g: 55,  b: 50  },  // cold ash
+        ];
+ 
+        function resize() {
+            canvas.width  = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+ 
+        function spawn() {
+            var col = palette[Math.floor(Math.random() * palette.length)];
+            // Bias: most particles are tiny specks, a few are larger embers
+            var isEmber = Math.random() < 0.15;
+            return {
+                x:        Math.random() * canvas.width,
+                y:        canvas.height + 10 + Math.random() * 40,
+                radius:   isEmber ? 1.2 + Math.random() * 1.8 : 0.4 + Math.random() * 1.0,
+                vx:       (Math.random() - 0.5) * 0.3,          // gentle horizontal drift
+                vy:       -(0.15 + Math.random() * 0.45),        // slow rise
+                drift:    (Math.random() - 0.5) * 0.008,         // sinusoidal wobble rate
+                phase:    Math.random() * Math.PI * 2,
+                wobble:   8 + Math.random() * 20,                // wobble amplitude
+                life:     0,
+                maxLife:  400 + Math.random() * 600,              // frames alive
+                r: col.r, g: col.g, b: col.b,
+                bright:   isEmber ? 0.6 + Math.random() * 0.4 : 0.2 + Math.random() * 0.4,
+                pulse:    isEmber ? 0.02 + Math.random() * 0.03 : 0,  // embers glow-pulse
+            };
+        }
+ 
+        // Seed initial particles spread across the screen
+        for (var i = 0; i < MAX_PARTICLES; i++) {
+            var p = spawn();
+            p.y = Math.random() * canvas.height;
+            p.life = Math.random() * p.maxLife * 0.6;
+            particles.push(p);
+        }
+ 
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+ 
+            // Respect settings toggle
+            if (window.embersEnabled === false) {
+                animId = requestAnimationFrame(draw);
+                return;
+            }
+ 
+            for (var i = particles.length - 1; i >= 0; i--) {
+                var p = particles[i];
+                p.life++;
+ 
+                // Fade in during first 60 frames, fade out in last 80
+                var fadeIn  = Math.min(1, p.life / 60);
+                var fadeOut = Math.min(1, (p.maxLife - p.life) / 80);
+                var alpha   = p.bright * fadeIn * fadeOut;
+ 
+                // Glow pulse for embers
+                if (p.pulse > 0) {
+                    alpha += Math.sin(p.life * p.pulse) * 0.15;
+                }
+                alpha = Math.max(0, Math.min(1, alpha));
+ 
+                // Movement
+                p.phase += p.drift;
+                p.x += p.vx + Math.sin(p.phase) * (p.wobble * 0.01);
+                p.y += p.vy;
+ 
+                // Draw
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(' + p.r + ',' + p.g + ',' + p.b + ',' + alpha.toFixed(3) + ')';
+                ctx.fill();
+ 
+                // Soft glow for larger embers
+                if (p.radius > 1.5 && alpha > 0.3) {
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.radius * 3, 0, Math.PI * 2);
+                    ctx.fillStyle = 'rgba(' + p.r + ',' + p.g + ',' + p.b + ',' + (alpha * 0.12).toFixed(3) + ')';
+                    ctx.fill();
+                }
+ 
+                // Recycle dead or off-screen particles
+                if (p.life >= p.maxLife || p.y < -20 || p.x < -30 || p.x > canvas.width + 30) {
+                    particles[i] = spawn();
+                }
+            }
+ 
+            animId = requestAnimationFrame(draw);
+        }
+ 
+        draw();
+ 
+        // Pause when tab is hidden to save CPU
+        document.addEventListener('visibilitychange', function() {
+            if (document.hidden) {
+                cancelAnimationFrame(animId);
+            } else {
+                animId = requestAnimationFrame(draw);
+            }
+        });
+    })();
     </script>
 </body>
 </html>

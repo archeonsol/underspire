@@ -140,7 +140,7 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
             CmdSpawnCreature, CmdCreatureSet, CmdDespawn, CmdNpc, CmdMakeNpc, CmdNpcSet, CmdSpawnPerfume, CmdBadSmellRoom,
             CmdGoto, CmdGotoRoom, CmdSummon, CmdSetVoid, CmdVoid, CmdRelease, CmdBoot, CmdFind, CmdAnnounce, CmdRestore, CmdDebugKill,
             CmdSpawnSeat, CmdSpawnBed, CmdSpawnPod, CmdSpawnDiveRig, CmdSpawnCamera, CmdSpawnTelevision,
-            CmdEmoteDebug, CmdDamageVehicle,
+            CmdEmoteDebug, CmdDamageVehicle, CmdMusic
         )
         from commands.player_cmds import CmdXp
         from commands.notes_cmds import CmdAddNote, CmdNotes, CmdNoteSearch
@@ -277,7 +277,6 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdAddNote())
         self.add(CmdNotes())
         self.add(CmdNoteSearch())
-
         # --- Admin commands (Builder/Admin only; locked in command class) ---
         self.add(CmdEmoteDebug())
         self.add(CmdNpc())
@@ -317,6 +316,7 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdBadSmellRoom())
         self.add(CmdSpawnCreature())
         self.add(CmdCreatureSet())
+        self.add(CmdMusic())
 
 class AccountCmdSet(default_cmds.AccountCmdSet):
     """

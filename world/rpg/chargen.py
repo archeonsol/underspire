@@ -212,7 +212,8 @@ def _slab(title: str, text: str, status: str = None, width: int = _UI_WIDTH) -> 
     pad_total = width - 2 - len(raw_title)
     pad_l     = pad_total // 2
     pad_r     = pad_total - pad_l
-    out.append(f"|r╔{'═' * pad_l}|R{raw_title}|r{'═' * pad_r}╗|n")
+    # Render only the left border of the panel to avoid right-panel misalignment.
+    out.append(f"|r╔{'═' * pad_l}|R{raw_title}|r{'═' * pad_r}|n")
 
     # Split by SINGLE newline to respect explicit manual line breaks
     explicit_lines = text.split("\n")
@@ -220,26 +221,26 @@ def _slab(title: str, text: str, status: str = None, width: int = _UI_WIDTH) -> 
         if not line.strip():
             # Preserve intentional blank lines
             empty_pad = ANSIString("  ").ljust(inner + 2)
-            out.append(f"|r║|n{empty_pad}|r║|n")
+            out.append(f"|r║|n{empty_pad}")
         else:
             ansi_line = ANSIString(line)
             if len(ansi_line) <= inner:
                 # THE SECRET SAUCE: If it fits perfectly, SKIP wrapping to keep your exact spaces!
                 padded = ANSIString(f"  {line}").ljust(inner + 2)
-                out.append(f"|r║|n{padded}|r║|n")
+                out.append(f"|r║|n{padded}")
             else:
                 # If it's too long, wrap it, and SPLIT THE STRING into a list!
                 wrapped_string = wrap(line, width=inner)
                 for w_line in wrapped_string.split("\n"):
                     padded = ANSIString(f"  {w_line}").ljust(inner + 2)
-                    out.append(f"|r║|n{padded}|r║|n")
+                    out.append(f"|r║|n{padded}")
 
     if status:
-        out.append(f"|r╠{'─' * (width - 2)}╣|n")
+        out.append(f"|r╠{'─' * (width - 2)}|n")
         status_padded = ANSIString(f"  |r>>|n |x{status}|n").ljust(inner + 2)
-        out.append(f"|r║|n{status_padded}|r║|n")
+        out.append(f"|r║|n{status_padded}")
 
-    out.append(f"|r╚{'═' * (width - 2)}╝|n")
+    out.append(f"|r╚{'═' * (width - 2)}|n")
     return "\n".join(out)
 
 

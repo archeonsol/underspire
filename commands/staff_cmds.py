@@ -81,16 +81,17 @@ class CmdStats(Command):
         from world.rpg.xp import _stat_level, _skill_level
         # Original tall structure; grades from exact thresholds (stats: stored level, skills: level)
         w = 50
-        edge = "|x├" + "─" * (w - 2) + "┤|n"
-        output = "|x┌" + "─" * (w - 2) + "┐|n\n"
-        output += "|x│|n |R■|n |wSOUL READOUT|n  |x—|n  " + display_name.ljust(18) + " |x│|n\n"
-        output += "|x│|n   |wOrigin|n " + (bg or "Unknown").ljust(w - 18) + " |x│|n\n"
+        # Render only the left border of each box to avoid right-panel misalignment.
+        edge = "|x├" + "─" * (w - 2) + "|n"
+        output = "|x┌" + "─" * (w - 2) + "|n\n"
+        output += "|x│|n |R■|n |wSOUL READOUT|n  |x—|n  " + display_name.ljust(18) + "\n"
+        output += "|x│|n   |wOrigin|n " + (bg or "Unknown").ljust(w - 18) + "\n"
         output += edge + "\n"
-        output += "|x│|n |wXP|n " + str(xp).ljust(w - 10) + " |x│|n\n"
+        output += "|x│|n |wXP|n " + str(xp).ljust(w - 10) + "\n"
         if fragmented_str:
-            output += "|x│|n |wLast fragmented|n " + fragmented_str.ljust(w - 21) + " |x│|n\n"
+            output += "|x│|n |wLast fragmented|n " + fragmented_str.ljust(w - 21) + "\n"
         output += edge + "\n"
-        output += "|x│|n |R CORE|n" + " ".ljust(w - 9) + "|x│|n\n"
+        output += "|x│|n |R CORE|n" + " ".ljust(w - 9) + "\n"
 
         # --- Stat buffs/debuffs: compare base vs effective display levels for all stats.
         # Base display level: from stored stat only (no temporary modifiers).
@@ -127,7 +128,7 @@ class CmdStats(Command):
             output += "|x│|n   |w{}|n  |R[{}]|n {}{}\n".format(label.ljust(12), letter, adj, marker)
 
         output += edge + "\n"
-        output += "|x│|n |R IMPLANTS|n" + " ".ljust(w - 14) + "|x│|n\n"
+        output += "|x│|n |R IMPLANTS|n" + " ".ljust(w - 14) + "\n"
 
         # --- Skill buffs/debuffs: compare base vs effective numeric skill levels.
         # Base skill level: from stored value only.
@@ -162,7 +163,7 @@ class CmdStats(Command):
             if delta != 0:
                 marker = " |g+|n" if delta > 0 else " |r-|n"
             output += "|x│|n   |w{}|n  |R[{}]|n {}{}\n".format(label.ljust(skill_label_width), letter, adj, marker)
-        output += "|x└" + "─" * (w - 2) + "┘|n\n"
+        output += "|x└" + "─" * (w - 2) + "|n\n"
         caller.msg(output)
 
 
@@ -2250,3 +2251,34 @@ class StaffCharDelete(CmdCharDelete):
     """Character deletion: staff only."""
 
     locks = "cmd:perm(Builder)"
+
+class CmdMusic(Command):
+    """
+    Play a background track via YouTube ID.
+
+    Usage:
+      music <youtube_id>
+      music stop
+
+    Example:
+      music dQw4w9WgXcQ
+    """
+    key = "music"
+    help_category = "General"
+    locks = "cmd:perm(Builder)"
+
+    def func(self):
+        if not self.args:
+            self.caller.msg("Usage: music <youtube_id> or music stop")
+            return
+
+        arg = self.args.strip()
+
+        if arg == "stop":
+            # Send the stop signal to the webclient
+            self.caller.msg("Stopping audio transmission...")
+            self.caller.msg(("stop_music", {}), options={"type": "msg"})
+        else:
+            # Send the play_yt signal with the ID
+            self.caller.msg(f"Initiating uplink for stream ID: {arg}")
+            self.caller.msg(("play_yt", [arg], {}), options={"type": "msg"})

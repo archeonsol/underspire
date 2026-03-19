@@ -34,32 +34,33 @@ def _registry_panel(title: str, text: str, status: str = None, width: int = _UI_
     pad_l     = pad_total // 2
     pad_r     = pad_total - pad_l
     
-    out.append(f"|x┌{'─' * pad_l}|y{raw_title}|x{'─' * pad_r}┐|n")
+    # Render only the left border of the panel to avoid right-panel misalignment.
+    out.append(f"|x┌{'─' * pad_l}|y{raw_title}|x{'─' * pad_r}|n")
 
     explicit_lines = text.split("\n")
     for line in explicit_lines:
         if not line.strip():
             empty_pad = ANSIString("  ").ljust(inner + 2)
-            out.append(f"|x│|n{empty_pad}|x│|n")
+            out.append(f"|x│|n{empty_pad}")
         else:
             ansi_line = ANSIString(line)
             if len(ansi_line) <= inner:
                 # Fits perfectly, preserve spaces!
                 padded = ANSIString(f"  {line}").ljust(inner + 2)
-                out.append(f"|x│|n{padded}|x│|n")
+                out.append(f"|x│|n{padded}")
             else:
                 # Wrap and split into a list!
                 wrapped_string = wrap(line, width=inner)
                 for w_line in wrapped_string.split("\n"):
                     padded = ANSIString(f"  {w_line}").ljust(inner + 2)
-                    out.append(f"|x│|n{padded}|x│|n")
+                    out.append(f"|x│|n{padded}")
 
     if status:
-        out.append(f"|x├{'─' * (width - 2)}┤|n")
+        out.append(f"|x├{'─' * (width - 2)}|n")
         status_padded = ANSIString(f"  |c>>|n |w{status}|n").ljust(inner + 2)
-        out.append(f"|x│|n{status_padded}|x│|n")
+        out.append(f"|x│|n{status_padded}")
 
-    out.append(f"|x└{'─' * (width - 2)}┘|n")
+    out.append(f"|x└{'─' * (width - 2)}|n")
     return "\n".join(out)
 
 
