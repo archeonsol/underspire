@@ -49,6 +49,35 @@ class MatrixAvatar(RoleplayMixin, FurnitureMixin, DefaultCharacter):
         self.db.entry_device = None
         self.db.dead = False
         self.db.proxy_router = None  # Persistent proxy tunnel location
+        self.db.matrix_id = None     # Matrix ID of the identity this avatar operates as
+        self.db.matrix_alias = None  # Cached alias; updated on jack-in and on set_alias()
+
+    def sync_alias(self):
+        """
+        Sync db.matrix_alias from the active identity on this avatar's rig.
+
+        Goes through the rig rather than the character directly, so the same
+        path will work for jailbroken handset identities in the future.
+        """
+        rig = self.db.entry_device
+        if not rig:
+            return
+        alias = rig.get_active_alias()
+        if alias is not None:
+            self.db.matrix_alias = alias
+
+    def get_display_name(self, looker, **kwargs):
+        """
+        Display name for this avatar. Shows alias if set, raw matrix ID if not,
+        falling back to key.
+
+        The @ prefix signals to observers that this is a Matrix identity.
+        """
+        if self.db.matrix_alias:
+            return f"@{self.db.matrix_alias}"
+        if self.db.matrix_id:
+            return f"@{self.db.matrix_id}"
+        return self.key
 
     def get_controlling_character(self):
         """

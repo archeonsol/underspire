@@ -219,8 +219,8 @@ def _ensure_medical_db(character):
         character.db.splinted_bones = []  # bones that have been splinted (reduces combat penalty)
     if character.db.stabilized_organs is None:
         character.db.stabilized_organs = {}  # organ_key -> True if stabilized this session (no repeated stabilize)
-    if character.db.body_part_injuries is None:
-        character.db.body_part_injuries = {}  # body_part -> list of short colored descriptor strings (for look when naked)
+    # db.body_part_injuries was a vestigial structure (never populated in gameplay).
+    # Appearance now reads from db.injuries via get_untreated_injuries_by_part().
     if character.db.bandaged_body_parts is None:
         character.db.bandaged_body_parts = []  # body parts that have been bandaged (for treated look text)
 
@@ -238,6 +238,7 @@ INJURY_SEVERITY_WORDING = {
     "gunshot": {1: "a graze", 2: "a gunshot wound", 3: "a severe gunshot wound", 4: "a critical gunshot wound"},
     "trauma": {1: "an abrasion", 2: "bruising", 3: "heavy impact trauma", 4: "severe trauma"},
     "arcane": {1: "a minor arcane burn", 2: "an arcane wound", 3: "a severe arcane wound", 4: "a critical arcane wound"},
+    "surgery": {1: "a small incision", 2: "a surgical incision", 3: "a deep surgical wound", 4: "a major surgical wound"},
 }
 # Plural form for "two X" / "multiple X" when same part has several of same type+severity
 INJURY_SEVERITY_PLURAL = {
@@ -246,9 +247,13 @@ INJURY_SEVERITY_PLURAL = {
     "gunshot": {1: "grazes", 2: "gunshot wounds", 3: "severe gunshot wounds", 4: "critical gunshot wounds"},
     "trauma": {1: "abrasions", 2: "areas of bruising", 3: "heavy impact trauma", 4: "areas of severe trauma"},
     "arcane": {1: "minor arcane burns", 2: "arcane wounds", 3: "severe arcane wounds", 4: "critical arcane wounds"},
+    "surgery": {1: "small incisions", 2: "surgical incisions", 3: "deep surgical wounds", 4: "major surgical wounds"},
 }
 # Injury type resolved via world.combat.damage_types.get_damage_type -> DAMAGE_TYPE_TO_INJURY_TYPE
 def _injury_type_for_weapon(weapon_key, weapon_obj=None):
+    # Surgery is a special non-combat weapon key used by cyberware installation/removal.
+    if weapon_key == "surgery":
+        return "surgery"
     from world.combat.damage_types import get_damage_type, DAMAGE_TYPE_TO_INJURY_TYPE
     return DAMAGE_TYPE_TO_INJURY_TYPE.get(get_damage_type(weapon_key, weapon_obj), "trauma")
 
@@ -267,17 +272,6 @@ def _pronoun_verb_has_have(character):
     from world.rpg.emote import PRONOUN_MAP
     sub, _, _ = PRONOUN_MAP.get(key, PRONOUN_MAP["neutral"])
     return "have" if (sub or "they").lower() == "they" else "has"
-
-
-def add_body_part_injury(character, body_part, weapon_key, damage=0, weapon_obj=None):
-    """Add an injury record for this body part (type + severity). Display is aggregated in get_effective_body_descriptions."""
-    _ensure_medical_db(character)
-    severity = 1 if damage <= 6 else (2 if damage <= 15 else (3 if damage <= 28 else 4))
-    injury_type = _injury_type_for_weapon(weapon_key, weapon_obj)
-    entry = {"type": injury_type, "severity": severity}
-    part_list = character.db.body_part_injuries.setdefault(body_part, [])
-    part_list.append(entry)
-    character.db.body_part_injuries[body_part] = part_list
 
 
 def format_body_part_injuries(character, body_part, part_entries):
@@ -443,16 +437,29 @@ def apply_trauma(character, body_part, damage, is_critical=False, weapon_key="fi
     Apply trauma from a hit: possible organ damage, fracture, and bleeding.
     Multipliers are damage-type × body-region (e.g. slashing on neck = high bleed; impact on limb = high fracture).
     Base rates kept low so trauma feels serious. Re-hit same area increases severity.
+
+    Chrome (fully replaced) and missing body parts skip biological trauma entirely.
+    Augmented parts still have biological tissue and take normal trauma.
+
     Returns dict: { "organ": ..., "fracture": ..., "bleeding": ... } for combat messaging.
     """
+    from world.body import get_part_state, get_effective_organs, get_effective_bones
     from world.combat.damage_types import get_damage_type, get_trauma_multipliers
+
     _ensure_medical_db(character)
+    result = {"organ": None, "fracture": None, "bleeding": None}
+
+    # Chrome/missing parts have no biological tissue — no trauma possible.
+    # HP damage is still applied by at_damage (the blow still hurts); this
+    # function only handles biological consequences (organs, bones, bleeding).
+    part_state = get_part_state(character, body_part or "torso")
+    if part_state in ("missing", "chrome"):
+        return result
+
     damage_type = get_damage_type(weapon_key, weapon_obj)
     bleed_mult, fracture_mult, organ_mult = get_trauma_multipliers(damage_type, body_part or "torso")
-    # Wound display is derived from injuries[] in get_untreated_injuries_by_part; add_injury is called by at_damage
-    organs = BODY_PART_ORGANS.get(body_part, [])
-    bones = BODY_PART_BONES.get(body_part, [])
-    result = {"organ": None, "fracture": None, "bleeding": None}
+    organs = get_effective_organs(character, body_part or "torso")
+    bones = get_effective_bones(character, body_part or "torso")
 
     existing_organ_here = any(character.db.organ_damage.get(o, 0) > 0 for o in organs)
     existing_fracture_here = any(b in (character.db.fractures or []) for b in bones)
@@ -1036,7 +1043,6 @@ def reset_medical(character):
     """
     character.db.injuries = []
     character.db.bandaged_body_parts = []
-    character.db.body_part_injuries = {}
     character.db.organ_damage = {}
     character.db.fractures = []
     character.db.bleeding_level = 0

@@ -31,7 +31,9 @@ def get_worn_armor_stack_total(character):
 def get_armor_protection_for_location(character, body_part, damage_type):
     """
     Sum effective protection (quality-scaled) for the given damage type across all
-    worn armor that covers body_part. Returns (total_protection, list of armor objects).
+    worn armor that covers body_part, plus any cyberware armor contribution.
+    Returns (total_protection, list of armor objects that contributed).
+    Cyberware armor does not degrade and is not included in the pieces list.
     """
     total = 0
     pieces = []
@@ -43,6 +45,14 @@ def get_armor_protection_for_location(character, body_part, damage_type):
         if p > 0:
             total += p
             pieces.append(obj)
+    # Cyberware armor contribution (e.g. subdermal plating).
+    # Not included in pieces — cyberware doesn't degrade like worn armor.
+    from world.body import get_cyberware_for_part
+    for cw in get_cyberware_for_part(character, body_part):
+        armor_vals = getattr(cw, "armor_values", None) or {}
+        prot = armor_vals.get(damage_type, 0)
+        if prot > 0:
+            total += prot
     return total, pieces
 
 

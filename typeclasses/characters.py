@@ -7,19 +7,9 @@ from typeclasses.mixins import FurnitureMixin, MedicalMixin, RPGCharacterMixin, 
 from typeclasses.matrix.mixins.matrix_id import MatrixIdMixin
 
 
-# Body-part groups for merging descriptions into three paragraphs (head/face, upper body, lower body)
 def _body_parts():
     from world.medical import BODY_PARTS
     return BODY_PARTS
-
-
-def _body_part_groups():
-    """Return (head_face, upper_body, lower_body) lists of body part keys."""
-    parts = _body_parts()
-    head_face = ["head", "face", "left eye", "right eye", "neck"]
-    upper_body = ["left shoulder", "right shoulder", "left arm", "right arm", "left hand", "right hand", "torso", "back", "abdomen"]
-    lower_body = ["groin", "left thigh", "right thigh", "left foot", "right foot"]
-    return head_face, upper_body, lower_body
 
 
 # When you look at a character: name = orange (match room look), sdesc in parens = white
@@ -89,6 +79,7 @@ class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, F
         # Per-body-part descriptions for look/appearance (keys from world.medical.BODY_PARTS)
         self.db.body_descriptions = {part: "" for part in _body_parts()}
         # Medical / trauma (organs, fractures, bleeding) - see world.medical
+        self.db.injuries = []  # HP-occupancy wound list; see world.medical.add_injury
         self.db.organ_damage = {}
         self.db.fractures = []
         self.db.bleeding_level = 0
@@ -121,6 +112,95 @@ class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, F
         self.db.blood_alcohol = 0.0
         # Amputations / severed limbs (body part keys from world.medical.BODY_PARTS)
         self.db.missing_body_parts = []
+        # Installed cyberware: list of CyberwareBase objects (location=None while installed)
+        self.db.cyberware = []
+        # Cyberware body description overrides — managed by CyberwareBase, not user-editable
+        self.db.locked_descriptions = {}   # {part: text} — replaces user naked entirely
+        self.db.appended_descriptions = {}  # {part: {typeclass_path: text}} — appended after user naked
+
+    def at_server_start(self):
+        """Re-apply cyberware buffs after a server restart (BuffHandler is non-persistent)."""
+        super().at_server_start()
+        for obj in (self.db.cyberware or []):
+            try:
+                obj.reapply_buffs(self)
+            except Exception as err:
+                logger.log_trace(f"characters.at_server_start reapply_buffs ({obj}): {err}")
+
+    def install_cyberware(self, cyberware_obj, skip_surgery=False):
+        """
+        Install a piece of cyberware onto this character.
+
+        Conflict checks:
+          - Typeclass uniqueness: only one instance of each subclass allowed.
+          - Locked body part overlap: two items cannot lock the same body part.
+
+        If skip_surgery is False (default), on_surgery_install() is called after
+        on_install() to record a surgical wound. Pass skip_surgery=True to bypass
+        (e.g. for staff-only instant installs or narrative reasons).
+
+        Returns True on success, or an error string on failure.
+        """
+        from typeclasses.cyberware import CyberwareBase
+        if not isinstance(cyberware_obj, CyberwareBase):
+            return "That is not a cyberware object."
+        installed = list(self.db.cyberware or [])
+        if any(type(c) is type(cyberware_obj) for c in installed):
+            return f"{type(cyberware_obj).__name__} is already installed."
+        if cyberware_obj.body_mods:
+            locked = self.db.locked_descriptions or {}
+            for part, (mode, _) in cyberware_obj.body_mods.items():
+                if mode == "lock" and part in locked:
+                    return f"Body part '{part}' is already locked by installed cyberware."
+        cyberware_obj.on_install(self)
+        if not skip_surgery:
+            try:
+                cyberware_obj.on_surgery_install(self)
+            except Exception as err:
+                logger.log_trace(f"install_cyberware on_surgery_install: {err}")
+        installed.append(cyberware_obj)
+        self.db.cyberware = installed
+        return True
+
+    def remove_cyberware(self, obj_or_name, skip_surgery=False):
+        """
+        Remove an installed piece of cyberware.
+
+        Accepts a cyberware object or a name string (matched case-insensitively).
+        The object materialises in the room regardless — staff disposes as needed.
+
+        If skip_surgery is False (default), on_surgery_removal() is called before
+        on_uninstall() to record a surgical wound.
+
+        Returns True on success, or an error string on failure.
+        """
+        installed = list(self.db.cyberware or [])
+        if isinstance(obj_or_name, str):
+            matches = [c for c in installed if c.key.lower() == obj_or_name.lower()]
+            if not matches:
+                return f"No cyberware named '{obj_or_name}' is installed."
+            obj = matches[0]
+        else:
+            if obj_or_name not in installed:
+                return "That cyberware is not installed on this character."
+            obj = obj_or_name
+        if not skip_surgery:
+            try:
+                obj.on_surgery_removal(self)
+            except Exception as err:
+                logger.log_trace(f"remove_cyberware on_surgery_removal: {err}")
+        obj.on_uninstall(self)
+        installed.remove(obj)
+        self.db.cyberware = installed
+        return True
+
+    def get_cyberware(self):
+        """Return a list of all installed cyberware objects."""
+        return list(self.db.cyberware or [])
+
+    def has_cyberware(self, obj):
+        """Return True if the given cyberware object is installed on this character."""
+        return obj in (self.db.cyberware or [])
 
     def at_server_reload(self):
         """
@@ -168,9 +248,9 @@ class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, F
     def get_body_descriptions(self):
         """
         Return dict of body part -> description string (for appearance/look).
-        Uses worn clothing/armor to override parts they cover; uncovered parts use body_descriptions.
+        Full pipeline: naked → missing → cyberware → injuries → treatment → clothing.
         """
-        from world.clothing import get_effective_body_descriptions
+        from world.appearance import get_effective_body_descriptions
         return get_effective_body_descriptions(self)
 
     def format_body_appearance(self):
@@ -180,17 +260,8 @@ class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, F
         garment covering e.g. torso and shoulders doesn't repeat even with arms in between.
         Returns the full string (one or more paragraphs) or "" if nothing set.
         """
-        parts = self.get_body_descriptions()
-        head_face, upper_body, lower_body = _body_part_groups()
-        paragraphs = []
-        for group in (head_face, upper_body, lower_body):
-            bits = [(parts.get(p) or "").strip() for p in group]
-            bits = [b for b in bits if b]
-            # Unique in order of first appearance (no repeated phrase in this region)
-            bits = list(dict.fromkeys(bits))
-            if bits:
-                paragraphs.append(" ".join(bits))
-        return "\n\n".join(paragraphs) if paragraphs else ""
+        from world.appearance import format_body_appearance
+        return format_body_appearance(self.get_body_descriptions())
 
     def format_appearance(self, appearance, looker, **kwargs):
         """Allow one blank line between paragraphs (Evennia default collapses to single newline)."""

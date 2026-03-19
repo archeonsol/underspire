@@ -29,9 +29,9 @@ class Corpse(Object):
         body_word = self._PRONOUN_TO_BODY.get(pronoun, "a neuter")
         intro = f"The body of {body_word}. Cold. Still. Nothing left of who they were."
         try:
-            from world.clothing import get_effective_body_descriptions, format_body_appearance_from_parts
+            from world.appearance import get_effective_body_descriptions, format_body_appearance
             parts = get_effective_body_descriptions(self)
-            merged = format_body_appearance_from_parts(parts)
+            merged = format_body_appearance(parts)
             if merged:
                 intro = intro + "\n\n" + merged
         except Exception as e:
