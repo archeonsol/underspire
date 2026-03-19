@@ -116,9 +116,7 @@ def get_networked_devices(room):
         for obj in container.contents:
             if isinstance(obj, NetworkedMixin):
                 devices.append(obj)
-            # Also search this object's contents (inventory, containers, etc.)
-            if hasattr(obj, 'contents'):
-                find_devices_recursive(obj)
+            find_devices_recursive(obj)
 
     if room:
         find_devices_recursive(room)
