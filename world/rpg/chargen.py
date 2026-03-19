@@ -15,6 +15,7 @@ from evennia.utils.utils import wrap  # The secret to perfect ANSI-safe wrapping
 
 from world.levels import MAX_LEVEL, MAX_STAT_LEVEL, level_to_letter
 from world.skills import SKILL_KEYS, SKILL_DISPLAY_NAMES
+from world.ui_utils import fade_rule
 
 # ══════════════════════════════════════════════════════════════════════════════
 # STAT DEFINITIONS
@@ -213,7 +214,7 @@ def _slab(title: str, text: str, status: str = None, width: int = _UI_WIDTH) -> 
     pad_l     = pad_total // 2
     pad_r     = pad_total - pad_l
     # Render only the left border of the panel to avoid right-panel misalignment.
-    out.append(f"|r╔{'═' * pad_l}|R{raw_title}|r{'═' * pad_r}|n")
+    out.append(f"|r╔{'═' * pad_l}|R{raw_title}|r{fade_rule(pad_r, '═')}|n")
 
     # Split by SINGLE newline to respect explicit manual line breaks
     explicit_lines = text.split("\n")
@@ -236,11 +237,11 @@ def _slab(title: str, text: str, status: str = None, width: int = _UI_WIDTH) -> 
                     out.append(f"|r║|n{padded}")
 
     if status:
-        out.append(f"|r╠{'─' * (width - 2)}|n")
+        out.append(f"|r╠{fade_rule(width - 2, '─')}|n")
         status_padded = ANSIString(f"  |r>>|n |x{status}|n").ljust(inner + 2)
         out.append(f"|r║|n{status_padded}")
 
-    out.append(f"|r╚{'═' * (width - 2)}|n")
+    out.append(f"|r╚{fade_rule(width - 2, '═')}|n")
     return "\n".join(out)
 
 
@@ -796,6 +797,7 @@ def node_finish(caller, raw_string="", **kwargs):
         f"|x{name[:3].upper()}|n |R{level_to_letter(stats.get(k, 0) or 0, MAX_STAT_LEVEL)}|n"
         for k, name in STAT_DISPLAY_NAMES.items()
     )
+    divider = fade_rule(47, "─")
 
     text_body = (
         "|xThe burning thing above you goes out in stages. "
@@ -813,11 +815,11 @@ def node_finish(caller, raw_string="", **kwargs):
         "It doesn't know your name yet.|n\n\n"
         "|xYou don't know yet what you became in that room. "
         "You'll find out.|n\n\n"
-        "|x───────────────────────────────────────────────|n\n"
+        f"|x{divider}|n\n"
         f"  |xOrigin|n  {bg}\n"
         f"  |xStats|n   {stat_summary}\n"
         f"  |xMarks|n   {skill_summary}\n"
-        "|x───────────────────────────────────────────────|n"
+        f"|x{divider}|n"
     )
     text = _slab("THE RITE IS COMPLETE", text_body, status="CONNECTION ESTABLISHED")
     return text, []
