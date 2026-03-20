@@ -162,23 +162,14 @@
         overflow-y: auto;
         word-wrap: break-word;
         white-space: pre-wrap;
-        scroll-behavior: smooth;
+
         line-height: 1.1;
       }
       #output .msg {
         padding: 0;
         margin: 0;
-        animation: msgIn 0.2s ease-out;
         line-height: inherit;
         display: block;
-      }
-      @keyframes msgIn {
-        from {
-          opacity: 0;
-        }
-        to {
-          opacity: 1;
-        }
       }
       #output .echo {
         color: var(--text-dim);
@@ -1829,8 +1820,7 @@
               if (window.text2html) {
                 text = window.text2html(text);
               }
-              $output.append("<div class='msg'>" + text + "</div>");
-              scrollToBottom();
+              typewriter($("<div class='msg'>").html(text));
             });
 
             // --- RECEIVE PROMPTS ---
@@ -1839,12 +1829,11 @@
               if (window.text2html) {
                 text = window.text2html(text);
               }
-              $output.append(
-                "<div class='msg' style='color:var(--accent-ember)'>" +
-                  text +
-                  "</div>",
+              typewriter(
+                $("<div class='msg'>")
+                  .css("color", "var(--accent-ember)")
+                  .html(text),
               );
-              scrollToBottom();
             });
 
             // --- CONNECTION STATUS ---
@@ -1946,7 +1935,9 @@
         // ═══════════════════════════════════════
         //  4. SCROLL MANAGEMENT
         // ═══════════════════════════════════════
+        var programmaticScroll = false;
         $output.on("scroll", function () {
+          if (programmaticScroll) return;
           var el = $output[0];
           var nearBottom =
             el.scrollHeight - el.scrollTop - el.clientHeight < 80;
@@ -1954,12 +1945,74 @@
           $scrollBtn.toggleClass("visible", !nearBottom);
         });
         $scrollBtn.on("click", function () {
-          $output.scrollTop($output[0].scrollHeight);
+          autoScroll = true;
+          $scrollBtn.toggleClass("visible", false);
+          programmaticScroll = true;
+          $output[0].scrollTo({
+            top: $output[0].scrollHeight,
+            behavior: "instant",
+          });
+          programmaticScroll = false;
         });
         function scrollToBottom() {
           if (autoScroll) {
-            $output.scrollTop($output[0].scrollHeight);
+            programmaticScroll = true;
+            $output[0].scrollTo({
+              top: $output[0].scrollHeight,
+              behavior: "instant",
+            });
+            programmaticScroll = false;
           }
+        }
+        function typewriter($el) {
+          $output.append($el);
+          if (!settings || !settings.msgAnim) {
+            scrollToBottom();
+            return;
+          }
+          var segments = [];
+          var walker = document.createTreeWalker(
+            $el[0],
+            NodeFilter.SHOW_TEXT,
+            null,
+            false,
+          );
+          var node;
+          while ((node = walker.nextNode())) {
+            if (node.textContent.length > 0) {
+              segments.push({ node: node, full: node.textContent });
+              node.textContent = "";
+            }
+          }
+          var totalChars = 0;
+          for (var i = 0; i < segments.length; i++) {
+            totalChars += segments[i].full.length;
+          }
+          if (totalChars === 0) {
+            scrollToBottom();
+            return;
+          }
+          // Target 200ms at ~60fps = ~12 frames
+          var charsPerFrame = Math.max(1, Math.ceil(totalChars / 16));
+          var segIdx = 0;
+          var charIdx = 0;
+          function tick() {
+            for (var i = 0; i < charsPerFrame; i++) {
+              if (segIdx >= segments.length) break;
+              var seg = segments[segIdx];
+              charIdx++;
+              seg.node.textContent = seg.full.slice(0, charIdx);
+              if (charIdx >= seg.full.length) {
+                segIdx++;
+                charIdx = 0;
+              }
+            }
+            scrollToBottom();
+            if (segIdx < segments.length) {
+              requestAnimationFrame(tick);
+            }
+          }
+          requestAnimationFrame(tick);
         }
 
         // ═══════════════════════════════════════
@@ -2090,7 +2143,7 @@
         //  8. SETTINGS PANEL
         // ═══════════════════════════════════════
         var SETTINGS_KEY = "mud_terminal_settings";
-        var SETTINGS_VER = 2; // Bump this to force a reset
+        var SETTINGS_VER = 4; // Bump this to force a reset
         var defaults = {
           _ver: SETTINGS_VER,
           font: "'IBM Plex Mono', monospace",
@@ -2150,17 +2203,6 @@
           $(".crt-frame").toggle(s.vignette);
           $("#ember-canvas").toggle(s.embers);
           window.embersEnabled = s.embers;
-
-          // Message animation toggle
-          if (s.msgAnim) {
-            $('<style id="msg-anim-override">').text("").appendTo("head");
-            $("#msg-anim-override").remove();
-          } else {
-            $("#msg-anim-override").remove();
-            $('<style id="msg-anim-override">')
-              .text("#output .msg { animation: none !important; }")
-              .appendTo("head");
-          }
         }
 
         var settings = loadSettings();
@@ -2220,6 +2262,7 @@
           settings.vignette = $("#set-vignette").is(":checked");
           settings.embers = $("#set-embers").is(":checked");
           settings.msgAnim = $("#set-msganim").is(":checked");
+
           applySettings(settings);
           saveSettings(settings);
         });
