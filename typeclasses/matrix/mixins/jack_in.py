@@ -353,10 +353,19 @@ class JackInMixin(NetworkedMixin):
             if avatar and avatar.pk and not getattr(avatar.db, 'dead', False):
                 return avatar
 
-        # Search all avatars for one linked to this device
+        # Resolve the effective matrix ID for this jack-in (character's ID, or
+        # future override from a slotted jailbroken handset).
+        char_matrix_id = self.get_active_matrix_id(character)
+        if not char_matrix_id:
+            from evennia.utils import logger
+            logger.log_err(f"Cannot create avatar for {character}: no Matrix ID.")
+            return None
+
+        # Search for an existing avatar belonging to this matrix identity.
+        # We key on matrix_id, not entry_device — the rig is just hardware.
         avatar = None
         for candidate in MatrixAvatar.objects.all():
-            if getattr(candidate.db, 'entry_device', None) == self:
+            if getattr(candidate.db, 'matrix_id', None) == char_matrix_id:
                 if not getattr(candidate.db, 'dead', False):
                     avatar = candidate
                     break
@@ -375,7 +384,7 @@ class JackInMixin(NetworkedMixin):
                 avatar.location = target_node
 
         if not avatar:
-            matrix_id = self.get_active_matrix_id(character)
+            matrix_id = char_matrix_id
             if not matrix_id:
                 from evennia.utils import logger
                 logger.log_err(f"Cannot create avatar for {character}: no Matrix ID.")
