@@ -761,16 +761,16 @@ class CmdTypeclasses(Command):
 
 class CmdSpawnItem(Command):
     """
-    Spawn test items by prototype key. List is auto-generated from your game's
-    prototype modules (e.g. world.prototypes). Builder/Admin only.
+    Spawn test items by prototype key. List is auto-generated from PROTOTYPE_MODULES.
+    Filter lists with |wprototype_tags|n (see |wspawnitem list|n footer). Builder/Admin only.
 
     Usage:
-      spawnitem list              - list all available prototype keys
-      spawnitem <prototype_key>   - spawn one into your inventory (e.g. spawnitem bolt_of_silk)
+      spawnitem list                      - list all prototype keys
+      spawnitem list <category>           - list keys that have that tag (e.g. spawnitem list combat)
+      spawnitem list <category> <subtag>  - list keys that have both tags (e.g. spawnitem list combat weapon)
+      spawnitem <prototype_key>           - spawn into your inventory (e.g. spawnitem bolt_of_silk)
 
-    New prototypes you add to world.prototypes (or other PROTOTYPE_MODULES) will
-    appear in the list automatically. For typeclass-only items use |wtypeclasses|n
-    and |wcreate <typeclass> = <key>|n.
+    For typeclass-only items use |wtypeclasses|n and |wcreate <typeclass> = <key>|n.
     """
     key = "spawnitem"
     aliases = ["debugspawn", "spawni"]
@@ -780,23 +780,51 @@ class CmdSpawnItem(Command):
     def func(self):
         caller = self.caller
         args = (self.args or "").strip()
-        if not args or args.lower() == "list":
-            self._show_list(caller)
+        if not args:
+            self._show_list(caller, tag_filters=None)
+            return
+        low = args.lower()
+        if low == "list":
+            self._show_list(caller, tag_filters=None)
+            return
+        if low.startswith("list "):
+            rest = args[5:].strip().split()
+            if not rest:
+                self._show_list(caller, tag_filters=None)
+            else:
+                self._show_list(caller, tag_filters=[x.lower() for x in rest])
             return
         self._spawn_prototype(caller, args)
 
-    def _show_list(self, caller):
+    def _show_list(self, caller, tag_filters):
         from evennia.prototypes import prototypes as protlib
         from evennia.utils.evtable import EvTable
-        protlib.load_module_prototypes()
-        # All module-based prototypes (no_db=True = don't hit DB prototypes)
+        from world.prototypes.categories import KNOWN_LIST_TAGS, LIST_CATEGORY_HELP
+
+        protlib.load_module_prototypes(override=True)
         try:
-            all_prots = protlib.search_prototype(no_db=True)
+            if tag_filters is None:
+                all_prots = protlib.search_prototype(no_db=True)
+            elif len(tag_filters) == 1:
+                all_prots = protlib.search_prototype(tags=[tag_filters[0]], no_db=True)
+            else:
+                all_prots = protlib.search_prototype(no_db=True)
+                need = set(tag_filters)
+                all_prots = [
+                    p
+                    for p in all_prots
+                    if need.issubset(set(p.get("prototype_tags") or []))
+                ]
         except Exception as e:
             caller.msg("|rCould not load prototypes: %s|n" % e)
             return
         if not all_prots:
-            caller.msg("|yNo prototypes found in PROTOTYPE_MODULES. Add dicts to world.prototypes (or your module) to see them here.|n")
+            caller.msg("|yNo prototypes match that filter.|n")
+            if tag_filters:
+                unknown = [t for t in tag_filters if t not in KNOWN_LIST_TAGS]
+                if unknown:
+                    caller.msg("|yUnknown tag(s):|n %s" % ", ".join(unknown))
+            caller.msg(LIST_CATEGORY_HELP)
             caller.msg("For typeclass items use |wtypeclasses|n and |wcreate <typeclass> = <key>|n.")
             return
         table = EvTable("|wprototype_key|n", "|wspawns as (key)|n", border="cells")
@@ -808,14 +836,24 @@ class CmdSpawnItem(Command):
             else:
                 key = str(key)
             table.add_row(pk, key)
-        caller.msg("|wSpawn:|n |wspawnitem <prototype_key>|n (e.g. |wspawnitem %s|n)" % (all_prots[0].get("prototype_key", "bolt_of_silk")))
+        if tag_filters:
+            caller.msg(
+                "|wSpawn (filtered):|n |wspawnitem <prototype_key>|n — tags: %s"
+                % ", ".join(tag_filters)
+            )
+        else:
+            caller.msg(
+                "|wSpawn:|n |wspawnitem <prototype_key>|n (e.g. |wspawnitem %s|n)"
+                % (all_prots[0].get("prototype_key", "bolt_of_silk"))
+            )
         caller.msg(table)
+        caller.msg(LIST_CATEGORY_HELP)
         caller.msg("|wTypeclass items:|n use |wtypeclasses|n and |wcreate <typeclass> = <key>|n.")
 
     def _spawn_prototype(self, caller, prototype_key):
         from evennia.prototypes import spawner
         from evennia.prototypes import prototypes as protlib
-        protlib.load_module_prototypes()
+        protlib.load_module_prototypes(override=True)
         key_lower = str(prototype_key).strip().lower()
         try:
             objs = spawner.spawn(key_lower, caller=caller)

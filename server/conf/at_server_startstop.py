@@ -34,6 +34,7 @@ def at_server_start():
     from evennia.scripts.models import ScriptDB
     from world.staff_pending import PENDING_SCRIPT_KEY, STAFF_PENDING_CHANNEL_ALIAS
     from world.rpg.language import ensure_lore_languages
+    from world.combat.tickers import cleanup_orphaned_combat_tickers
     ensure_lore_languages()
     if not ScriptDB.objects.filter(db_key="stamina_regen").first():
         create_script(
@@ -108,6 +109,7 @@ def at_server_start():
     for key, aliases, desc, locks in ooc_channels:
         if not list(search_channel(aliases[0])):
             create_channel(key=key, aliases=aliases, desc=desc, locks=locks)
+    cleanup_orphaned_combat_tickers()
 
 
 def at_server_stop():

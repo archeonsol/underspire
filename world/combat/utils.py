@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from evennia.utils.search import search_object
 
+_ACTIVE_ATTACKERS = {}
+_ACTIVE_DEFENDERS = {}
+
 
 def combat_display_name(char, viewer):
     if char is None:
@@ -54,6 +57,72 @@ def get_combat_target(caller):
 
 def set_combat_target(caller, target):
     caller.db.combat_target = target
+    _unregister_combat_pair(caller)
+    if target is not None:
+        _register_combat_pair(caller, target)
+
+
+def _register_combat_pair(attacker, defender):
+    if not attacker or not defender:
+        return
+    _ACTIVE_ATTACKERS[attacker.id] = defender.id
+    defenders = _ACTIVE_DEFENDERS.get(defender.id)
+    if defenders is None:
+        defenders = set()
+        _ACTIVE_DEFENDERS[defender.id] = defenders
+    defenders.add(attacker.id)
+
+
+def _unregister_combat_pair(attacker):
+    if not attacker:
+        return
+    attacker_id = attacker.id
+    old_defender_id = _ACTIVE_ATTACKERS.pop(attacker_id, None)
+    if old_defender_id is None:
+        return
+    defenders = _ACTIVE_DEFENDERS.get(old_defender_id)
+    if not defenders:
+        return
+    defenders.discard(attacker_id)
+    if not defenders:
+        _ACTIVE_DEFENDERS.pop(old_defender_id, None)
+
+
+def remove_engagement(attacker):
+    _unregister_combat_pair(attacker)
+
+
+def unregister_as_attacker(attacker):
+    """Drop this character from the active-attacker index only; does not clear db.combat_target."""
+    _unregister_combat_pair(attacker)
+
+
+def is_attacking_target(attacker, defender):
+    """True if attacker is registered as actively engaging defender (outgoing attack schedule)."""
+    if not attacker or not defender:
+        return False
+    return _ACTIVE_ATTACKERS.get(attacker.id) == defender.id
+
+
+def add_engagement(attacker, defender):
+    _register_combat_pair(attacker, defender)
+
+
+def get_attackers_for(character):
+    if not character:
+        return set()
+    return set(_ACTIVE_DEFENDERS.get(character.id, set()))
+
+
+def clear_engagement_index():
+    _ACTIVE_ATTACKERS.clear()
+    _ACTIVE_DEFENDERS.clear()
+
+
+def has_reciprocal_combat(attacker, defender):
+    if not attacker or not defender:
+        return False
+    return get_combat_target(attacker) == defender and get_combat_target(defender) == attacker
 
 
 def is_being_attacked(character, location=None):
@@ -62,10 +131,14 @@ def is_being_attacked(character, location=None):
     loc = location or getattr(character, "location", None)
     if not loc or not hasattr(loc, "contents_get"):
         return False
+    attackers = get_attackers_for(character)
+    if attackers:
+        return True
     for other in loc.contents_get(content_type="character"):
         if other is character:
             continue
         if getattr(other.db, "combat_target", None) == character:
+            _register_combat_pair(other, character)
             return True
     return False
 

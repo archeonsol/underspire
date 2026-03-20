@@ -183,7 +183,8 @@ def node_medical_exit(caller, raw_string, **kwargs):
 def start_medical_menu(caller, target):
     """Start the medical EvMenu for the given target."""
     from evennia.utils.evmenu import EvMenu
-        EvMenu(
+
+    EvMenu(
         caller,
         "world.medical.medical_menu",
         startnode="node_medical_main",

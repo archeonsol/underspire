@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+from evennia.utils import logger
 
 from world.medical import BODY_PARTS, apply_trauma, get_brutal_hit_flavor
 from world.skills import SKILL_STATS, WEAPON_KEY_TO_SKILL, DEFENSE_SKILL
@@ -8,6 +9,18 @@ from world.ammo import is_ranged_weapon
 from world.combat.weapon_definitions import WEAPON_DATA
 from world.combat.combat_messages import hit_message, get_result_messages, get_soak_messages
 from world.combat.damage_types import get_damage_type
+from world.combat.range_system import (
+    get_attack_range_penalty,
+    get_parry_range_penalty,
+    get_combat_range,
+    get_range_display_line,
+    RANGE_LABELS,
+)
+from world.combat.cover import (
+    get_cover_defense_bonus,
+    get_suppressed_attack_penalty,
+    apply_cover_damage_reduction,
+)
 from world.armor import (
     get_armor_protection_for_location,
     compute_armor_reduction,
@@ -19,6 +32,7 @@ try:
         is_exhausted,
         spend_stamina,
         can_fight,
+        get_stamina_modifier,
         STAMINA_COST_ATTACK,
         STAMINA_COST_DEFEND,
     )
@@ -26,6 +40,7 @@ except ImportError:  # keep combat usable even if stamina module is missing
     is_exhausted = lambda _: False
     spend_stamina = lambda _c, _a: True
     can_fight = lambda _: True
+    get_stamina_modifier = lambda _: 0
     STAMINA_COST_ATTACK = STAMINA_COST_DEFEND = 0
 
 try:
@@ -34,7 +49,8 @@ except ImportError:
     SKILL_LEVEL_TIER_1 = 60
     SKILL_LEVEL_FOR_C = 123
 
-from .utils import combat_display_name, resolve_combat_objects
+from .utils import combat_display_name, resolve_combat_objects, get_combat_target
+from .instance import get_instance_for, try_auto_switch_target
 
 ROLL_MIN, ROLL_MAX = 1, 100
 
@@ -74,6 +90,9 @@ def _weapon_attack_table(weapon_key, weapon_obj, skill_level):
             entry, tier = find_weapon_template(weapon_key, template_name)
             # Common legacy case: weapon was renamed to the template name but weapon_template wasn't set right.
             if not entry:
+                logger.log_warn(
+                    f"combat.weapon table miss key={weapon_key} template={template_name}; trying object key fallback."
+                )
                 entry2, tier2 = find_weapon_template(weapon_key, getattr(weapon_obj, "key", None) or "")
                 if entry2:
                     entry, tier = entry2, tier2
@@ -87,6 +106,9 @@ def _weapon_attack_table(weapon_key, weapon_obj, skill_level):
                 tier_int = int(tier) if tier is not None else 1
             except Exception:
                 tier_int = 1
+            logger.log_warn(
+                f"combat.weapon template unresolved key={weapon_key}; falling back to tier={tier_int}."
+            )
             entry = get_weapon_tier(weapon_key, tier_int)
 
     if not isinstance(tier, int) or tier < 1:
@@ -94,6 +116,7 @@ def _weapon_attack_table(weapon_key, weapon_obj, skill_level):
     tier = max(1, min(10, tier))
 
     if not entry:
+        logger.log_warn(f"combat.weapon tier miss key={weapon_key} tier={tier}; using WEAPON_DATA fallback.")
         entry = get_weapon_tier(weapon_key, tier)
     if not entry:
         # If weapon_tiers is importable but contains no data, keep combat functional.
@@ -133,18 +156,12 @@ def _body_part_and_multiplier(attack_value, defender=None):
             if not available:
                 available = BODY_PARTS  # shouldn't happen, but safe fallback
     normalized = (max(ROLL_MIN, min(ROLL_MAX, attack_value)) - ROLL_MIN) / (ROLL_MAX - ROLL_MIN)
-    base_index = random.randrange(len(available))
-    bias_steps = 0
-    if normalized > 0.25:
-        bias_steps += 1
-    if normalized > 0.55:
-        bias_steps += 1
-    if normalized > 0.85:
-        bias_steps += 1
-    index = base_index
-    if bias_steps > 0 and random.random() < 0.6:
-        step = random.randint(1, bias_steps)
-        index = min(len(available) - 1, base_index + step)
+    n = len(available)
+    weights = []
+    for idx in range(n):
+        rank = idx / max(1, n - 1)
+        weights.append(1.0 + normalized * 3.0 * rank)
+    index = random.choices(range(n), weights=weights, k=1)[0]
     multiplier = 0.5 + normalized
     return available[index], multiplier
 
@@ -171,19 +188,25 @@ def _defender_parry_skill(defender):
 
 
 def resolve_attack(attacker, defender, weapon_key="fists"):
-    atk_stance = attacker.db.combat_stance or "balanced"
-    def_stance = defender.db.combat_stance or "balanced"
+    atk_stance = (attacker.db.combat_stance or "neutral").lower()
+    def_stance = (defender.db.combat_stance or "neutral").lower()
+    if atk_stance == "balanced":
+        atk_stance = "neutral"
+    if def_stance == "balanced":
+        def_stance = "neutral"
 
     atk_stance_mod = 0
     def_stance_mod = 0
-    if atk_stance == "aggressive":
-        atk_stance_mod = 10
-    elif atk_stance == "defensive":
-        atk_stance_mod = -12
-    if def_stance == "aggressive":
-        def_stance_mod = -10
-    elif def_stance == "defensive":
-        def_stance_mod = 12
+    stance_mods = {
+        "allin": 16,
+        "aggressive": 8,
+        "neutral": 0,
+        "defensive": -8,
+        "turtle": -14,
+    }
+    atk_stance_mod = int(stance_mods.get(atk_stance, 0))
+    # Defender modifier is mirrored (attack-forward stances weaken defense).
+    def_stance_mod = int(-stance_mods.get(def_stance, 0))
 
     atk_trauma_mod = 0
     def_trauma_mod = 0
@@ -204,49 +227,24 @@ def resolve_attack(attacker, defender, weapon_key="fists"):
 
         logger.log_trace("combat.resolve_attack: get_trauma_combat_modifiers failed: %s" % e)
 
+    # Low stamina applies a soft combat penalty instead of hard lockout.
+    atk_mod += int(get_stamina_modifier(attacker) or 0)
+    def_mod += int(get_stamina_modifier(defender) or 0)
+    atk_mod += int(get_attack_range_penalty(attacker, defender, weapon_key) or 0)
+    atk_mod += int(get_suppressed_attack_penalty(attacker) or 0)
+    current_range = get_combat_range(attacker, defender)
+    damage_type = get_damage_type(weapon_key, None)
+    def_mod += int(get_cover_defense_bonus(defender, weapon_key, damage_type, current_range) or 0)
+
     attack_skill = WEAPON_KEY_TO_SKILL.get(weapon_key, "unarmed")
     attack_stats = SKILL_STATS.get(attack_skill, ["strength", "agility"])
-    try:
-        from world.combat.rolls import (
-            load_cfg,
-            combat_rating,
-            opposed_probability,
-            quality_value,
-            combat_debug_snapshot,
-        )
-    except Exception:
-        # Fallback: old behavior if rolls module can't be imported for any reason.
-        success_level, attack_value = attacker.roll_check(attack_stats, attack_skill, modifier=atk_mod)
-        if success_level == "Failure":
-            return "MISS", attack_value
-        defense_stats = SKILL_STATS.get(DEFENSE_SKILL, ["agility", "perception"])
-        _def_level, defense_value = defender.roll_check(defense_stats, DEFENSE_SKILL, modifier=def_mod)
-
-        parry_value = None
-        if weapon_key in MELEE_WEAPON_KEYS:
-            parry_skill = _defender_parry_skill(defender)
-            if parry_skill:
-                parry_stats = SKILL_STATS.get(parry_skill, ["agility", "strength"])
-                _parry_level, parry_value = defender.roll_check(
-                    parry_stats,
-                    parry_skill,
-                    modifier=def_mod - PARRY_PENALTY,
-                )
-
-        # Single defense resolution: pick the stronger defense and apply it once.
-        # (Avoids stacking "parry then dodge" into two separate negation chances.)
-        if parry_value is not None and parry_value >= defense_value:
-            if parry_value > attack_value:
-                return "PARRIED", attack_value
-        else:
-            if defense_value >= attack_value:
-                return "DODGED", attack_value
-        if success_level == "Critical Success":
-            norm = (max(ROLL_MIN, min(ROLL_MAX, attack_value)) - ROLL_MIN) / (ROLL_MAX - ROLL_MIN)
-            crit_chance = 0.04 + 0.11 * norm
-            if random.random() < crit_chance:
-                return "CRITICAL", attack_value
-        return "HIT", attack_value
+    from world.combat.rolls import (
+        load_cfg,
+        combat_rating,
+        opposed_probability,
+        quality_value,
+        combat_debug_snapshot,
+    )
 
     cfg = load_cfg()
 
@@ -264,14 +262,16 @@ def resolve_attack(attacker, defender, weapon_key="fists"):
     if weapon_key in MELEE_WEAPON_KEYS:
         parry_skill = _defender_parry_skill(defender)
         if parry_skill:
-            parry_stats = SKILL_STATS.get(parry_skill, ["agility", "strength"])
-            parry_rating = combat_rating(
-                defender, parry_stats, parry_skill, modifier=(def_mod - PARRY_PENALTY), cfg=cfg
-            )
-            if parry_rating >= best_rating:
-                best_kind = "parry"
-                best_rating = parry_rating
-                best_bias = -cfg.parry_bias
+            parry_range_pen = get_parry_range_penalty(defender, attacker)
+            if parry_range_pen is not None:
+                parry_stats = SKILL_STATS.get(parry_skill, ["agility", "strength"])
+                parry_rating = combat_rating(
+                    defender, parry_stats, parry_skill, modifier=(def_mod - PARRY_PENALTY + int(parry_range_pen or 0)), cfg=cfg
+                )
+                if parry_rating >= best_rating:
+                    best_kind = "parry"
+                    best_rating = parry_rating
+                    best_bias = -cfg.parry_bias
 
     p_defend = 1.0 - opposed_probability(atk_rating, best_rating, cfg=cfg, bias=best_bias)
     if random.random() < p_defend:
@@ -307,8 +307,8 @@ def resolve_attack(attacker, defender, weapon_key="fists"):
     atk_quality = quality_value(atk_rating, best_rating, cfg=cfg)
     # Crit chance scales with quality (1..100) to preserve downstream intent.
     norm = (max(ROLL_MIN, min(ROLL_MAX, atk_quality)) - ROLL_MIN) / (ROLL_MAX - ROLL_MIN)
-    crit_chance = 0.04 + 0.11 * norm
-    if random.random() < crit_chance and atk_quality >= 80:
+    crit_chance = 0.02 + 0.08 * norm
+    if random.random() < crit_chance:
         outcome = "CRITICAL"
     else:
         outcome = "HIT"
@@ -431,6 +431,10 @@ def can_attack(attacker, defender, weapon_key, wielded_obj):
                 atk_v = combat_display_name(attacker, viewer)
                 viewer.msg(f"{atk_v} struggles against a hold and can't strike back.")
         return False
+    if getattr(attacker.db, "grappling", None):
+        held = getattr(attacker.db, "grappling", None)
+        attacker.msg(f"You're busy maintaining a grapple on {combat_display_name(held, attacker)} and cannot make normal attacks.")
+        return False
 
     if not can_fight(attacker):
         attacker.msg("You're too exhausted to strike.")
@@ -459,6 +463,91 @@ def can_attack(attacker, defender, weapon_key, wielded_obj):
     return True
 
 
+def _preflight_checks(attacker, defender):
+    if not attacker or not defender:
+        return False
+    if getattr(attacker.db, "combat_ended", False) or getattr(defender.db, "combat_ended", False):
+        return False
+    if get_combat_target(attacker) != defender:
+        return False
+    if getattr(attacker.db, "current_hp", None) is not None and attacker.db.current_hp <= 0:
+        return False
+    if getattr(defender.db, "current_hp", None) is not None and defender.db.current_hp <= 0:
+        return False
+    return True
+
+
+def _emit_result_messages(attacker, defender, result, weapon_key, wielded_obj, move_name):
+    templates = get_result_messages(result, weapon_key, wielded_obj, move_name=move_name)
+    def_name = combat_display_name(defender, attacker)
+    atk_name = combat_display_name(attacker, defender)
+    defaults = {
+        "MISS": (
+            "You attack {defender} but |rmiss.|n",
+            "{attacker} attacks, but you slip the blow. |rMiss.|n",
+            "{attacker} attacks {defender} but |rmisses.|n",
+        ),
+        "PARRIED": (
+            "Your strike is |cturned aside|n by {defender}'s guard.",
+            "You meet {attacker}'s strike and |cturn it aside.|n",
+            "{attacker} attacks {defender}, but {defender} |cparries the blow.|n",
+        ),
+        "DODGED": (
+            "You swing for {defender}, but they're already moving. |yDodge.|n",
+            "You move as {attacker} strikes, and the blow |ymisses.|n",
+            "{attacker} attacks {defender}, but {defender} |ydodges aside.|n",
+        ),
+    }
+    atk_default, def_default, room_default = defaults[result]
+    attacker.msg((templates.get("attacker") or atk_default).format(attacker=atk_name, defender=def_name))
+    defender.msg((templates.get("defender") or def_default).format(attacker=atk_name, defender=def_name))
+    loc = getattr(attacker, "location", None) or getattr(defender, "location", None)
+    if not loc or not hasattr(loc, "contents_get"):
+        return
+    room_tpl = templates.get("room") or room_default
+    for viewer in loc.contents_get(content_type="character"):
+        if viewer in (attacker, defender):
+            continue
+        atk_v = combat_display_name(attacker, viewer)
+        def_v = combat_display_name(defender, viewer)
+        viewer.msg(room_tpl.format(attacker=atk_v, defender=def_v))
+
+
+def _emit_soak(attacker, defender, effective_defender, body_part, weapon_key, wielded_obj, move_name, hit_shield):
+    soak_templates = get_soak_messages(weapon_key, wielded_obj, move_name=move_name, shielded=bool(hit_shield))
+    names = {
+        "atk_for_def": combat_display_name(attacker, defender),
+        "def_for_atk": combat_display_name(defender, attacker),
+        "eff_for_atk": combat_display_name(effective_defender, attacker),
+        "eff_for_def": combat_display_name(effective_defender, defender),
+        "atk_for_eff": combat_display_name(attacker, effective_defender),
+        "def_for_eff": combat_display_name(defender, effective_defender),
+        "eff_for_eff": combat_display_name(effective_defender, effective_defender),
+    }
+    if hit_shield:
+        attacker.msg((soak_templates.get("attacker") or "|cYour blow lands on {effective_defender}'s {loc} — {defender} pulled them in the way — but their armor absorbs it.|n").format(attacker=names["atk_for_def"], defender=names["def_for_atk"], effective_defender=names["eff_for_atk"], loc=body_part))
+        defender.msg((soak_templates.get("defender") or "|cYou pull {effective_defender} in the way. {attacker}'s strike hits them but armor takes it.|n").format(attacker=names["atk_for_def"], defender=names["def_for_atk"], effective_defender=names["eff_for_def"], loc=body_part))
+        effective_defender.msg((soak_templates.get("effective_defender") or "|c{defender} uses you as a shield. {attacker}'s blow hits your {loc}; your armor takes it.|n").format(attacker=names["atk_for_eff"], defender=names["def_for_eff"], effective_defender=names["eff_for_eff"], loc=body_part))
+    else:
+        attacker.msg((soak_templates.get("attacker") or "|cYour blow lands on {defender}'s {loc}, but their armor absorbs it.|n").format(attacker=names["atk_for_def"], defender=names["def_for_atk"], effective_defender=names["def_for_atk"], loc=body_part))
+        defender.msg((soak_templates.get("defender") or "|c{attacker}'s strike hits your {loc}; your armor takes it.|n").format(attacker=names["atk_for_def"], defender=names["def_for_atk"], effective_defender=names["def_for_atk"], loc=body_part))
+    loc = getattr(attacker, "location", None) or getattr(defender, "location", None)
+    if not loc or not hasattr(loc, "contents_get"):
+        return
+    room_tpl = soak_templates.get("room") or ("{defender} pulls {effective_defender} into the line of fire. {attacker}'s blow hits {effective_defender}'s {loc}, but their armor |csoaks the impact.|n" if hit_shield else "{attacker}'s blow lands on {defender}'s {loc}, but their armor |cabsorbs the hit.|n")
+    for viewer in loc.contents_get(content_type="character"):
+        if viewer in (attacker, defender) or (hit_shield and viewer == effective_defender):
+            continue
+        viewer.msg(
+            room_tpl.format(
+                attacker=combat_display_name(attacker, viewer),
+                defender=combat_display_name(defender, viewer),
+                effective_defender=combat_display_name(effective_defender, viewer),
+                loc=body_part,
+            )
+        )
+
+
 def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs):
     attacker, defender = resolve_combat_objects(attacker, defender, kwargs)
     if attacker and defender and (kwargs.get("attacker_id") is not None or kwargs.get("defender_id") is not None):
@@ -477,11 +566,21 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
         _ = attacker.hp
     if hasattr(defender, "hp"):
         _ = defender.hp
-    if getattr(attacker.db, "combat_ended", False) or getattr(defender.db, "combat_ended", False):
-        _remove_both_combat_tickers(attacker, defender)
-        return
+    if not _preflight_checks(attacker, defender):
+        alt = try_auto_switch_target(attacker)
+        if alt:
+            attacker.db.combat_target = alt
+            defender = alt
+        else:
+            _remove_both_combat_tickers(attacker, defender)
+            return
+    inst = get_instance_for(attacker)
+    if inst:
+        inst.next_round()
     if getattr(attacker.db, "combat_skip_next_turn", False):
         attacker.attributes.remove("combat_skip_next_turn")
+        if getattr(attacker.db, "combat_flee_attempted", False):
+            attacker.attributes.remove("combat_flee_attempted")
         attacker.msg("|yYou're too busy adjusting your grip to strike this moment.|n")
         defender.msg("|y%s is distracted and doesn't strike.|n" % combat_display_name(attacker, defender))
         loc = getattr(attacker, "location", None) or getattr(defender, "location", None)
@@ -492,18 +591,20 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
                 atk_v = combat_display_name(attacker, viewer)
                 viewer.msg(f"{atk_v} adjusts their grip and doesn't strike this moment.")
         return
-    if getattr(attacker.db, "current_hp", None) is not None and attacker.db.current_hp <= 0:
-        _remove_both_combat_tickers(attacker, defender)
-        return
-    if getattr(defender.db, "current_hp", None) is not None and defender.db.current_hp <= 0:
-        _remove_both_combat_tickers(attacker, defender)
-        return
-
     wielded_obj = attacker.db.wielded_obj
     if wielded_obj and wielded_obj.location == attacker:
         weapon_key = attacker.db.wielded
     else:
         weapon_key = "fists"
+    range_penalty = get_attack_range_penalty(attacker, defender, weapon_key)
+    if range_penalty is None:
+        current_range = get_combat_range(attacker, defender)
+        range_label = RANGE_LABELS.get(current_range, "this distance")
+        attacker.msg(
+            f"|rYou can't use that weapon at {range_label} range. Use |wadvance|n or |wretreat|n to reposition.|n"
+        )
+        attacker.msg(get_range_display_line(attacker, defender))
+        return
 
     if not can_attack(attacker, defender, weapon_key, wielded_obj):
         return
@@ -541,61 +642,9 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
             result, attack_value = resolved
 
     move_name = attack_move["name"]
-    if result == "MISS":
-        def_name = combat_display_name(defender, attacker)
-        atk_name = combat_display_name(attacker, defender)
-        templates = get_result_messages("MISS", weapon_key, wielded_obj, move_name=move_name)
-        atk_line = templates.get("attacker") or "You attack {defender} but |rmiss.|n"
-        def_line = templates.get("defender") or "{attacker} attacks, but you slip the blow. |rMiss.|n"
-        attacker.msg(atk_line.format(attacker=atk_name, defender=def_name))
-        defender.msg(def_line.format(attacker=atk_name, defender=def_name))
-        loc = getattr(attacker, "location", None) or getattr(defender, "location", None)
-        if loc and hasattr(loc, "contents_get"):
-            room_tpl = templates.get("room") or "{attacker} attacks {defender} but |rmisses.|n"
-            for viewer in loc.contents_get(content_type="character"):
-                if viewer in (attacker, defender):
-                    continue
-                atk_v = combat_display_name(attacker, viewer)
-                def_v = combat_display_name(defender, viewer)
-                viewer.msg(room_tpl.format(attacker=atk_v, defender=def_v))
-    elif result == "PARRIED":
-        def_name = combat_display_name(defender, attacker)
-        atk_name = combat_display_name(attacker, defender)
-        templates = get_result_messages("PARRIED", weapon_key, wielded_obj, move_name=move_name)
-        atk_line = templates.get("attacker") or "Your strike is |cturned aside|n by {defender}'s guard."
-        def_line = templates.get("defender") or "You meet {attacker}'s strike and |cturn it aside.|n"
-        attacker.msg(atk_line.format(attacker=atk_name, defender=def_name))
-        defender.msg(def_line.format(attacker=atk_name, defender=def_name))
-        loc = getattr(attacker, "location", None) or getattr(defender, "location", None)
-        if loc and hasattr(loc, "contents_get"):
-            room_tpl = templates.get("room") or (
-                "{attacker} attacks {defender}, but {defender} |cparries the blow.|n"
-            )
-            for viewer in loc.contents_get(content_type="character"):
-                if viewer in (attacker, defender):
-                    continue
-                atk_v = combat_display_name(attacker, viewer)
-                def_v = combat_display_name(defender, viewer)
-                viewer.msg(room_tpl.format(attacker=atk_v, defender=def_v))
-    elif result == "DODGED":
-        def_name = combat_display_name(defender, attacker)
-        atk_name = combat_display_name(attacker, defender)
-        templates = get_result_messages("DODGED", weapon_key, wielded_obj, move_name=move_name)
-        atk_line = templates.get("attacker") or "You swing for {defender}, but they're already moving. |yDodge.|n"
-        def_line = templates.get("defender") or "You move as {attacker} strikes, and the blow |ymisses.|n"
-        attacker.msg(atk_line.format(attacker=atk_name, defender=def_name))
-        defender.msg(def_line.format(attacker=atk_name, defender=def_name))
-        loc = getattr(attacker, "location", None) or getattr(defender, "location", None)
-        if loc and hasattr(loc, "contents_get"):
-            room_tpl = templates.get("room") or (
-                "{attacker} attacks {defender}, but {defender} |ydodges aside.|n"
-            )
-            for viewer in loc.contents_get(content_type="character"):
-                if viewer in (attacker, defender):
-                    continue
-                atk_v = combat_display_name(attacker, viewer)
-                def_v = combat_display_name(defender, viewer)
-                viewer.msg(room_tpl.format(attacker=atk_v, defender=def_v))
+    if result in ("MISS", "PARRIED", "DODGED"):
+        _emit_result_messages(attacker, defender, result, weapon_key, wielded_obj, move_name)
+        attacker.msg(get_range_display_line(attacker, defender))
     elif result in ("HIT", "CRITICAL"):
         if (defender.db.current_hp or 0) <= 0:
             _remove_both_combat_tickers(attacker, defender)
@@ -604,7 +653,7 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
         body_part, multiplier = _body_part_and_multiplier(attack_value, defender=effective_defender)
         base = attack_move["damage"]
         if result == "CRITICAL":
-            damage = int(base * 1.5 * multiplier)
+            damage = max(int(base * (multiplier + 0.5)), int(base * 1.1))
         else:
             damage = int(base * multiplier)
         damage = max(1, damage)
@@ -614,88 +663,12 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
         total_prot, armor_pieces = get_armor_protection_for_location(effective_defender, body_part, damage_type)
         reduction, absorbed_fully = compute_armor_reduction(total_prot, damage)
         damage = max(0, damage - reduction)
+        damage = apply_cover_damage_reduction(attacker, effective_defender, damage, damage_type)
         if armor_pieces and reduction > 0:
             degrade_armor(armor_pieces, damage_type, reduction)
 
         if absorbed_fully and damage <= 0:
-            soak_templates = get_soak_messages(weapon_key, wielded_obj, move_name=move_name, shielded=bool(hit_shield))
-            if hit_shield:
-                eff_for_atk = combat_display_name(effective_defender, attacker)
-                def_for_atk = combat_display_name(defender, attacker)
-                eff_for_def = combat_display_name(effective_defender, defender)
-                atk_for_def = combat_display_name(attacker, defender)
-                eff_for_eff = combat_display_name(effective_defender, effective_defender)
-                def_for_eff = combat_display_name(defender, effective_defender)
-                atk_for_eff = combat_display_name(attacker, effective_defender)
-                attacker.msg(
-                    (soak_templates.get("attacker") or "|cYour blow lands on {effective_defender}'s {loc} — {defender} pulled them in the way — but their armor absorbs it.|n").format(
-                        attacker=atk_for_def,
-                        defender=def_for_atk,
-                        effective_defender=eff_for_atk,
-                        loc=body_part,
-                    )
-                )
-                defender.msg(
-                    (soak_templates.get("defender") or "|cYou pull {effective_defender} in the way. {attacker}'s strike hits them but armor takes it.|n").format(
-                        attacker=atk_for_def,
-                        defender=def_for_atk,
-                        effective_defender=eff_for_def,
-                        loc=body_part,
-                    )
-                )
-                effective_defender.msg(
-                    (soak_templates.get("effective_defender") or "|c{defender} uses you as a shield. {attacker}'s blow hits your {loc}; your armor takes it.|n").format(
-                        attacker=atk_for_eff,
-                        defender=def_for_eff,
-                        effective_defender=eff_for_eff,
-                        loc=body_part,
-                    )
-                )
-                loc = getattr(attacker, "location", None) or getattr(defender, "location", None)
-                if loc and hasattr(loc, "contents_get"):
-                    room_tpl = soak_templates.get("room") or "{defender} pulls {effective_defender} into the line of fire. {attacker}'s blow hits {effective_defender}'s {loc}, but their armor |csoaks the impact.|n"
-                    for viewer in loc.contents_get(content_type="character"):
-                        if viewer in (attacker, defender, effective_defender):
-                            continue
-                        atk_v = combat_display_name(attacker, viewer)
-                        def_v = combat_display_name(defender, viewer)
-                        eff_v = combat_display_name(effective_defender, viewer)
-                        viewer.msg(
-                            room_tpl.format(
-                                attacker=atk_v,
-                                defender=def_v,
-                                effective_defender=eff_v,
-                                loc=body_part,
-                            )
-                        )
-            else:
-                def_for_atk = combat_display_name(defender, attacker)
-                atk_for_def = combat_display_name(attacker, defender)
-                attacker.msg(
-                    (soak_templates.get("attacker") or "|cYour blow lands on {defender}'s {loc}, but their armor absorbs it.|n").format(
-                        attacker=atk_for_def,
-                        defender=def_for_atk,
-                        effective_defender=def_for_atk,
-                        loc=body_part,
-                    )
-                )
-                defender.msg(
-                    (soak_templates.get("defender") or "|c{attacker}'s strike hits your {loc}; your armor takes it.|n").format(
-                        attacker=atk_for_def,
-                        defender=def_for_atk,
-                        effective_defender=def_for_atk,
-                        loc=body_part,
-                    )
-                )
-                loc = getattr(attacker, "location", None) or getattr(defender, "location", None)
-                if loc and hasattr(loc, "contents_get"):
-                    room_tpl = soak_templates.get("room") or "{attacker}'s blow lands on {defender}'s {loc}, but their armor |cabsorbs the hit.|n"
-                    for viewer in loc.contents_get(content_type="character"):
-                        if viewer in (attacker, defender):
-                            continue
-                        atk_v = combat_display_name(attacker, viewer)
-                        def_v = combat_display_name(defender, viewer)
-                        viewer.msg(room_tpl.format(attacker=atk_v, defender=def_v, loc=body_part))
+            _emit_soak(attacker, defender, effective_defender, body_part, weapon_key, wielded_obj, move_name, hit_shield)
         else:
             trauma_result = apply_trauma(
                 effective_defender,

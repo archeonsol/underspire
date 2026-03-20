@@ -11,6 +11,26 @@ from evennia.commands.default.account import CmdIC, CmdOOC
 from evennia.utils import logger, search, utils
 from commands.media_cmds import _get_object_by_id
 
+MAX_MULTI_PUPPETS = 9
+
+
+def _clear_relay_cache(char):
+    """Clear per-character non-persistent relay account cache."""
+    ndb = getattr(char, "ndb", None)
+    if ndb and hasattr(ndb, "_relay_account_cache"):
+        try:
+            delattr(ndb, "_relay_account_cache")
+        except Exception:
+            pass
+
+
+def _clear_attr(obj, key):
+    """Safely remove an Evennia db attribute."""
+    try:
+        obj.attributes.remove(key)
+    except Exception:
+        pass
+
 
 def _clear_multi_puppet_links_for_account(account):
     """Remove _multi_puppet_account_id and _multi_puppet_slot from all characters in account's multi_puppets."""
@@ -18,16 +38,9 @@ def _clear_multi_puppet_links_for_account(account):
     for oid in ids:
         obj = _get_object_by_id(oid)
         if obj and hasattr(obj, "db"):
-            if hasattr(obj.db, "_multi_puppet_account_id"):
-                try:
-                    del obj.db["_multi_puppet_account_id"]
-                except Exception as e:
-                    logger.log_trace("multipuppet_cmds._clear_multi_puppet_links_for_account _multi_puppet_account_id: %s" % e)
-            if hasattr(obj.db, "_multi_puppet_slot"):
-                try:
-                    del obj.db["_multi_puppet_slot"]
-                except Exception as e:
-                    logger.log_trace("multipuppet_cmds._clear_multi_puppet_links_for_account _multi_puppet_slot: %s" % e)
+            _clear_attr(obj, "_multi_puppet_account_id")
+            _clear_attr(obj, "_multi_puppet_slot")
+            _clear_relay_cache(obj)
 
 
 def _set_multi_puppet_link(char, account_id, slot_1based):
@@ -35,6 +48,7 @@ def _set_multi_puppet_link(char, account_id, slot_1based):
     if char and hasattr(char, "db"):
         char.db._multi_puppet_account_id = account_id
         char.db._multi_puppet_slot = slot_1based
+        _clear_relay_cache(char)
 
 
 def _multi_puppet_account(caller):
@@ -44,9 +58,22 @@ def _multi_puppet_account(caller):
     return caller
 
 
-def _multi_puppet_list(account):
-    """Return list of puppet dbrefs; ensure current session.puppet is in the list if we're puppeting."""
+def _prune_dead_puppets(account):
+    """Remove IDs from multi_puppets that no longer resolve to valid objects."""
     ids = list(getattr(account.db, "multi_puppets", None) or [])
+    valid = []
+    for oid in ids:
+        obj = _get_object_by_id(oid)
+        if obj and hasattr(obj, "db"):
+            valid.append(oid)
+    if len(valid) != len(ids):
+        account.db.multi_puppets = valid
+    return valid
+
+
+def _multi_puppet_list(account):
+    """Return list of puppet dbrefs; keep list clean and ensure current puppet is represented."""
+    ids = _prune_dead_puppets(account)
     session = getattr(account, "sessions", None)
     if session and hasattr(session, "get"):
         sess_list = session.get()
@@ -59,6 +86,23 @@ def _multi_puppet_list(account):
                 elif puppet.id not in ids:
                     ids = list(ids) + [puppet.id]
                 account.db.multi_puppets = ids
+    return ids
+
+
+def _ensure_current_puppet_in_list(account, session=None):
+    """Ensure current session puppet is present as p1 if list is empty."""
+    if not session:
+        session_handler = getattr(account, "sessions", None)
+        if session_handler and hasattr(session_handler, "get"):
+            sess_list = session_handler.get() or []
+            session = sess_list[0] if sess_list else None
+    ids = _multi_puppet_list(account)
+    puppet = getattr(session, "puppet", None) if session else None
+    if puppet and getattr(puppet, "id", None) not in ids:
+        if not ids:
+            ids = [puppet.id]
+            account.db.multi_puppets = ids
+            _set_multi_puppet_link(puppet, account.id, 1)
     return ids
 
 
@@ -195,20 +239,33 @@ class StaffOnlyPuppet(CmdIC):
             )
             return
 
-        # --- Reset multi-puppet links so @puppet is always 'p1' ---
-        for oid in old_ids:
-            obj = _get_object_by_id(oid)
-            if obj and hasattr(obj, "db"):
-                for key in ("_multi_puppet_account_id", "_multi_puppet_slot"):
-                    if hasattr(obj.db, key):
-                        try:
-                            del obj.db[key]
-                        except Exception:
-                            pass
-
-        if getattr(self.session, "puppet", None):
-            account.db.multi_puppets = [self.session.puppet.id]
-            _set_multi_puppet_link(self.session.puppet, account.id, 1)
+        # --- Multi-puppet: new session puppet is always p1; keep former p2+ (do not wipe the set). ---
+        puppet = getattr(self.session, "puppet", None)
+        if puppet and getattr(puppet, "id", None) is not None:
+            new_id = puppet.id
+            new_list = [new_id]
+            seen = {new_id}
+            for oid in old_ids:
+                if oid in seen:
+                    continue
+                obj = _get_object_by_id(oid)
+                if obj and hasattr(obj, "db"):
+                    new_list.append(oid)
+                    seen.add(oid)
+            new_list = new_list[:MAX_MULTI_PUPPETS]
+            new_set = set(new_list)
+            for oid in old_ids:
+                if oid not in new_set:
+                    obj = _get_object_by_id(oid)
+                    if obj and hasattr(obj, "db"):
+                        _clear_attr(obj, "_multi_puppet_account_id")
+                        _clear_attr(obj, "_multi_puppet_slot")
+                        _clear_relay_cache(obj)
+            account.db.multi_puppets = new_list
+            for i, oid in enumerate(new_list):
+                obj = _get_object_by_id(oid)
+                if obj:
+                    _set_multi_puppet_link(obj, account.id, i + 1)
 
 
 class StaffOnlyUnpuppet(CmdOOC):
@@ -257,12 +314,9 @@ class StaffOnlyUnpuppet(CmdOOC):
                 obj = _get_object_by_id(oid)
                 if obj and hasattr(obj, "db"):
                     removed_names.append(obj.get_display_name(self.caller))
-                    for key in ("_multi_puppet_account_id", "_multi_puppet_slot"):
-                        if hasattr(obj.db, key):
-                            try:
-                                delattr(obj.db, key) if False else obj.db.__delitem__(key)
-                            except Exception:
-                                pass
+                    _clear_attr(obj, "_multi_puppet_account_id")
+                    _clear_attr(obj, "_multi_puppet_slot")
+                    _clear_relay_cache(obj)
             if hasattr(self.account, "db"):
                 self.account.db.multi_puppets = [keep_id]
             # Ensure p1 still has correct link.
@@ -311,12 +365,9 @@ class StaffOnlyUnpuppet(CmdOOC):
                 obj = _get_object_by_id(oid)
                 if obj and hasattr(obj, "db"):
                     removed_names.append(obj.get_display_name(self.caller))
-                    for key in ("_multi_puppet_account_id", "_multi_puppet_slot"):
-                        if hasattr(obj.db, key):
-                            try:
-                                del obj.db[key]
-                            except Exception:
-                                pass
+                    _clear_attr(obj, "_multi_puppet_account_id")
+                    _clear_attr(obj, "_multi_puppet_slot")
+                    _clear_relay_cache(obj)
                 ids.pop(idx)
 
         # Re-number remaining slots and persist.
@@ -405,12 +456,12 @@ class CmdAddPuppet(BaseCommand):
             self.msg("That's not a character you can puppet.")
             return
         # Build multi_puppets: current puppet is always p1; newly added go to p2, p3, ... Do NOT call puppet_object.
-        ids = list(getattr(account.db, "multi_puppets", None) or [])
-        if not ids and getattr(session, "puppet", None):
-            ids = [session.puppet.id]
-            _set_multi_puppet_link(session.puppet, account.id, 1)
+        ids = _ensure_current_puppet_in_list(account, session=session)
         if char.id in ids:
             self.msg("You already have that character in your puppet set.")
+            return
+        if len(ids) >= MAX_MULTI_PUPPETS:
+            self.msg(f"You can only have {MAX_MULTI_PUPPETS} puppets in your set.")
             return
         # Append: p1 = current (first in list), p2 = first added, p3 = second added, etc.
         ids.append(char.id)
@@ -438,7 +489,7 @@ class CmdPuppetList(BaseCommand):
             self.msg("No account.")
             return
         session = getattr(self, "session", None)
-        ids = _multi_puppet_list(account)
+        ids = _ensure_current_puppet_in_list(account, session=session)
         if not ids:
             self.msg("You have no puppets in your set. Use |w@puppet|n to puppet a character, then |w@addpuppet <name>|n to add more.")
             return
@@ -447,9 +498,10 @@ class CmdPuppetList(BaseCommand):
         for i, oid in enumerate(ids):
             obj = _get_object_by_id(oid)
             name = obj.get_display_name(self.caller) if obj else "#%s (gone)" % oid
+            loc_name = obj.location.name if obj and obj.location else "nowhere"
             slot = i + 1
             mark = " |w(you)|n" if obj and obj == current else ""
-            lines.append("  p%s: %s%s" % (slot, name, mark))
+            lines.append("  p%s: %s (%s)%s" % (slot, name, loc_name, mark))
         self.msg("|wYour puppet set:|n\n%s" % "\n".join(lines))
 
 
@@ -460,7 +512,7 @@ class CmdPuppetSlot(BaseCommand):
     Example: p1 say Hello world   p2 go north
     """
     key = "p1"
-    aliases = ["p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9"]
+    aliases = [f"p{i}" for i in range(2, MAX_MULTI_PUPPETS + 1)]
     locks = "cmd:perm(Builder)"
     help_category = "Admin"
 
@@ -488,7 +540,7 @@ class CmdPuppetSlot(BaseCommand):
         if not sub_cmd:
             self.msg("Usage: %s <command>   (e.g. %s say Hello)" % (self.cmdstring, self.cmdstring))
             return
-        # Temporarily set session.puppet to this character so the command runs as them (cmdset merge uses session.puppet)
+
         old_puppet = getattr(session, "puppet", None)
         session.puppet = char
         try:

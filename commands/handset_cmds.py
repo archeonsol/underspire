@@ -6,10 +6,17 @@ import re
 import shlex
 
 from commands.base_cmds import Command
+import world.matrix_groups as mg
+from world.handset_call_utils import (
+    clear_call as _clear_call,
+    get_call_peer as _get_peer,
+    schedule_call_ring_timers,
+)
 
 
 def _ts():
     return datetime.now().strftime("%b %d %H:%M")
+
 
 def _clock():
     return datetime.now().strftime("%H:%M")
@@ -30,7 +37,6 @@ def _lookup_handset_by_matrix_id(matrix_id: str):
     obj = lookup_matrix_id(matrix_id)
     if not obj:
         return None
-    # Avoid circular import; rely on device_type marker.
     if getattr(getattr(obj, "db", None), "device_type", None) != "handset":
         return None
     return obj
@@ -55,34 +61,32 @@ def _ring_room_messages(handset):
     holder.msg("Your handset rings.")
     if room:
         hname = holder.get_display_name(holder) if hasattr(holder, "get_display_name") else holder.key
-        # Observers: "X's handset rings."
         try:
             room.msg_contents(f"{hname}'s handset rings.", exclude=holder)
         except Exception:
             pass
 
 
-def _beep_text_message(receiver_handset, sender_id: str, msg: str):
+def _beep_text_message(receiver_handset, sender_id: str, msg: str, msg_kind: str | None = None):
     display = receiver_handset.display_alias_or_id(sender_id)
     ts = _ts()
-    # Persist on the handset itself (and prune to last 24h).
     if hasattr(receiver_handset, "add_text_message"):
-        receiver_handset.add_text_message(_as_matrix_id(sender_id) or sender_id, msg, ts_display=ts)
+        receiver_handset.add_text_message(
+            _as_matrix_id(sender_id) or sender_id, msg, ts_display=ts, msg_kind=msg_kind
+        )
     else:
-        # Legacy fallback (no 24h pruning).
-        receiver_handset.db.texts = list(getattr(receiver_handset.db, "texts", []) or []) + [
-            {"ts": ts, "from": _as_matrix_id(sender_id), "msg": msg}
-        ]
+        entry = {"ts": ts, "from": _as_matrix_id(sender_id), "msg": msg}
+        if msg_kind:
+            entry["kind"] = msg_kind
+        receiver_handset.db.texts = list(getattr(receiver_handset.db, "texts", []) or []) + [entry]
     holder, _room = _holder_and_room(receiver_handset)
     if holder:
         holder.msg("Your handset beeps.")
-        holder.msg(f"[{ts}]{display}: {msg}")
+        tag = " [voicemail]" if (msg_kind or "").lower() == "voicemail" else ""
+        holder.msg(f"[{ts}]{tag}{display}: {msg}")
 
 
 def _unread_notifications(handset) -> int:
-    """
-    Count unread text messages since the last time messages were viewed.
-    """
     last_view = getattr(getattr(handset, "db", None), "last_texts_viewed_t", None)
     try:
         last_view = float(last_view) if last_view is not None else 0.0
@@ -90,7 +94,11 @@ def _unread_notifications(handset) -> int:
         last_view = 0.0
 
     try:
-        msgs = handset.get_text_messages() if hasattr(handset, "get_text_messages") else list(getattr(handset.db, "texts", []) or [])
+        msgs = (
+            handset.get_text_messages()
+            if hasattr(handset, "get_text_messages")
+            else list(getattr(handset.db, "texts", []) or [])
+        )
     except Exception:
         msgs = []
 
@@ -99,7 +107,6 @@ def _unread_notifications(handset) -> int:
         if not isinstance(entry, dict):
             continue
         t = entry.get("t", None)
-        # Legacy entries without timestamps count as unread until first view.
         if t is None:
             if last_view <= 0:
                 count += 1
@@ -112,41 +119,24 @@ def _unread_notifications(handset) -> int:
     return count
 
 
-def _clear_call(handset):
-    try:
-        handset.ndb.call_state = "idle"
-        handset.ndb.call_peer = None
-    except Exception:
-        pass
-
-
-def _get_peer(handset):
-    peer_dbref = getattr(handset.ndb, "call_peer", None)
-    if not peer_dbref:
-        return None
-    try:
-        from evennia import search_object
-
-        results = search_object(f"#{int(peer_dbref)}")
-        return results[0] if results else None
-    except Exception:
-        return None
-
-
 class CmdHandset(Command):
     """
     Use your handset to call, speak, hang up, save contacts, and text.
 
     Usage:
       hs call <ID|alias>
+      hs redial
       hs contacts
       hs photo <ID|alias>
       hs selfie <ID|alias> "<title>" "<text>"
       hs selfie <ID|alias> <text>                (no title; title defaults to 'selfie')
       hs speak <message>
-      hs hangup
+      hs hangup / hs decline
       hs save <ID> as <alias>
+      hs remove <alias>
       hs text <ID|alias> <message>
+      hs voicemail <message>
+      hs group create | invite | accept | decline | msg | list | view | leave | rename | kick | promote | members | mute | unmute ...
     """
 
     key = "hs"
@@ -159,11 +149,127 @@ class CmdHandset(Command):
         caller = self.caller
         if handset and getattr(handset, "location", None) == caller:
             return handset
-        # Fallback: look for a handset in inventory.
         for obj in list(getattr(caller, "contents", []) or []):
             if getattr(getattr(obj, "db", None), "device_type", None) == "handset":
                 return obj
         return None
+
+    def _resolve_target_handset(self, handset, target_token: str):
+        """
+        Resolve a target token to a handset object.
+        Returns (target_handset, target_id, error_msg). error_msg is None on success.
+        """
+        target_id = handset.resolve_contact_or_id((target_token or "").strip())
+        if not target_id:
+            return None, None, "|rInvalid number/contact.|n"
+        try:
+            own_id = handset.get_matrix_id() if hasattr(handset, "get_matrix_id") else None
+            if own_id and own_id.upper() == str(target_id).upper():
+                return handset, target_id, None
+        except Exception:
+            pass
+        target_handset = _lookup_handset_by_matrix_id(target_id)
+        if not target_handset:
+            return None, target_id, "|rThat number can't be reached.|n"
+        if not target_handset.has_network_coverage():
+            return None, target_id, "|rNot delivered. That handset has no signal.|n"
+        return target_handset, target_id, None
+
+    def _capture_room_snapshot(self, handset, caller, room):
+        """Capture room snapshot with character placeholders. Returns (snap_text, snapshot_chars)."""
+        try:
+            snap = room.return_appearance(caller)
+        except Exception:
+            snap = str(room)
+
+        snapshot_chars = {}
+        try:
+            from evennia.utils.utils import inherits_from
+            from world.rpg.sdesc import get_short_desc
+            from typeclasses.rooms import ROOM_DESC_CHARACTER_NAME_COLOR
+
+            visible = room.filter_visible(room.contents_get(content_type="character"), caller)
+            visible = [
+                c
+                for c in visible
+                if inherits_from(c, "evennia.objects.objects.DefaultCharacter") and c is not caller
+            ]
+            for char in visible:
+                try:
+                    cid = int(char.id)
+                except Exception:
+                    continue
+                name_for_photographer = (char.get_display_name(caller) or "").strip()
+                if not name_for_photographer:
+                    continue
+                placeholder = f"<<CHAR:{cid}>>"
+                colored = f"{ROOM_DESC_CHARACTER_NAME_COLOR}{name_for_photographer}|n"
+                replacement = f"{ROOM_DESC_CHARACTER_NAME_COLOR}{placeholder}|n"
+                if colored in snap:
+                    snap = snap.replace(colored, replacement)
+                else:
+                    snap = snap.replace(name_for_photographer, placeholder)
+                snapshot_chars[str(cid)] = {"sdesc": get_short_desc(char, looker=caller)}
+        except Exception:
+            snapshot_chars = {}
+
+        try:
+            from typeclasses.rooms import ROOM_DESC_CHARACTER_NAME_COLOR
+
+            names = set()
+            if hasattr(caller, "get_display_name"):
+                n = (caller.get_display_name(caller) or "").strip()
+                if n:
+                    names.add(n)
+            k = (getattr(caller, "key", None) or "").strip()
+            if k:
+                names.add(k)
+            for n in names:
+                if not n:
+                    continue
+                colored = f"{ROOM_DESC_CHARACTER_NAME_COLOR}{n}|n"
+                snap = snap.replace(colored, "")
+                snap = snap.replace(n, "")
+            snap = re.sub(r"\n{3,}", "\n\n", snap).strip()
+        except Exception:
+            pass
+
+        return snap, snapshot_chars
+
+    def _deliver_photo(self, handset, caller, target_handset, target_id, kind: str, title: str, snap: str, snapshot_chars: dict):
+        ts = _ts()
+        photo_id = None
+        if hasattr(target_handset, "add_photo"):
+            photo_id = target_handset.add_photo(
+                kind, title=title, snapshot_text=snap, ts_display=ts, snapshot_chars=snapshot_chars or {}
+            )
+        if kind == "photo":
+            caller.msg(f"You depress the shutter and send a photo to {handset.display_alias_or_id(target_id)}.")
+        else:
+            caller.msg(f"You take a selfie and send it to {handset.display_alias_or_id(target_id)}.")
+        caller.msg(f"|gDelivered to:|n {handset.display_alias_or_id(target_id)}")
+        room = getattr(caller, "location", None)
+        if room:
+            try:
+                verb = "takes a photo" if kind == "photo" else "takes a selfie"
+                room.msg_contents(
+                    f"{caller.get_display_name(caller)} {verb} with their handset.",
+                    exclude=caller,
+                )
+            except Exception:
+                pass
+        holder, _room = _holder_and_room(target_handset)
+        if holder:
+            holder.msg("Your handset beeps.")
+            if kind == "photo":
+                holder.msg(
+                    f"|gYou receive a photo|n: {title}" + (f" |x(stored as photo #{photo_id})|n" if photo_id else "")
+                )
+            else:
+                tdisp = f": {title}" if title else "."
+                holder.msg(
+                    f"|gYou receive a photo|n{tdisp}" + (f" |x(stored as photo #{photo_id})|n" if photo_id else "")
+                )
 
     def func(self):
         caller = self.caller
@@ -195,6 +301,9 @@ class CmdHandset(Command):
         if action == "save":
             self._do_save(handset, rest)
             return
+        if action == "remove":
+            self._do_remove(handset, rest)
+            return
         if action == "contacts":
             self._do_contacts(handset)
             return
@@ -207,17 +316,28 @@ class CmdHandset(Command):
         if action == "call":
             self._do_call(handset, rest)
             return
+        if action == "redial":
+            self._do_call(handset, "")
+            return
         if action == "speak":
             self._do_speak(handset, rest)
             return
-        if action == "hangup":
+        if action in ("hangup", "decline"):
             self._do_hangup(handset)
             return
         if action == "text":
             self._do_text(handset, rest)
             return
+        if action == "voicemail":
+            self._do_voicemail(handset, rest)
+            return
+        if action == "group":
+            self._do_group(handset, rest)
+            return
 
-        caller.msg("|rUnknown handset command.|n Usage: hs call, contacts, photo, selfie, speak, hangup, save, text ...")
+        caller.msg(
+            "|rUnknown handset command.|n Usage: hs call, redial, contacts, group, photo, selfie, speak, hangup, decline, save, remove, text, voicemail ..."
+        )
 
     def _do_save(self, handset, rest: str):
         caller = self.caller
@@ -229,13 +349,21 @@ class CmdHandset(Command):
         ok, msg = handset.save_contact(matrix_id, alias.strip())
         caller.msg(msg)
 
+    def _do_remove(self, handset, rest: str):
+        caller = self.caller
+        alias = (rest or "").strip()
+        if not alias:
+            caller.msg("Usage: hs remove <alias>")
+            return
+        ok, msg = handset.remove_contact(alias)
+        caller.msg(msg)
+
     def _do_contacts(self, handset):
         caller = self.caller
         contacts = handset.get_contacts()
         if not contacts:
             caller.msg("You have no handset contacts saved.")
             return
-        # Display sorted by alias.
         lines = ["|c=== Handset Contacts (max 15) ===|n"]
         for alias in sorted(contacts.keys()):
             mid = contacts[alias]
@@ -251,89 +379,15 @@ class CmdHandset(Command):
         if not getattr(caller, "location", None):
             caller.msg("|rYou can't take a photo here.|n")
             return
-        target_id = handset.resolve_contact_or_id(target_token)
-        if not target_id:
-            caller.msg("|rInvalid number/contact.|n")
+        target_handset, target_id, err = self._resolve_target_handset(handset, target_token)
+        if err:
+            caller.msg(err)
             return
-        # If sending to your own handset, avoid registry lookup ambiguity.
-        try:
-            if hasattr(handset, "get_matrix_id") and handset.get_matrix_id() and handset.get_matrix_id().upper() == str(target_id).upper():
-                target_handset = handset
-            else:
-                target_handset = _lookup_handset_by_matrix_id(target_id)
-        except Exception:
-            target_handset = _lookup_handset_by_matrix_id(target_id)
-        if not target_handset:
-            caller.msg("|rThat number can't be reached.|n")
-            return
-        if not target_handset.has_network_coverage():
-            caller.msg("|rNot delivered. That handset has no signal.|n")
-            return
-
         room = caller.location
-        try:
-            # Handset photos should match the taker's actual `look` output as closely as possible.
-            snap = room.return_appearance(caller)
-        except Exception:
-            snap = str(room)
-
-        # Handset photos should look like a room "look" snapshot and preserve perspective:
-        # viewers should see *their* own recog/sdesc for people in the image.
-        #
-        # But handset photos should NOT support:
-        # - tagging/recogging people *from* the photo (that's the Photograph system)
-        # - close-up inspection of individuals
-        #
-        # Implementation: store placeholders (<<CHAR:<id>>>) so the viewer can resolve
-        # names via their own get_display_name(), and store only sdesc fallbacks.
-        snapshot_chars = {}
-        try:
-            from evennia.utils.utils import inherits_from
-            from world.rpg.sdesc import get_short_desc
-            from typeclasses.rooms import ROOM_DESC_CHARACTER_NAME_COLOR
-
-            visible = room.filter_visible(room.contents_get(content_type="character"), caller)
-            visible = [c for c in visible if inherits_from(c, "evennia.objects.objects.DefaultCharacter")]
-            for char in visible:
-                try:
-                    cid = int(char.id)
-                except Exception:
-                    continue
-                name_for_photographer = (char.get_display_name(caller) or "").strip()
-                if not name_for_photographer:
-                    continue
-                placeholder = f"<<CHAR:{cid}>>"
-                colored = f"{ROOM_DESC_CHARACTER_NAME_COLOR}{name_for_photographer}|n"
-                replacement = f"{ROOM_DESC_CHARACTER_NAME_COLOR}{placeholder}|n"
-                if colored in snap:
-                    snap = snap.replace(colored, replacement)
-                else:
-                    # Fallback if something emitted the name without the expected color wrapper.
-                    snap = snap.replace(name_for_photographer, placeholder)
-
-                # Store ONLY sdesc fallback (no detailed close-ups for handset photos).
-                snapshot_chars[str(cid)] = {"sdesc": get_short_desc(char, looker=caller)}
-        except Exception:
-            snapshot_chars = {}
+        snap, snapshot_chars = self._capture_room_snapshot(handset, caller, room)
         room_name = getattr(room, "key", "somewhere")
-        ts = _ts()
         title = f"photograph of {room_name}"
-        photo_id = None
-        if hasattr(target_handset, "add_photo"):
-            photo_id = target_handset.add_photo("photo", title=title, snapshot_text=snap, ts_display=ts, snapshot_chars=snapshot_chars)
-        caller.msg(f"You depress the shutter and send a photo to {handset.display_alias_or_id(target_id)}.")
-        caller.msg(f"|gDelivered to:|n {handset.display_alias_or_id(target_id)}")
-        try:
-            room.msg_contents(
-                f"{caller.get_display_name(caller)} takes a photo with their handset.",
-                exclude=caller,
-            )
-        except Exception:
-            pass
-        holder, _room = _holder_and_room(target_handset)
-        if holder:
-            holder.msg("Your handset beeps.")
-            holder.msg(f"|gYou receive a photo|n: {title}" + (f" |x(stored as photo #{photo_id})|n" if photo_id else ""))
+        self._deliver_photo(handset, caller, target_handset, target_id, "photo", title, snap, snapshot_chars)
 
     def _do_selfie(self, handset, rest: str):
         caller = self.caller
@@ -348,9 +402,6 @@ class CmdHandset(Command):
             caller.msg('Usage: hs selfie <ID|alias> "<title>" "<text>"')
             return
 
-        # Allow quoted multi-word title/text:
-        #   hs selfie ^ID "my cool title" "some longer message"
-        # Back-compat: if only one chunk, treat it as text and default title to "selfie".
         try:
             parts = shlex.split(remainder)
         except ValueError:
@@ -366,26 +417,11 @@ class CmdHandset(Command):
             title = parts[0]
             intro = " ".join(parts[1:])
 
-        target_id = handset.resolve_contact_or_id(target_token)
-        if not target_id:
-            caller.msg("|rInvalid number/contact.|n")
-            return
-        # If sending to your own handset, avoid registry lookup ambiguity.
-        try:
-            if hasattr(handset, "get_matrix_id") and handset.get_matrix_id() and handset.get_matrix_id().upper() == str(target_id).upper():
-                target_handset = handset
-            else:
-                target_handset = _lookup_handset_by_matrix_id(target_id)
-        except Exception:
-            target_handset = _lookup_handset_by_matrix_id(target_id)
-        if not target_handset:
-            caller.msg("|rThat number can't be reached.|n")
-            return
-        if not target_handset.has_network_coverage():
-            caller.msg("|rNot delivered. That handset has no signal.|n")
+        target_handset, target_id, err = self._resolve_target_handset(handset, target_token)
+        if err:
+            caller.msg(err)
             return
 
-        # Build a "snapshot" of the character: general line + merged body appearance.
         general = (getattr(getattr(caller, "db", None), "general_desc", None) or "This is a character.").strip()
         merged = ""
         if hasattr(caller, "format_body_appearance"):
@@ -393,37 +429,54 @@ class CmdHandset(Command):
                 merged = caller.format_body_appearance().strip()
             except Exception:
                 merged = ""
-        parts = [intro, ""]
-        if general:
-            parts.append(general)
-        if merged:
-            parts.append(merged)
-        snap = "\n\n".join(p for p in parts if p is not None)
-        ts = _ts()
-        photo_id = None
-        if hasattr(target_handset, "add_photo"):
-            photo_id = target_handset.add_photo("selfie", title=title, snapshot_text=snap, ts_display=ts)
-        caller.msg(f"You take a selfie and send it to {handset.display_alias_or_id(target_id)}.")
-        caller.msg(f"|gDelivered to:|n {handset.display_alias_or_id(target_id)}")
-        if getattr(caller, "location", None):
+
+        try:
+            cid = int(caller.id)
+        except Exception:
+            cid = None
+        placeholder = f"<<CHAR:{cid}>>" if cid is not None else ""
+        snapshot_chars = {}
+        if cid is not None:
             try:
-                caller.location.msg_contents(
-                    f"{caller.get_display_name(caller)} takes a selfie with their handset.",
-                    exclude=caller,
-                )
+                from world.rpg.sdesc import get_short_desc
+
+                snapshot_chars[str(cid)] = {"sdesc": get_short_desc(caller, looker=caller)}
             except Exception:
-                pass
-        holder, _room = _holder_and_room(target_handset)
-        if holder:
-            holder.msg("Your handset beeps.")
-            tdisp = f": {title}" if title else "."
-            holder.msg(f"|gYou receive a photo|n{tdisp}" + (f" |x(stored as photo #{photo_id})|n" if photo_id else ""))
+                snapshot_chars[str(cid)] = {"sdesc": "someone"}
+
+        def _sub_self(s: str) -> str:
+            if not s or not placeholder:
+                return s
+            out = s
+            if hasattr(caller, "get_display_name"):
+                n = (caller.get_display_name(caller) or "").strip()
+                if n:
+                    out = out.replace(n, placeholder)
+            k = (getattr(caller, "key", None) or "").strip()
+            if k:
+                out = out.replace(k, placeholder)
+            return out
+
+        intro = _sub_self(intro)
+        general = _sub_self(general)
+        merged = _sub_self(merged)
+        parts_body = [intro, ""]
+        if general:
+            parts_body.append(general)
+        if merged:
+            parts_body.append(merged)
+        snap = "\n\n".join(p for p in parts_body if p is not None)
+        self._deliver_photo(handset, caller, target_handset, target_id, "selfie", title, snap, snapshot_chars)
 
     def _do_call(self, handset, rest: str):
         caller = self.caller
+        rest = (rest or "").strip()
         if not rest:
-            caller.msg("Usage: hs call <ID|alias>")
-            return
+            rest = (getattr(handset.db, "last_dialed", None) or "").strip()
+            if not rest:
+                caller.msg("Usage: hs call <ID|alias>, or |whs redial|n after a call.")
+                return
+            caller.msg(f"|xRedialing {handset.display_alias_or_id(rest)}...|n")
 
         state = handset._call_state()
         if state in ("dialing", "ringing", "in_call"):
@@ -449,10 +502,19 @@ class CmdHandset(Command):
             caller.msg("|rNo answer.|n")
             return
 
-        # Establish ringing state.
         handset._set_call_state("dialing", peer_dbref=target_handset.id)
         target_handset._set_call_state("ringing", peer_dbref=handset.id)
+        try:
+            handset.ndb.call_outbound = True
+            target_handset.ndb.call_outbound = False
+        except Exception:
+            pass
+        try:
+            handset.db.last_dialed = str(target_id).strip()
+        except Exception:
+            pass
 
+        schedule_call_ring_timers(handset, target_handset)
         caller.msg(f"You dial {handset.display_alias_or_id(target_id)}.")
         _ring_room_messages(target_handset)
 
@@ -466,7 +528,26 @@ class CmdHandset(Command):
             _clear_call(handset)
             caller.msg("|rThe call drops.|n")
             return False
-        # Move both to in_call.
+
+        def _mid(h):
+            try:
+                return h.get_matrix_id() if hasattr(h, "get_matrix_id") else ""
+            except Exception:
+                return ""
+
+        p_mid = _mid(peer)
+        h_mid = _mid(handset)
+        if hasattr(handset, "log_call_event"):
+            try:
+                handset.log_call_event(p_mid, "in", "answered")
+            except Exception:
+                pass
+        if hasattr(peer, "log_call_event"):
+            try:
+                peer.log_call_event(h_mid, "out", "answered")
+            except Exception:
+                pass
+
         handset._set_call_state("in_call", peer_dbref=peer.id)
         peer._set_call_state("in_call", peer_dbref=handset.id)
 
@@ -507,6 +588,14 @@ class CmdHandset(Command):
         display = peer.display_alias_or_id(me_id) if hasattr(peer, "display_alias_or_id") else me_id
         caller.msg(f'You say into the handset: "{rest}"')
         peer_holder.msg(f'[{_ts()}]{display}: {rest}')
+        if caller.location:
+            try:
+                caller.location.msg_contents(
+                    f"{caller.get_display_name(caller)} speaks quietly into their handset.",
+                    exclude=caller,
+                )
+            except Exception:
+                pass
 
     def _do_hangup(self, handset, quiet_peer: bool = False):
         caller = self.caller
@@ -516,15 +605,70 @@ class CmdHandset(Command):
             return
 
         peer = _get_peer(handset)
+
+        def _mid(h):
+            if not h:
+                return ""
+            try:
+                return h.get_matrix_id() if hasattr(h, "get_matrix_id") else ""
+            except Exception:
+                return ""
+
+        p_mid = _mid(peer)
+        h_mid = _mid(handset)
+
+        if peer:
+            if state == "ringing":
+                if hasattr(handset, "log_call_event"):
+                    try:
+                        handset.log_call_event(p_mid, "in", "declined")
+                    except Exception:
+                        pass
+                if hasattr(peer, "log_call_event"):
+                    try:
+                        peer.log_call_event(h_mid, "out", "declined")
+                    except Exception:
+                        pass
+            elif state == "dialing":
+                if hasattr(handset, "log_call_event"):
+                    try:
+                        handset.log_call_event(p_mid, "out", "declined")
+                    except Exception:
+                        pass
+                if hasattr(peer, "log_call_event"):
+                    try:
+                        peer.log_call_event(h_mid, "in", "missed")
+                    except Exception:
+                        pass
+            elif state == "in_call":
+                outb = bool(getattr(handset.ndb, "call_outbound", False))
+                if hasattr(handset, "log_call_event"):
+                    try:
+                        handset.log_call_event(p_mid, "out" if outb else "in", "ended")
+                    except Exception:
+                        pass
+                if hasattr(peer, "log_call_event"):
+                    try:
+                        peer.log_call_event(h_mid, "in" if outb else "out", "ended")
+                    except Exception:
+                        pass
+
         _clear_call(handset)
-        caller.msg("You hang up.")
+
+        if state == "ringing":
+            caller.msg("You decline the call.")
+        else:
+            caller.msg("You hang up.")
 
         if peer:
             _clear_call(peer)
             if not quiet_peer:
                 peer_holder, _ = _holder_and_room(peer)
                 if peer_holder:
-                    peer_holder.msg("The line goes dead.")
+                    if state == "ringing":
+                        peer_holder.msg("|rNo answer. They declined.|n")
+                    else:
+                        peer_holder.msg("The line goes dead.")
 
     def _do_text(self, handset, rest: str):
         caller = self.caller
@@ -536,21 +680,309 @@ class CmdHandset(Command):
             caller.msg("Usage: hs text <ID|alias> <message>")
             return
 
-        target_id = handset.resolve_contact_or_id(target_token.strip())
-        if not target_id:
-            caller.msg("|rInvalid number/contact.|n")
-            return
-
-        target_handset = _lookup_handset_by_matrix_id(target_id)
-        if not target_handset:
-            caller.msg("|rThat number can't be reached.|n")
-            return
-
-        if not target_handset.has_network_coverage():
-            caller.msg("|rMessage not delivered. That handset has no signal.|n")
+        target_handset, target_id, err = self._resolve_target_handset(handset, target_token.strip())
+        if err:
+            caller.msg(err)
             return
 
         sender_id = handset.get_phone_number() or ""
         _beep_text_message(target_handset, sender_id, msg.strip())
         caller.msg(f"|gSent|n to {handset.display_alias_or_id(target_id)}.")
 
+    def _do_voicemail(self, handset, rest: str):
+        caller = self.caller
+        rest = (rest or "").strip()
+        if not rest:
+            caller.msg("Usage: hs voicemail <message>")
+            return
+        target_id = (getattr(handset.db, "last_dialed", None) or "").strip()
+        if not target_id:
+            caller.msg("|rNo recent number to leave voicemail for.|n Use |whs call <ID|alias>|n first.")
+            return
+        target_handset, target_id, err = self._resolve_target_handset(handset, target_id)
+        if err:
+            caller.msg(err)
+            return
+        sender_id = handset.get_phone_number() or ""
+        _beep_text_message(target_handset, sender_id, rest, msg_kind="voicemail")
+        caller.msg(f"|gVoicemail sent|n to {handset.display_alias_or_id(target_id)}.")
+
+    def _do_group(self, handset, rest: str):
+        caller = self.caller
+        rest = (rest or "").strip()
+        if not rest:
+            caller.msg(
+                "|yUsage:|n hs group create <name> | invite <group> <contact|ID> | accept <id> | decline <id> | "
+                "msg <group> <message> | list | view <group> | leave <group> | rename <group> = <new> | "
+                "kick <group> <contact|ID> | promote <group> <contact|ID> | members <group> | mute <group> | unmute <group>"
+            )
+            return
+        sub, _, tail = rest.partition(" ")
+        sub = sub.strip().lower()
+        tail = tail.strip()
+        if sub == "create":
+            self._do_group_create(handset, tail)
+        elif sub == "invite":
+            self._do_group_invite(handset, tail)
+        elif sub == "accept":
+            self._do_group_accept(handset, tail)
+        elif sub == "decline":
+            self._do_group_decline(handset, tail)
+        elif sub == "msg":
+            self._do_group_msg(handset, tail)
+        elif sub == "list":
+            self._do_group_list(handset)
+        elif sub == "view":
+            self._do_group_view(handset, tail)
+        elif sub == "leave":
+            self._do_group_leave(handset, tail)
+        elif sub == "rename":
+            self._do_group_rename(handset, tail)
+        elif sub == "kick":
+            self._do_group_kick(handset, tail)
+        elif sub == "promote":
+            self._do_group_promote(handset, tail)
+        elif sub == "members":
+            self._do_group_members(handset, tail)
+        elif sub == "mute":
+            self._do_group_mute(handset, tail, True)
+        elif sub == "unmute":
+            self._do_group_mute(handset, tail, False)
+        else:
+            caller.msg("|rUnknown hs group subcommand.|n")
+
+    def _do_group_create(self, handset, rest: str):
+        caller = self.caller
+        name = (rest or "").strip()
+        if not name:
+            caller.msg("Usage: hs group create <name>")
+            return
+        ok, msg, _gid = mg.create_group(handset, name)
+        caller.msg(msg)
+
+    def _do_group_invite(self, handset, rest: str):
+        caller = self.caller
+        if not rest.strip():
+            caller.msg('Usage: hs group invite <group name> <contact|ID>  (quote multi-word group names)')
+            return
+        try:
+            parts = shlex.split(rest)
+        except ValueError:
+            caller.msg("|rInvalid quoting.|n")
+            return
+        if len(parts) < 2:
+            caller.msg('Usage: hs group invite <group name> <contact|ID>')
+            return
+        gq, target_tok = parts[0], parts[1]
+        gid, _data, err = mg.resolve_group_by_name(handset, gq)
+        if err:
+            caller.msg(f"|r{err}|n")
+            return
+        mid = handset.resolve_contact_or_id(target_tok)
+        if not mid:
+            caller.msg("|rInvalid contact or ID.|n")
+            return
+        ok, msg = mg.invite_to_group(handset, gid, mid)
+        caller.msg(msg)
+
+    def _do_group_accept(self, handset, rest: str):
+        caller = self.caller
+        gid = (rest or "").strip().upper()
+        if not gid:
+            caller.msg("Usage: hs group accept <group_id>")
+            return
+        ok, msg = mg.accept_group_invite(handset, gid)
+        caller.msg(msg)
+
+    def _do_group_decline(self, handset, rest: str):
+        caller = self.caller
+        gid = (rest or "").strip().upper()
+        if not gid:
+            caller.msg("Usage: hs group decline <group_id>")
+            return
+        ok, msg = mg.decline_group_invite(handset, gid)
+        caller.msg(msg)
+
+    def _do_group_msg(self, handset, rest: str):
+        caller = self.caller
+        if not rest.strip():
+            caller.msg('Usage: hs group msg <group name> <message>  (quote multi-word names)')
+            return
+        try:
+            parts = shlex.split(rest)
+        except ValueError:
+            caller.msg("|rInvalid quoting.|n")
+            return
+        if len(parts) < 2:
+            caller.msg('Usage: hs group msg <group name> <message>')
+            return
+        gq = parts[0]
+        message = " ".join(parts[1:])
+        gid, _d, err = mg.resolve_group_by_name(handset, gq)
+        if err:
+            caller.msg(f"|r{err}|n")
+            return
+        d, tot = mg.send_group_message(handset, gid, message)
+        caller.msg(f"|gSent|n |x({d}/{tot} online)|n.")
+
+    def _do_group_list(self, handset):
+        caller = self.caller
+        chats = getattr(handset.db, "group_chats", None) or {}
+        if not isinstance(chats, dict) or not chats:
+            caller.msg("You're not in any group chats.")
+            return
+        lines = ["|c=== Group Chats ===|n"]
+        for gid, data in sorted(chats.items(), key=lambda x: str((x[1] or {}).get("name", x[0])).lower()):
+            if not isinstance(data, dict):
+                continue
+            name = data.get("name", gid)
+            members = data.get("members") or []
+            n = len(members) if isinstance(members, list) else 0
+            unread = mg.get_unread_group_count(handset, gid)
+            role = (data.get("role") or "member").strip().lower()
+            lines.append(f"  |w{name}|n ({n} members, {unread} unread) [{role}]  |x{gid}|n")
+        caller.msg("\n".join(lines))
+
+    def _do_group_view(self, handset, rest: str):
+        caller = self.caller
+        gq = (rest or "").strip()
+        if not gq:
+            caller.msg("Usage: hs group view <group name>")
+            return
+        gid, gdata, err = mg.resolve_group_by_name(handset, gq)
+        if err:
+            caller.msg(f"|r{err}|n")
+            return
+        msgs = mg.get_group_messages(handset, gid, limit=30)
+        mg.mark_group_read(handset, gid)
+        if not msgs:
+            caller.msg("|xNo messages in that group yet.|n")
+            return
+        lines = [f"|c=== {(gdata or {}).get('name', gid)} ===|n"]
+        for entry in msgs:
+            if isinstance(entry, dict):
+                lines.append(mg.format_inbox_line(handset, entry))
+        caller.msg("\n".join(lines))
+
+    def _do_group_leave(self, handset, rest: str):
+        caller = self.caller
+        gq = (rest or "").strip()
+        if not gq:
+            caller.msg("Usage: hs group leave <group name>")
+            return
+        gid, _d, err = mg.resolve_group_by_name(handset, gq)
+        if err:
+            caller.msg(f"|r{err}|n")
+            return
+        ok, msg = mg.leave_group(handset, gid)
+        caller.msg(msg)
+
+    def _do_group_rename(self, handset, rest: str):
+        caller = self.caller
+        if " = " not in rest:
+            caller.msg("Usage: hs group rename <group name> = <new name>")
+            return
+        left, _, right = rest.partition(" = ")
+        gq = left.strip()
+        new_name = right.strip()
+        if not gq or not new_name:
+            caller.msg("Usage: hs group rename <group name> = <new name>")
+            return
+        gid, _d, err = mg.resolve_group_by_name(handset, gq)
+        if err:
+            caller.msg(f"|r{err}|n")
+            return
+        ok, msg = mg.rename_group_local(handset, gid, new_name)
+        caller.msg(msg)
+
+    def _do_group_kick(self, handset, rest: str):
+        caller = self.caller
+        if not rest.strip():
+            caller.msg('Usage: hs group kick <group name> <contact|ID>')
+            return
+        try:
+            parts = shlex.split(rest)
+        except ValueError:
+            caller.msg("|rInvalid quoting.|n")
+            return
+        if len(parts) < 2:
+            caller.msg('Usage: hs group kick <group name> <contact|ID>')
+            return
+        gq, tok = parts[0], parts[1]
+        gid, _d, err = mg.resolve_group_by_name(handset, gq)
+        if err:
+            caller.msg(f"|r{err}|n")
+            return
+        mid = handset.resolve_contact_or_id(tok)
+        if not mid:
+            caller.msg("|rInvalid contact or ID.|n")
+            return
+        ok, msg = mg.kick_member(handset, gid, mid)
+        caller.msg(msg)
+
+    def _do_group_promote(self, handset, rest: str):
+        caller = self.caller
+        if not rest.strip():
+            caller.msg('Usage: hs group promote <group name> <contact|ID>')
+            return
+        try:
+            parts = shlex.split(rest)
+        except ValueError:
+            caller.msg("|rInvalid quoting.|n")
+            return
+        if len(parts) < 2:
+            caller.msg('Usage: hs group promote <group name> <contact|ID>')
+            return
+        gq, tok = parts[0], parts[1]
+        gid, _d, err = mg.resolve_group_by_name(handset, gq)
+        if err:
+            caller.msg(f"|r{err}|n")
+            return
+        mid = handset.resolve_contact_or_id(tok)
+        if not mid:
+            caller.msg("|rInvalid contact or ID.|n")
+            return
+        ok, msg = mg.promote_member(handset, gid, mid)
+        caller.msg(msg)
+
+    def _do_group_members(self, handset, rest: str):
+        caller = self.caller
+        gq = (rest or "").strip()
+        if not gq:
+            caller.msg("Usage: hs group members <group name>")
+            return
+        gid, data, err = mg.resolve_group_by_name(handset, gq)
+        if err:
+            caller.msg(f"|r{err}|n")
+            return
+        members = data.get("members") or []
+        admins = set(mg.normalize_matrix_id(str(a)) for a in (data.get("admins") or []))
+        lines = [f"|c=== {data.get('name', gid)} members ===|n"]
+        if not isinstance(members, list):
+            members = []
+        for m in members:
+            mid = mg.normalize_matrix_id(str(m))
+            disp = handset.display_alias_or_id(mid)
+            role = "admin" if mid in admins else "member"
+            h = mg.lookup_handset(mid)
+            if h and h.has_network_coverage():
+                sig = "|gonline|n"
+            elif h:
+                sig = "|yoffline|n"
+            else:
+                sig = "|xno handset|n"
+            lines.append(f"  {disp}  [{role}]  {sig}")
+        caller.msg("\n".join(lines))
+
+    def _do_group_mute(self, handset, rest: str, muted: bool):
+        caller = self.caller
+        gq = (rest or "").strip()
+        if not gq:
+            caller.msg("Usage: hs group mute <group name>  /  hs group unmute <group name>")
+            return
+        gid, _d, err = mg.resolve_group_by_name(handset, gq)
+        if err:
+            caller.msg(f"|r{err}|n")
+            return
+        ok, msg = mg.set_group_muted(handset, gid, muted)
+        caller.msg(msg)

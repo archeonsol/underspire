@@ -1,7 +1,7 @@
 """
-Stamina system: actions cost stamina; regen varies by posture and recent nutrition.
-Stamina is tied to endurance (max_stamina on Character). At 0 stamina you crawl
-and cannot attack or defend.
+Stamina system: actions cost stamina; regen varies by endurance, posture, and
+recent nutrition. At very low stamina you become winded/exhausted and take
+combat penalties instead of hitting a hard action lockout.
 """
 import time
 
@@ -14,13 +14,15 @@ STAMINA_COST_RESIST_GRAPPLE = 12
 STAMINA_COST_GRAPPLE_STRIKE = 5   # grappler spends this per strike while holding someone
 
 # Regen: interval (seconds) and points per tick
-STAMINA_REGEN_INTERVAL = 25
+STAMINA_REGEN_INTERVAL = 10
 STAMINA_REGEN_BASE = 2
-STAMINA_REGEN_SITTING = 4   # extra points when sitting
-STAMINA_REGEN_LYING = 6     # extra points when lying (bed/table)
+STAMINA_REGEN_SITTING = 2   # extra points when sitting
+STAMINA_REGEN_LYING = 3     # extra points when lying (bed/table)
+STAMINA_REGEN_COMBAT = 1    # reduced but nonzero regen while actively in combat
 # Recent nutritious meal: multiplier for regen (e.g. 1.5 = 50% faster) for N minutes
 NUTRITION_REGEN_MULTIPLIER = 1.5
 NUTRITION_BUFF_MINUTES = 10
+STAMINA_WINDED_THRESHOLD = 0.2
 
 
 def _current(character):
@@ -35,13 +37,16 @@ def _current(character):
 
 
 def is_exhausted(character):
-    """True if character has 0 or less stamina (crawling, cannot fight)."""
+    """True if character has 0 or less stamina."""
     return _current(character) <= 0
 
 
 def can_fight(character):
-    """True if character has stamina to attack or defend."""
-    return not is_exhausted(character)
+    """
+    Combat is no longer hard-locked by stamina.
+    Exhausted characters can still act, but with severe penalties.
+    """
+    return bool(character)
 
 
 def spend_stamina(character, amount):
@@ -63,14 +68,43 @@ def get_regen_rate(character):
     """
     rate = STAMINA_REGEN_BASE
     if getattr(character, "db", None):
+        max_stam = getattr(character, "max_stamina", 100) or 100
+        endurance_bonus = max(0, (max_stam - 75)) // 25
+        rate += endurance_bonus
+
         if getattr(character.db, "lying_on", None) is not None or getattr(character.db, "lying_on_table", None) is not None:
             rate += STAMINA_REGEN_LYING
         elif getattr(character.db, "sitting_on", None) is not None:
             rate += STAMINA_REGEN_SITTING
+
+        # Medical state directly affects stamina recovery.
+        try:
+            from world.medical import get_infection_penalties
+            organ_damage = getattr(character.db, "organ_damage", None) or {}
+            lung_sev = int(organ_damage.get("lungs", 0) or 0)
+            heart_sev = int(organ_damage.get("heart", 0) or 0)
+            rate -= (lung_sev + heart_sev)
+            inf = get_infection_penalties(character)
+            rate += int(inf.get("stamina_recovery", 0) or 0)
+        except Exception:
+            pass
+
         last_meal = getattr(character.db, "last_nutritious_meal", None)
         if last_meal and (time.time() - last_meal) < (NUTRITION_BUFF_MINUTES * 60):
             rate = int(rate * NUTRITION_REGEN_MULTIPLIER)
     return max(1, rate)
+
+
+def get_stamina_modifier(character):
+    """Combat modifier when stamina is low. 0 = no penalty."""
+    cur = _current(character)
+    mx = getattr(character, "max_stamina", 100) or 100
+    if cur <= 0:
+        return -20
+    ratio = (cur / mx) if mx > 0 else 0
+    if ratio < STAMINA_WINDED_THRESHOLD:
+        return -8
+    return 0
 
 
 # Recovery condition tiers: 0 = very slowly .. 4 = very well. Default is 2 (moderately).
@@ -106,7 +140,11 @@ def get_stamina_recovery_label(character):
         return "physically active"
 
     # Bleeding: worse bleeding pulls recovery down
-    bleeding = getattr(character.db, "bleeding_level", 0) or 0
+    try:
+        from world.medical import compute_effective_bleed_level
+        bleeding, _ = compute_effective_bleed_level(character)
+    except Exception:
+        bleeding = getattr(character.db, "bleeding_level", 0) or 0
     if bleeding >= 4:
         score -= 2
     elif bleeding >= 2:
@@ -119,6 +157,15 @@ def get_stamina_recovery_label(character):
     untreated = sum(1 for i in injuries if not i.get("treated") and (i.get("hp_occupied") or 0) > 0)
     if fractures or organ_damage or untreated >= 2:
         score -= 1
+
+    # Infection burden slows recovery further.
+    try:
+        from world.medical import get_infection_penalties
+        inf = get_infection_penalties(character)
+        if int(inf.get("stamina_recovery", 0) or 0) < 0:
+            score -= 1
+    except Exception:
+        pass
 
     # Posture: sitting or lying improves recovery (can partially offset penalties)
     if getattr(character.db, "lying_on", None) is not None or getattr(character.db, "lying_on_table", None) is not None:
@@ -144,6 +191,8 @@ def tick_stamina_regen(character):
     if cur >= mx:
         return
     gain = get_regen_rate(character)
+    if getattr(character.db, "combat_target", None) is not None:
+        gain = STAMINA_REGEN_COMBAT
     character.db.current_stamina = min(mx, cur + gain)
 
 

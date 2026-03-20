@@ -12,6 +12,11 @@ from world.medical import (
     BONE_INFO,
     ORGAN_INFO,
     get_bleeding_drain_per_tick,
+    compute_effective_bleed_level,
+    get_active_bleed_wounds,
+    rebuild_derived_trauma_views,
+    _set_injury_treatment_quality,
+    INFECTION_STAGE_LABELS,
 )
 
 # Realistic treatment labels per bone (splint limb vs bind chest vs spinal immobilization, etc.)
@@ -58,11 +63,14 @@ TOOL_SPLINT = "splint"
 TOOL_HEMOSTATIC = "hemostatic"
 TOOL_SURGICAL_KIT = "surgical_kit"
 TOOL_TOURNIQUET = "tourniquet"
+TOOL_ANTIBIOTICS = "antibiotics"
 
 # What each tool can do
 TOOL_CAN_STOP_BLEEDING = (TOOL_BANDAGES, TOOL_MEDKIT, TOOL_SUTURE_KIT, TOOL_HEMOSTATIC, TOOL_SURGICAL_KIT, TOOL_TOURNIQUET)
 TOOL_CAN_SPLINT = (TOOL_SPLINT, TOOL_MEDKIT, TOOL_SURGICAL_KIT)
 TOOL_CAN_STABILIZE_ORGAN = (TOOL_MEDKIT, TOOL_SURGICAL_KIT)
+TOOL_CAN_CLEAN_WOUND = (TOOL_MEDKIT, TOOL_SURGICAL_KIT)
+TOOL_CAN_TREAT_INFECTION = (TOOL_ANTIBIOTICS, TOOL_MEDKIT, TOOL_SURGICAL_KIT)
 TOOL_IS_SCANNER = (TOOL_SCANNER,)
 
 # Bleeding: bandage only effective on minor/moderate (1-2); severe/critical need hemostatic or suture/surgical
@@ -275,7 +283,7 @@ def _medicine_roll(operator, difficulty=0, modifier=0):
     return 0, value
 
 
-def attempt_stop_bleeding(operator, target, tool_type=None):
+def attempt_stop_bleeding(operator, target, tool_type=None, tool_obj=None):
     """
     Attempt to reduce or stop bleeding. Tool roles:
     - Bandage: minor/moderate (1-2) only; severe/critical need hemostatic or suture/surgical.
@@ -289,22 +297,35 @@ def attempt_stop_bleeding(operator, target, tool_type=None):
     if tool_type not in TOOL_CAN_STOP_BLEEDING:
         return False, "You need bandages, medkit, suture kit, hemostatic agent, tourniquet, or surgical kit."
 
-    level = target.db.bleeding_level or 0
+    level, _ = compute_effective_bleed_level(target)
     if level <= 0 and not getattr(target.db, "tourniquet_applied", False):
         return False, "No significant haemorrhage to control."
+    active_wounds = get_active_bleed_wounds(target)
+    if not active_wounds and level > 0:
+        level, _ = compute_effective_bleed_level(target)
+        active_wounds = get_active_bleed_wounds(target)
+        if not active_wounds and level <= 0:
+            return False, "No significant haemorrhage to control."
+        if not active_wounds:
+            return False, "Bleeding source unclear. Reassess and scan before intervention."
+    target_wound = active_wounds[0] if active_wounds else None
+    dirty_closure_penalty = False
 
     # Tourniquet: always stops bleeding to 0 (no roll); limb at risk until proper closure
     if tool_type == TOOL_TOURNIQUET:
         if level <= 0:
             return False, "They are not bleeding. A tourniquet is for severe limb haemorrhage."
-        target.db.bleeding_level = 0
+        if target_wound:
+            target_wound["bleed_treated"] = True
+            _set_injury_treatment_quality(target_wound, 1)
         target.db.tourniquet_applied = True
         target.db.tourniquet_at = time.time()
         if getattr(target.db, "bleeding_hemostatic_stabilized", False):
             target.db.bleeding_hemostatic_stabilized = False
         pool = _BLEED_SUCCESS_CRITICAL.get(TOOL_TOURNIQUET, [])
         msg = random.choice(pool) if pool else "Tourniquet applied. Bleeding stopped. Get proper closure soon."
-        _mark_bleeding_treated(target)
+        _mark_bleeding_treated(target, target_wound=target_wound)
+        compute_effective_bleed_level(target)
         return True, msg
 
     # Bandage: only effective on minor (1) or moderate (2)
@@ -343,7 +364,28 @@ def attempt_stop_bleeding(operator, target, tool_type=None):
         pool = _BLEED_SUCCESS_MARGINAL.get(tool_type, _BLEED_SUCCESS_MARGINAL[TOOL_BANDAGES])
         msg = random.choice(pool) if pool else "You slow the flow. They need more care."
 
-    target.db.bleeding_level = new_level
+    if target_wound:
+        # Closing a dirty wound raises infection risk unless cleaned first.
+        needs_clean = (time.time() - float(target_wound.get("cleaned_at", 0.0) or 0.0)) > 1800
+        if tool_type in (TOOL_SUTURE_KIT, TOOL_SURGICAL_KIT) and needs_clean:
+            target_wound["infection_risk"] = min(1.0, float(target_wound.get("infection_risk", 0.0) or 0.0) + 0.12)
+            dirty_closure_penalty = True
+        if new_level <= 0:
+            target_wound["bleed_rate"] = 0.0
+            target_wound["bleed_treated"] = True
+        else:
+            new_rate = max(0.0, float(target_wound.get("bleed_rate", 0.0) or 0.0) - float(level - new_level))
+            target_wound["bleed_rate"] = new_rate
+            target_wound["bleed_treated"] = new_rate <= 0.0
+        quality_by_tool = {
+            TOOL_BANDAGES: 1,
+            TOOL_HEMOSTATIC: 1,
+            TOOL_TOURNIQUET: 1,
+            TOOL_MEDKIT: 1,
+            TOOL_SUTURE_KIT: 2,
+            TOOL_SURGICAL_KIT: 2,
+        }
+        _set_injury_treatment_quality(target_wound, quality_by_tool.get(tool_type, 1))
 
     # Hemostatic: mark as temporary so it can reopen later unless suture/surgical used
     if tool_type == TOOL_HEMOSTATIC and new_level < level:
@@ -354,26 +396,38 @@ def attempt_stop_bleeding(operator, target, tool_type=None):
         if getattr(target.db, "bleeding_hemostatic_stabilized", False):
             target.db.bleeding_hemostatic_stabilized = False
 
-    _mark_bleeding_treated(target)
+    _mark_bleeding_treated(target, target_wound=target_wound)
+    compute_effective_bleed_level(target)
+    rebuild_derived_trauma_views(target)
+    if dirty_closure_penalty:
+        msg += " You closed without proper cleansing; infection risk rises."
     return True, msg
 
 
-def _mark_bleeding_treated(target):
-    """Mark one severe injury as treated and add to bandaged_body_parts for look text."""
+def _mark_bleeding_treated(target, target_wound=None):
+    """Mark the treated wound as handled and update bandaged look state."""
     injuries = getattr(target.db, "injuries", None) or []
     bandaged = list(getattr(target.db, "bandaged_body_parts", None) or [])
-    for i in injuries:
-        if not i.get("treated") and i.get("severity", 1) >= 2:
-            i["treated"] = True
-            target.db.injuries = injuries
-            part = (i.get("body_part") or "").strip()
-            if part and part not in bandaged:
-                bandaged.append(part)
-                target.db.bandaged_body_parts = bandaged
-            break
+    candidate = target_wound
+    if candidate is None:
+        active = sorted(
+            [i for i in injuries if (i.get("hp_occupied", 0) or 0) > 0],
+            key=lambda x: float(x.get("bleed_rate", 0.0) or 0.0),
+            reverse=True,
+        )
+        candidate = active[0] if active else None
+    if not candidate:
+        return
+    candidate["treated"] = True
+    _set_injury_treatment_quality(candidate, int(candidate.get("treatment_quality", 0) or 1))
+    part = (candidate.get("body_part") or "").strip()
+    if part and part not in bandaged:
+        bandaged.append(part)
+        target.db.bandaged_body_parts = bandaged
+    target.db.injuries = injuries
 
 
-def attempt_splint(operator, target, bone_key, tool_type=None):
+def attempt_splint(operator, target, bone_key, tool_type=None, tool_obj=None):
     """
     Splint a fracture. Reduces combat penalty from that bone; does not remove the fracture.
     Dedicated splint: limbs only (arm, leg, hand, foot, ribs, clavicle, etc.). Spine, skull, pelvis need medkit or surgical kit.
@@ -386,6 +440,7 @@ def attempt_splint(operator, target, bone_key, tool_type=None):
     if tool_type == TOOL_SPLINT and bone_key in BONES_AXIAL_NEED_MEDKIT:
         return False, "A basic splint won't hold for spine, skull, or pelvis. Use a medkit or surgical kit for that."
 
+    rebuild_derived_trauma_views(target)
     fractures = target.db.fractures or []
     if bone_key not in fractures:
         label = BONE_TREATMENT_LABEL.get(bone_key, f"fractured {BONE_INFO.get(bone_key, bone_key)}")
@@ -405,13 +460,12 @@ def attempt_splint(operator, target, bone_key, tool_type=None):
 
     splinted = list(splinted) + [bone_key]
     target.db.splinted_bones = splinted
-    # Mark one severe injury as treated so it can regen
     injuries = getattr(target.db, "injuries", None) or []
     for i in injuries:
-        if not i.get("treated") and i.get("severity", 1) >= 2:
-            i["treated"] = True
-            target.db.injuries = injuries
+        if i.get("fracture") == bone_key:
+            _set_injury_treatment_quality(i, 1 if tool_type == TOOL_SPLINT else 2)
             break
+    target.db.injuries = injuries
     # Injury-specific success messages
     if bone_key in ("ribs",):
         msg = "You bind the chest: rigid wrap, padding. Ribs are reduced; breathing will be shallow. Watch for pneumothorax."
@@ -428,7 +482,7 @@ def attempt_splint(operator, target, bone_key, tool_type=None):
     return True, msg
 
 
-def attempt_stabilize_organ(operator, target, organ_key, tool_type=None):
+def attempt_stabilize_organ(operator, target, organ_key, tool_type=None, tool_obj=None):
     """
     Stabilize damaged organ (reduce severity by 1, once per organ per session). Requires medkit or surgical kit.
     Critical (severity 3) is very hard; may still reduce to 2.
@@ -437,6 +491,7 @@ def attempt_stabilize_organ(operator, target, organ_key, tool_type=None):
     if tool_type not in TOOL_CAN_STABILIZE_ORGAN:
         return False, "You need a medkit or surgical kit for internal stabilization. Do not dig blind."
 
+    rebuild_derived_trauma_views(target)
     organ_damage = target.db.organ_damage or {}
     severity = organ_damage.get(organ_key, 0)
     if severity <= 0:
@@ -454,19 +509,22 @@ def attempt_stabilize_organ(operator, target, organ_key, tool_type=None):
     if success_level == 0:
         return False, random.choice(_ORGAN_FAIL)
 
-    target.db.organ_damage[organ_key] = severity - 1
-    if severity - 1 <= 0:
-        del target.db.organ_damage[organ_key]
+    injuries = getattr(target.db, "injuries", None) or []
+    for i in injuries:
+        od = dict(i.get("organ_damage") or {})
+        if organ_key not in od:
+            continue
+        od[organ_key] = max(0, int(od.get(organ_key, 0)) - 1)
+        if od[organ_key] <= 0:
+            del od[organ_key]
+        i["organ_damage"] = od
+        _set_injury_treatment_quality(i, 2 if tool_type == TOOL_SURGICAL_KIT else 1)
+        break
+    target.db.injuries = injuries
     stabilized = dict(stabilized)
     stabilized[organ_key] = True
     target.db.stabilized_organs = stabilized
-    # Mark one severe injury as treated so it can regen
-    injuries = getattr(target.db, "injuries", None) or []
-    for i in injuries:
-        if not i.get("treated") and i.get("severity", 1) >= 2:
-            i["treated"] = True
-            target.db.injuries = injuries
-            break
+    rebuild_derived_trauma_views(target)
     # Injury-specific success messages
     if organ_key == "throat":
         msg = "You secure the airway: jaw-thrust, clearance, protection. They are moving air. Still at risk; watch for swelling."
@@ -487,6 +545,90 @@ def attempt_stabilize_organ(operator, target, organ_key, tool_type=None):
     return True, msg
 
 
+def attempt_clean_wound(operator, target, body_part, tool_type=None, tool_obj=None):
+    """Clean and irrigate a wound to lower infection risk before closure."""
+    _ensure_medical_db(target)
+    if tool_type not in TOOL_CAN_CLEAN_WOUND:
+        return False, "You need a medkit or surgical kit to clean and irrigate wounds."
+    wounds = [
+        i for i in (target.db.injuries or [])
+        if (i.get("body_part") or "").strip().lower() == (body_part or "").strip().lower()
+        and (i.get("hp_occupied", 0) or 0) > 0
+    ]
+    if not wounds:
+        return False, "No active wound there to clean."
+    wound = sorted(wounds, key=lambda i: float(i.get("infection_risk", 0.0) or 0.0), reverse=True)[0]
+    success_level, _ = _medicine_roll(operator, difficulty=5, modifier=10 if tool_type == TOOL_SURGICAL_KIT else 5)
+    if success_level == 0:
+        wound["infection_risk"] = min(1.0, float(wound.get("infection_risk", 0.0) or 0.0) + 0.05)
+        return False, "You fail to debride it cleanly; contamination likely increased."
+    wound["cleaned_at"] = time.time()
+    wound["infection_risk"] = max(0.0, float(wound.get("infection_risk", 0.0) or 0.0) - (0.18 if success_level >= 2 else 0.1))
+    _set_injury_treatment_quality(wound, 1 if tool_type == TOOL_MEDKIT else 2)
+    return True, "You irrigate and debride the wound. Tissue looks cleaner and safer for closure."
+
+
+def attempt_treat_infection(operator, target, body_part, tool_type=None, tool_obj=None):
+    """Reduce infection stage/risk on a specific body part."""
+    _ensure_medical_db(target)
+    if tool_type not in TOOL_CAN_TREAT_INFECTION:
+        return False, "You need antibiotics, medkit, or surgical kit to treat infection."
+    wounds = [
+        i for i in (target.db.injuries or [])
+        if (i.get("body_part") or "").strip().lower() == (body_part or "").strip().lower()
+        and int(i.get("infection_stage", 0) or 0) > 0
+    ]
+    if not wounds:
+        return False, "No active infection there."
+    wound = sorted(wounds, key=lambda i: int(i.get("infection_stage", 0) or 0), reverse=True)[0]
+    severe_type = (wound.get("infection_type") in ("chrome_interface_necrosis", "bloodfire_sepsis"))
+    if severe_type and int(wound.get("infection_stage", 0) or 0) >= 3 and tool_type != TOOL_SURGICAL_KIT:
+        return False, "Advanced systemic/interface infection needs surgical debridement on an operating table."
+    infection_key = wound.get("infection_type") or ""
+    antibiotic_targets = set((getattr(getattr(tool_obj, "db", None), "antibiotic_targets", None) or []))
+    profile = getattr(getattr(tool_obj, "db", None), "antibiotic_profile", None) if tool_obj else None
+    if tool_type == TOOL_ANTIBIOTICS:
+        if not antibiotic_targets:
+            mod = 10
+            potency = 0.12
+            suffix = " (generic antibiotics only partially match this infection)"
+        elif infection_key in antibiotic_targets:
+            mod = 18
+            potency = 0.28
+            suffix = ""
+        else:
+            mod = 6
+            potency = 0.08
+            suffix = " (this antibiotic is the wrong spectrum)"
+    else:
+        mod = 10 if tool_type == TOOL_SURGICAL_KIT else 5
+        potency = 0.14
+        suffix = ""
+    success_level, _ = _medicine_roll(operator, difficulty=12 + (4 * int(wound.get("infection_stage", 1) or 1)), modifier=mod)
+    if success_level == 0:
+        wound["infection_risk"] = min(1.0, float(wound.get("infection_risk", 0.0) or 0.0) + 0.08)
+        return False, "The infection does not respond. Fever risk increases."
+    wound["cleaned_at"] = time.time()
+    _set_injury_treatment_quality(wound, 2 if tool_type in (TOOL_ANTIBIOTICS, TOOL_SURGICAL_KIT) else 1)
+    if tool_type == TOOL_ANTIBIOTICS:
+        # Antibiotics now work as a timed course rather than an instant cure.
+        now = time.time()
+        duration = 5400 if success_level >= 3 else (3600 if success_level >= 2 else 2400)
+        active_until = float(wound.get("antibiotic_until", 0.0) or 0.0)
+        wound["antibiotic_until"] = max(active_until, now + duration)
+        wound["antibiotic_potency"] = max(float(wound.get("antibiotic_potency", 0.0) or 0.0), potency)
+        wound["antibiotic_profile"] = profile or "generic"
+        return True, "Antibiotic course started; response will build over time." + suffix
+
+    stage = int(wound.get("infection_stage", 0) or 0)
+    wound["infection_stage"] = max(0, stage - (2 if success_level >= 3 else 1))
+    if wound["infection_stage"] <= 0:
+        wound["infection_type"] = None
+        wound["infection_since"] = 0.0
+    wound["infection_risk"] = max(0.0, float(wound.get("infection_risk", 0.0) or 0.0) - potency)
+    return True, "Infection burden drops: " + INFECTION_STAGE_LABELS.get(max(0, wound["infection_stage"]), "resolved") + suffix
+
+
 def get_treatment_options(operator, target, tools_by_type):
     """
     Given operator, target, and dict tool_type -> list of objects (from inventory), return list of
@@ -497,7 +639,8 @@ def get_treatment_options(operator, target, tools_by_type):
     options = []
 
     # Stop bleeding
-    if (target.db.bleeding_level or 0) > 0:
+    bleed_level, _ = compute_effective_bleed_level(target)
+    if bleed_level > 0:
         for t in TOOL_CAN_STOP_BLEEDING:
             if tools_by_type.get(t):
                 options.append(("bleeding", "Stop bleeding", t, None))
@@ -525,6 +668,35 @@ def get_treatment_options(operator, target, tools_by_type):
             if tools_by_type.get(t):
                 display = ORGAN_TREATMENT_LABEL.get(organ_key, ORGAN_INFO.get(organ_key, (organ_key,))[0])
                 options.append(("organ", display, t, organ_key))
+                break
+
+    # Wound cleaning for contaminated/open wounds.
+    injuries = target.db.injuries or []
+    dirty_parts = sorted({
+        (i.get("body_part") or "").strip().lower()
+        for i in injuries
+        if (i.get("hp_occupied", 0) or 0) > 0 and float(i.get("infection_risk", 0.0) or 0.0) >= 0.15
+    })
+    for part in dirty_parts:
+        if not part:
+            continue
+        for t in TOOL_CAN_CLEAN_WOUND:
+            if tools_by_type.get(t):
+                options.append(("clean", f"Clean wound ({part})", t, part))
+                break
+
+    # Infection treatment options.
+    infected_parts = sorted({
+        (i.get("body_part") or "").strip().lower()
+        for i in injuries
+        if int(i.get("infection_stage", 0) or 0) > 0
+    })
+    for part in infected_parts:
+        if not part:
+            continue
+        for t in TOOL_CAN_TREAT_INFECTION:
+            if tools_by_type.get(t):
+                options.append(("infection", f"Treat infection ({part})", t, part))
                 break
 
     return options

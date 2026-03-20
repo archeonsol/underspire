@@ -16,6 +16,7 @@ from world.combat.tickers import (  # noqa
     start_combat_ticker,
     stop_combat_ticker,
     remove_both_combat_tickers,
+    resume_offensive_schedule,
 )
 from world.combat.utils import (  # noqa
     is_in_combat,
@@ -23,4 +24,5 @@ from world.combat.utils import (  # noqa
     get_combat_target as _get_combat_target,
     set_combat_target as _set_combat_target,
     combat_display_name as _combat_display_name,
+    is_attacking_target,
 )

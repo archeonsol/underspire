@@ -1,5 +1,5 @@
 """
-Medical commands: CmdHt, CmdUse, CmdApply, CmdStabilize, CmdSurgery, CmdDefib.
+Medical commands: CmdHt, CmdUse, CmdApply, CmdStabilize, CmdSedate, CmdSurgery, CmdDefib.
 """
 
 from commands.base_cmds import Command
@@ -82,18 +82,18 @@ class CmdUse(Command):
                 caller.msg("You cannot use that on them.")
                 return
 
+        try:
+            from typeclasses.medical_tools import MedicalTool, Bioscanner, get_medical_tools_from_inventory
+        except ImportError as e:
+            logger.log_trace("medical_cmds.CmdUse import medical_tools: %s" % e)
+            caller.msg("That is not a medical tool.")
+            return
         tool = caller.search(tool_name, location=caller)
         if not tool:
             return
         # Item must be held in either hand to use
         if not _obj_in_hands(caller, tool):
             caller.msg("You need to hold that in your hands to use it. Wield it first (|wwield %s|n)." % tool_name)
-            return
-        try:
-            from typeclasses.medical_tools import MedicalTool, Bioscanner, get_medical_tools_from_inventory
-        except ImportError as e:
-            logger.log_trace("medical_cmds.CmdUse import medical_tools: %s" % e)
-            caller.msg("That is not a medical tool.")
             return
         from typeclasses.medical_tools import Defibrillator
         if isinstance(tool, Defibrillator):
@@ -142,6 +142,50 @@ class CmdUse(Command):
             target.key if hasattr(target, "key") else target.name,
             target.key if hasattr(target, "key") else target.name,
         ))
+
+
+class CmdSedate(Command):
+    """
+    Induce anesthesia on the patient currently lying on an operating table.
+
+    Usage:
+      sedate <target>
+    """
+    key = "sedate"
+    aliases = ["anesthetize", "anaesthetize", "anesthetise", "anaesthetise"]
+    locks = "cmd:all()"
+    help_category = "General"
+
+    def func(self):
+        caller = self.caller
+        args = (self.args or "").strip()
+        if not args:
+            caller.msg("Sedate whom? Usage: sedate <target>")
+            return
+        target = caller.search(args, location=caller.location)
+        if not target:
+            return
+        if not hasattr(target, "db"):
+            caller.msg("You cannot sedate that.")
+            return
+
+        from typeclasses.medical_tools import OperatingTable
+        table = None
+        for obj in caller.location.contents:
+            if isinstance(obj, OperatingTable):
+                table = obj
+                break
+        if not table:
+            caller.msg("There is no operating table here.")
+            return
+        if table.get_patient() != target:
+            caller.msg("They must be the patient lying on the operating table first.")
+            return
+        success, msg = table.use_for_sedation(caller, target)
+        if success:
+            caller.msg("|g" + msg + "|n")
+        else:
+            caller.msg("|r" + (msg or "Sedation failed.") + "|n")
 
 
 class CmdStabilize(Command):
@@ -314,6 +358,9 @@ class CmdApply(Command):
                 if action_id == "organ" and target_info == bodypart_key:
                     choice = (action_id, target_info)
                     break
+                if action_id in ("clean", "infection") and target_info == bodypart.replace(" ", "_"):
+                    choice = (action_id, target_info)
+                    break
                 if action_id == "bleeding" and not bodypart_key:
                     choice = (action_id, target_info)
                     break
@@ -352,9 +399,9 @@ class CmdApply(Command):
 
 class CmdSurgery(Command):
     """
-    Perform organ surgery on a patient lying on the operating table.
+    Perform organ or bone surgery on a patient lying on the operating table.
     Long narrative sequence with skill check; severe organ damage only.
-    Usage: surgery <organ>
+    Usage: surgery <organ|bone>
     """
     key = "surgery"
     aliases = ["operate"]
@@ -365,11 +412,14 @@ class CmdSurgery(Command):
         caller = self.caller
         args = (self.args or "").strip()
         if not args:
-            caller.msg("Surgery on what organ? Usage: surgery <organ> (e.g. surgery heart, surgery liver)")
+            caller.msg("Surgery on what target? Usage: surgery <organ|bone> (e.g. surgery heart, surgery femur)")
             return
-        from world.medical.medical_treatment import ORGAN_ALIASES
+        from world.medical.medical_treatment import ORGAN_ALIASES, BONE_ALIASES
         organ_arg = args.strip().lower()
-        organ_key = ORGAN_ALIASES.get(organ_arg, organ_arg.replace(" ", "_"))
+        normalized = organ_arg.replace(" ", "_")
+        organ_key = ORGAN_ALIASES.get(organ_arg, ORGAN_ALIASES.get(normalized, normalized))
+        bone_key = BONE_ALIASES.get(organ_arg, BONE_ALIASES.get(normalized, normalized))
+        target_key = organ_key if organ_key in ORGAN_ALIASES.values() else bone_key
         from typeclasses.medical_tools import OperatingTable
         table = None
         for obj in caller.location.contents:
@@ -384,11 +434,11 @@ class CmdSurgery(Command):
             caller.msg("No one is on the operating table. They must use 'lie on operating table' first.")
             return
         from world.medical.medical_surgery import start_surgery_sequence
-        from world.medical import ORGAN_INFO
-        if organ_key not in ORGAN_INFO:
-            caller.msg("Unknown organ. Try: brain, eyes, throat, carotid, heart, lungs, spine_cord, liver, spleen, stomach, kidneys, pelvic_organs, collarbone_area.")
+        from world.medical import ORGAN_INFO, BONE_INFO
+        if target_key not in ORGAN_INFO and target_key not in BONE_INFO:
+            caller.msg("Unknown surgical target. Try organs (heart, lungs, liver) or bones (femur, humerus, ribs, spine).")
             return
-        started, err = start_surgery_sequence(caller, patient, table, organ_key)
+        started, err = start_surgery_sequence(caller, patient, table, target_key)
         if not started:
             caller.msg(err or "You cannot perform that surgery now.")
 

@@ -22,14 +22,14 @@ def _combat_caller(cmd_self):
 
 class CmdStance(Command):
     """
-    Set your combat stance: balanced (default), aggressive (+attack, -defense), or defensive (-attack, +defense).
-    Usage: stance [balanced|aggressive|defensive]
+    Set your combat stance.
+    Usage: stance [allin|aggressive|neutral|defensive|turtle]
     """
     key = "stance"
     aliases = ["combat stance"]
     locks = "cmd:all()"
     help_category = "Combat"
-    STANCES = ("balanced", "aggressive", "defensive")
+    STANCES = ("allin", "aggressive", "neutral", "defensive", "turtle")
 
     def func(self):
         caller = _combat_caller(self)
@@ -37,9 +37,15 @@ class CmdStance(Command):
             self.caller.msg("You must be in character to do that.")
             return
         arg = (self.args or "").strip().lower()
+        if arg == "balanced":
+            arg = "neutral"
         if not arg:
-            current = getattr(caller.db, "combat_stance", None) or "balanced"
-            caller.msg("Your combat stance is |w{}|n. Use |wstance balanced|n, |wstance aggressive|n, or |wstance defensive|n to change.".format(current))
+            current = (getattr(caller.db, "combat_stance", None) or "neutral").lower()
+            if current == "balanced":
+                current = "neutral"
+            caller.msg(
+                "Your combat stance is |w{}|n. Use |wstance allin|n, |wstance aggressive|n, |wstance neutral|n, |wstance defensive|n, or |wstance turtle|n.".format(current)
+            )
             return
         if arg not in self.STANCES:
             caller.msg("Stance must be one of: {}.".format(", ".join(self.STANCES)))
@@ -60,9 +66,12 @@ class CmdAttack(Command):
     usage_hint = "|wattack <them>|n (when wielding a weapon)"
 
     def func(self):
-        caller = self.caller
+        caller = _combat_caller(self)
         target = caller.search(self.args)
         if not target:
+            return
+        if target == caller:
+            caller.msg("You can't attack yourself.")
             return
         try:
             from typeclasses.corpse import Corpse
@@ -87,13 +96,6 @@ class CmdAttack(Command):
             if getattr(target.db, "current_hp", None) is not None and target.db.current_hp <= 0:
                 caller.msg(f"|r{_combat_display_name(target, caller)} is already dead.|n")
                 return
-        try:
-            from world.rpg.stamina import is_exhausted
-            if is_exhausted(caller):
-                caller.msg("You're too tired to fight.")
-                return
-        except ImportError as e:
-            logger.log_trace("combat_cmds.CmdAttack stamina check: %s" % e)
         # If you're holding them in a grapple, attack = strangle (stamina drain until knockout); starts recurring tick
         if getattr(caller.db, "grappling", None) == target:
             from world.combat.grapple import grapple_strike, start_grapple_strike_ticker
@@ -104,9 +106,19 @@ class CmdAttack(Command):
             else:
                 caller.msg("|r%s|n" % msg)
             return
+        # If attacking into an active grapple pair, engage combat first so third parties can pressure release.
+        if getattr(target.db, "grappled_by", None) or getattr(target.db, "grappling", None):
+            start_combat_ticker(caller, target)
+            caller.msg("|yYou wade into the grapple, forcing a direct fight.|n")
+            return
         current = _get_combat_target(caller)
         if current == target:
-            caller.msg("|yYou're already fighting them.|n")
+            from world.combat.tickers import resume_offensive_schedule
+
+            if resume_offensive_schedule(caller, target):
+                caller.msg("|yYou press the attack again.|n")
+            else:
+                caller.msg("|yYou're already pressing the attack.|n")
             return
         if current and current != target:
             stop_combat_ticker(caller, current)
@@ -116,7 +128,7 @@ class CmdAttack(Command):
         if getattr(target.db, "is_creature", False):
             target.db.current_target = caller
             try:
-                from world.creature_combat import start_creature_ai_ticker
+                from world.combat.creature_combat import start_creature_ai_ticker
                 start_creature_ai_ticker(target)
             except Exception as e:
                 logger.log_trace("combat_cmds.CmdAttack creature_combat: %s" % e)
@@ -124,11 +136,12 @@ class CmdAttack(Command):
 
 class CmdStop(Command):
     """
-    Stops the automated combat sequence.
+    Stop your attack swings against someone; you stay engaged (range, cover) until they stop too.
+    When neither of you is pressing an attack anymore, the fight ends for both.
     Usage: stop attacking [target]
     """
     key = "stop"
-    aliases = ["cease", "retreat"]
+    aliases = ["cease"]
     locks = "cmd:all()"
     help_category = "Combat"
 
@@ -174,6 +187,7 @@ class CmdStop(Command):
 class CmdFlee(Command):
     """
     Try to break away from combat and run. Contested evasion roll vs your opponent.
+    Once per combat turn: using flee commits you and skips your next strike (same as advance/retreat).
     Without a direction you flee to a random exit; with a direction you try that exit.
     Usage: flee [direction]
     """
@@ -229,9 +243,18 @@ class CmdFlee(Command):
         if not dest or not hasattr(caller, "move_to"):
             caller.msg("You can't flee that way.")
             return
+        if getattr(caller.db, "combat_flee_attempted", False):
+            caller.msg(
+                "|yYou've already tried to break away this round. Wait until after your next combat turn.|n"
+            )
+            return
+        caller.db.combat_skip_next_turn = True
+        caller.db.combat_flee_attempted = True
         from world.skills import SKILL_STATS, DEFENSE_SKILL
+        from world.combat.cover import get_suppressed_flee_penalty
         defense_stats = SKILL_STATS.get(DEFENSE_SKILL, ["agility", "perception"])
-        _, flee_val = caller.roll_check(defense_stats, DEFENSE_SKILL, modifier=0)
+        flee_mod = int(get_suppressed_flee_penalty(caller) or 0)
+        _, flee_val = caller.roll_check(defense_stats, DEFENSE_SKILL, modifier=flee_mod)
         _, opp_val = opponent.roll_check(defense_stats, DEFENSE_SKILL, modifier=0)
         if flee_val <= opp_val:
             caller.msg("|rYou couldn't break away!|n")
@@ -244,16 +267,6 @@ class CmdFlee(Command):
             return
         remove_both_combat_tickers(caller, opponent)
         victim = getattr(caller.db, "grappling", None)
-        if getattr(caller.db, "grappled_by", None) == opponent:
-            caller.db.grappled_by = None
-            # Break-away clears grappled state; remove grapple command lock too.
-            try:
-                from world.combat.grapple import _clear_grappled_cmdset
-                _clear_grappled_cmdset(caller)
-            except Exception:
-                pass
-            if hasattr(opponent.db, "grappling") and opponent.db.grappling == caller:
-                opponent.db.grappling = None
         dir_name = (getattr(exit_obj, "key", None) or "away").strip()
         caller.move_to(dest)
         if victim and hasattr(victim, "move_to"):
@@ -263,6 +276,7 @@ class CmdFlee(Command):
                     if v in (caller, victim):
                         continue
                     v.msg("%s is dragged in by %s." % (_combat_display_name(victim, v), _combat_display_name(caller, v)))
+            caller.msg("|yYou keep your hold and drag them with you.|n")
         caller.msg("|gYou break away and flee %s!|n" % dir_name)
         opponent.msg("|r%s breaks away and flees %s!|n" % (_combat_display_name(caller, opponent), dir_name))
         if loc and hasattr(loc, "contents_get"):
@@ -413,3 +427,5 @@ class CmdExecute(Command):
             caller.msg("Execution is not available.")
             return
         make_permanent_death(target, attacker=caller, reason="executed")
+
+

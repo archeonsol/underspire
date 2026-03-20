@@ -106,6 +106,20 @@ COMBAT_ROLLS = {
 COMBAT_DEBUG_ROLLS = False
 
 ######################################################################
+# Module-based object prototypes (Evennia)
+######################################################################
+PROTOTYPE_MODULES = [
+    "world.prototypes.tailoring_prototypes",
+    "world.prototypes.weapon_prototypes",
+    "world.prototypes.food_prototypes",
+    "world.prototypes.drink_prototypes",
+    "world.prototypes.alcohol_prototypes",
+    "world.prototypes.performance_prototypes",
+    "world.prototypes.medical_prototypes",
+    "world.prototypes.armor_prototypes",
+]
+
+######################################################################
 # Settings given in secret_settings.py override those in this file.
 ######################################################################
 try:

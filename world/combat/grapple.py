@@ -10,6 +10,14 @@ import time
 from evennia.utils import delay
 from evennia.utils.search import search_object
 from evennia import TICKER_HANDLER as ticker
+from world.combat.utils import combat_display_name as _combat_display_name
+from world.combat.range_system import (
+    validate_grapple_range,
+    RANGE_CLINCH,
+    RANGE_CLOSE,
+    set_combat_range,
+)
+from world.combat.cover import force_leave_cover
 
 # Delay (seconds) between "lunge" and resolution
 GRAPPLE_DELAY_MIN, GRAPPLE_DELAY_MAX = 3.0, 4.0
@@ -35,24 +43,6 @@ UNCONSCIOUS_WAKE_MAX = 30   # seconds (endurance scales within this range)
 
 # Unarmed flat bonus for holding/contesting the grapple (third party grab and defender both use it).
 GRAPPLE_UNARMED_BONUS = 5
-
-
-def _combat_display_name(char, viewer):
-    """Display name for char as seen by viewer (sdesc/recog for Characters)."""
-    if char is None:
-        return "Someone"
-    if viewer is not None and hasattr(char, "get_display_name"):
-        out = char.get_display_name(viewer)
-        if out:
-            return out
-    return getattr(char, "name", None) or getattr(char, "key", None) or "Someone"
-
-
-try:
-    from world.combat import _combat_display_name as _combat_display_name_from_combat
-    _combat_display_name = _combat_display_name_from_combat
-except ImportError:
-    pass
 
 
 def _apply_grappled_cmdset(character):
@@ -87,19 +77,31 @@ def _roll_result(character, stat_list, skill_name, modifier=0):
     return character.roll_check(stat_list, skill_name, modifier=modifier)
 
 
-def _resolve_grapple_callback(grappler_id, victim_id):
-    """Called after GRAPPLE_DELAY: run the roll and send phase-2 messages."""
+def _resolve_pair(grappler_id, victim_id):
     try:
         g = search_object("#%s" % grappler_id)
         v = search_object("#%s" % victim_id)
         if not g or not v:
-            return
-        grappler, victim = g[0], v[0]
+            return None, None
+        return g[0], v[0]
     except Exception:
+        return None, None
+
+
+def _validate_grapple_resolution(actor, victim, actor_err="|yThe moment passed; the grapple doesn't connect.|n"):
+    if not actor or not victim or actor.location != victim.location:
+        if hasattr(actor, "msg") and actor:
+            actor.msg(actor_err)
+        return False
+    return True
+
+
+def _resolve_grapple_callback(grappler_id, victim_id):
+    """Called after GRAPPLE_DELAY: run the roll and send phase-2 messages."""
+    grappler, victim = _resolve_pair(grappler_id, victim_id)
+    if not grappler or not victim:
         return
-    if not grappler or not victim or grappler.location != victim.location:
-        if hasattr(grappler, "msg") and grappler:
-            grappler.msg("|yThe moment passed; the grapple doesn't connect.|n")
+    if not _validate_grapple_resolution(grappler, victim):
         return
     if getattr(victim.db, "grappled_by", None) or getattr(grappler.db, "grappling", None):
         if hasattr(grappler, "msg") and grappler:
@@ -133,6 +135,9 @@ def start_grapple_attempt(grappler, victim):
     Phase 1: validate, send tense/lunge messages, then schedule resolution after 3–4s.
     Returns (started: bool, error_message: str or None).
     """
+    allowed, err = validate_grapple_range(grappler, victim)
+    if not allowed:
+        return False, err
     if not grappler or not victim or grappler == victim:
         return False, "You cannot grapple that."
     if getattr(victim.db, "grappled_by", None):
@@ -177,17 +182,10 @@ def start_grapple_attempt(grappler, victim):
 
 def _resolve_third_party_grapple_callback(third_party_id, victim_id):
     """Called after GRAPPLE_DELAY: run the contested roll and send result messages."""
-    try:
-        tp = search_object("#%s" % third_party_id)
-        v = search_object("#%s" % victim_id)
-        if not tp or not v:
-            return
-        third_party, victim = tp[0], v[0]
-    except Exception:
+    third_party, victim = _resolve_pair(third_party_id, victim_id)
+    if not third_party or not victim:
         return
-    if not third_party or not victim or third_party.location != victim.location:
-        if hasattr(third_party, "msg") and third_party:
-            third_party.msg("|yThe moment passed; the grapple doesn't connect.|n")
+    if not _validate_grapple_resolution(third_party, victim):
         return
     grappler = getattr(victim.db, "grappled_by", None)
     if not grappler or getattr(grappler.db, "grappling", None) != victim:
@@ -257,6 +255,9 @@ def attempt_grapple(grappler, victim):
     Step 2: Agility vs Agility, both use evasion; step 1 result adds buff.
     Returns (success: bool, message: str).
     """
+    allowed, err = validate_grapple_range(grappler, victim)
+    if not allowed:
+        return False, err
     if not grappler or not victim or grappler == victim:
         return False, "You cannot grapple that."
     if getattr(victim.db, "grappled_by", None):
@@ -275,27 +276,29 @@ def attempt_grapple(grappler, victim):
     except ImportError:
         pass
 
-    # Auto-succeed if victim is sitting or lying (on seat, bed, or operating table)
+    # Sitting/lying is easier to grab but still allows counterplay.
     is_seated = getattr(victim.db, "sitting_on", None) is not None
     is_lying_on = getattr(victim.db, "lying_on", None) is not None
     is_on_table = getattr(victim.db, "lying_on_table", None) is not None
-    if not (is_seated or is_lying_on or is_on_table):
-        r1, v1 = _roll_result(grappler, ["agility"], "unarmed", modifier=5)
-        r2, v2 = _roll_result(victim, ["perception"], "evasion")
-        step1_attacker_won = v1 > v2
+    opening_bonus = 15 if (is_seated or is_lying_on or is_on_table) else 5
+    r1, v1 = _roll_result(grappler, ["agility"], "unarmed", modifier=opening_bonus)
+    r2, v2 = _roll_result(victim, ["perception"], "evasion")
+    step1_attacker_won = v1 > v2
 
-        # Step 2: Agility vs Agility, both evasion; apply step 1 buffs
-        mod_grappler = STEP1_ATTACKER_BUFF if step1_attacker_won else -STEP1_DEFENDER_BUFF
-        mod_victim = STEP1_DEFENDER_BUFF if not step1_attacker_won else -STEP1_ATTACKER_BUFF
-        g2, vg2 = _roll_result(grappler, ["agility"], "evasion", modifier=mod_grappler)
-        g2v, vv2 = _roll_result(victim, ["agility"], "evasion", modifier=mod_victim)
+    # Step 2: Agility vs Agility, both evasion; apply step 1 buffs
+    mod_grappler = STEP1_ATTACKER_BUFF if step1_attacker_won else -STEP1_DEFENDER_BUFF
+    mod_victim = STEP1_DEFENDER_BUFF if not step1_attacker_won else -STEP1_ATTACKER_BUFF
+    g2, vg2 = _roll_result(grappler, ["agility"], "evasion", modifier=mod_grappler)
+    g2v, vv2 = _roll_result(victim, ["agility"], "evasion", modifier=mod_victim)
 
-        if vg2 <= vv2:
-            return False, "You grab at them but they slip free. The grapple fails."
+    if vg2 <= vv2:
+        return False, "You grab at them but they slip free. The grapple fails."
 
     # Grapple lands: set state and clear sitting/lying/table
     victim.db.grappled_by = grappler
     grappler.db.grappling = victim
+    set_combat_range(grappler, victim, RANGE_CLINCH)
+    force_leave_cover(victim, reason_msg="|rYou're pulled from cover!|n")
     str_display = getattr(grappler, "get_display_stat", lambda x: 0)("strength") or 0
     victim.db.grapple_hold_strength = HOLD_STRENGTH_BASE + (str_display * HOLD_STRENGTH_PER_STR // 10)
     for key in ("lying_on_table", "sitting_on", "lying_on"):
@@ -422,6 +425,8 @@ def attempt_grapple_third_party(third_party, victim):
     # New grapple: third_party now holds victim
     victim.db.grappled_by = third_party
     third_party.db.grappling = victim
+    set_combat_range(third_party, victim, RANGE_CLINCH)
+    force_leave_cover(victim, reason_msg="|rYou're pulled from cover!|n")
     str_display = getattr(third_party, "get_display_stat", lambda x: 0)("strength") or 0
     victim.db.grapple_hold_strength = HOLD_STRENGTH_BASE + (str_display * HOLD_STRENGTH_PER_STR // 10)
     victim.db.grapple_resist_cooldown = time.time()
@@ -444,6 +449,7 @@ def release_grapple(grappler):
         if hasattr(victim.db, key):
             victim.attributes.remove(key)
     _clear_grappled_cmdset(victim)
+    set_combat_range(grappler, victim, RANGE_CLOSE)
     return True, "You release {}.".format(_combat_display_name(victim, grappler))
 
 
@@ -464,6 +470,7 @@ def release_grapple_forced(grappler, room_message=None):
         if hasattr(victim.db, key):
             victim.attributes.remove(key)
     _clear_grappled_cmdset(victim)
+    set_combat_range(grappler, victim, RANGE_CLOSE)
     if room_message and grappler.location:
         loc = grappler.location
         if hasattr(loc, "contents_get"):
@@ -496,9 +503,7 @@ def attempt_resist(victim):
     if now - last < RESIST_COOLDOWN:
         return False, "You need a moment before you can try again.", ""
     try:
-        from world.rpg.stamina import is_exhausted, spend_stamina, STAMINA_COST_RESIST_GRAPPLE
-        if is_exhausted(victim):
-            return False, "You're too tired to resist.", ""
+        from world.rpg.stamina import spend_stamina, STAMINA_COST_RESIST_GRAPPLE
         if (getattr(victim, "stamina", 0) or 0) < STAMINA_COST_RESIST_GRAPPLE:
             return False, "You're too tired to resist.", ""
         spend_stamina(victim, STAMINA_COST_RESIST_GRAPPLE)
@@ -521,6 +526,7 @@ def attempt_resist(victim):
             if hasattr(victim.db, key):
                 victim.attributes.remove(key)
         _clear_grappled_cmdset(victim)
+        set_combat_range(grappler, victim, RANGE_CLOSE)
         return True, "You wrench free of {}'s grasp!".format(_combat_display_name(grappler, victim)), "{} breaks free of your grasp!".format(_combat_display_name(victim, grappler))
     return False, "You strain but cannot break free yet. Your efforts weaken their hold.", "{} struggles but you keep hold.".format(_combat_display_name(victim, grappler))
 
@@ -557,7 +563,13 @@ def _wake_unconscious_callback(character_id):
         return
     if not getattr(character.db, "unconscious", False):
         return
+    wake_at = float(getattr(character.db, "unconscious_until", 0.0) or 0.0)
+    now = time.time()
+    if wake_at > now:
+        delay(max(1.0, wake_at - now), _wake_unconscious_callback, character.id)
+        return
     character.db.unconscious = False
+    character.db.unconscious_until = 0.0
     prev_pose = getattr(character.db, "_unconscious_prev_room_pose", None)
     if prev_pose is not None:
         character.db.room_pose = prev_pose
@@ -582,16 +594,30 @@ def set_unconscious(character):
     Put character in knocked-out state: lock commands (UnconsciousCmdSet), set room pose, schedule wake.
     Call after grapple strike drains their stamina to 0.
     """
+    secs = get_unconscious_wake_seconds(character)
+    set_unconscious_for_seconds(character, secs)
+
+
+def set_unconscious_for_seconds(character, seconds):
+    """
+    Put character in knocked-out state for at least `seconds`.
+    Uses the same unconscious cmdset/pose path as grapple KO.
+    """
     if not character or not getattr(character, "db", None):
         return
+    now = time.time()
+    secs = max(1.0, float(seconds or 0.0))
     character.db.unconscious = True
-    character.db._unconscious_prev_room_pose = getattr(character.db, "room_pose", None) or "standing here"
+    until = now + secs
+    old_until = float(getattr(character.db, "unconscious_until", 0.0) or 0.0)
+    character.db.unconscious_until = max(old_until, until)
+    if not hasattr(character.db, "_unconscious_prev_room_pose"):
+        character.db._unconscious_prev_room_pose = getattr(character.db, "room_pose", None) or "standing here"
     character.db.room_pose = "lying here, unconscious"
     try:
         character.cmdset.add("commands.default_cmdsets.UnconsciousCmdSet")
     except Exception:
         pass
-    secs = get_unconscious_wake_seconds(character)
     delay(secs, _wake_unconscious_callback, character.id)
 
 
@@ -614,9 +640,7 @@ def grapple_strike(grappler, victim):
     except ImportError:
         pass
     try:
-        from world.rpg.stamina import is_exhausted, spend_stamina, STAMINA_COST_GRAPPLE_STRIKE
-        if is_exhausted(grappler):
-            return False, "You're too tired to keep strangling."
+        from world.rpg.stamina import spend_stamina, STAMINA_COST_GRAPPLE_STRIKE
         cur = getattr(grappler.db, "current_stamina", None)
         if (cur is None and hasattr(grappler, "max_stamina")):
             grappler.db.current_stamina = grappler.max_stamina

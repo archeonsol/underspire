@@ -6,6 +6,14 @@ Injury slots: each wound occupies HP until it heals; minor self-heal, severe nee
 """
 import random
 import time
+import uuid
+from world.medical.core import (
+    _ensure_medical_db,
+    _injury_type_for_weapon,
+    _cardiovascular_resistance,
+    TREATMENT_QUALITY_LABELS,
+    ORGAN_MECHANICAL_EFFECTS,
+)
 
 # -----------------------------------------------------------------------------
 # Canonical body part list (severity order: index 0 = glancing, -1 = devastating)
@@ -207,22 +215,7 @@ def _bleeding_gory_message(body_part, vessel_type, new_level, severity_word, vag
     return (atk, def_)
 
 
-def _ensure_medical_db(character):
-    """Ensure character has medical attributes."""
-    if character.db.organ_damage is None:
-        character.db.organ_damage = {}
-    if character.db.fractures is None:
-        character.db.fractures = []  # list of bone keys
-    if character.db.bleeding_level is None:
-        character.db.bleeding_level = 0
-    if character.db.splinted_bones is None:
-        character.db.splinted_bones = []  # bones that have been splinted (reduces combat penalty)
-    if character.db.stabilized_organs is None:
-        character.db.stabilized_organs = {}  # organ_key -> True if stabilized this session (no repeated stabilize)
-    # db.body_part_injuries was a vestigial structure (never populated in gameplay).
-    # Appearance now reads from db.injuries via get_untreated_injuries_by_part().
-    if character.db.bandaged_body_parts is None:
-        character.db.bandaged_body_parts = []  # body parts that have been bandaged (for treated look text)
+# _ensure_medical_db moved to world.medical.core.
 
 
 # Bone key -> body parts that contain that bone (for splinted descriptor on look)
@@ -231,105 +224,49 @@ for _part, _bones in BODY_PART_BONES.items():
     for _b in _bones:
         BONE_TO_BODY_PARTS.setdefault(_b, []).append(_part)
 
-# Severity (1-4) -> wording per injury type. Used for "They have a {wording} on their {body_part}."
-INJURY_SEVERITY_WORDING = {
-    "cut": {1: "a minor cut", 2: "a weeping cut", 3: "a deep cut", 4: "a grievous laceration"},
-    "bruise": {1: "a bruise", 2: "heavy bruising", 3: "a severe contusion", 4: "massive contusion"},
-    "gunshot": {1: "a graze", 2: "a gunshot wound", 3: "a severe gunshot wound", 4: "a critical gunshot wound"},
-    "trauma": {1: "an abrasion", 2: "bruising", 3: "heavy impact trauma", 4: "severe trauma"},
-    "arcane": {1: "a minor arcane burn", 2: "an arcane wound", 3: "a severe arcane wound", 4: "a critical arcane wound"},
-    "surgery": {1: "a small incision", 2: "a surgical incision", 3: "a deep surgical wound", 4: "a major surgical wound"},
-}
-# Plural form for "two X" / "multiple X" when same part has several of same type+severity
-INJURY_SEVERITY_PLURAL = {
-    "cut": {1: "minor cuts", 2: "weeping cuts", 3: "deep cuts", 4: "grievous lacerations"},
-    "bruise": {1: "bruises", 2: "areas of heavy bruising", 3: "severe contusions", 4: "massive contusions"},
-    "gunshot": {1: "grazes", 2: "gunshot wounds", 3: "severe gunshot wounds", 4: "critical gunshot wounds"},
-    "trauma": {1: "abrasions", 2: "areas of bruising", 3: "heavy impact trauma", 4: "areas of severe trauma"},
-    "arcane": {1: "minor arcane burns", 2: "arcane wounds", 3: "severe arcane wounds", 4: "critical arcane wounds"},
-    "surgery": {1: "small incisions", 2: "surgical incisions", 3: "deep surgical wounds", 4: "major surgical wounds"},
-}
+from world.medical.descriptions import (
+    INJURY_SEVERITY_WORDING,
+    INJURY_SEVERITY_PLURAL,
+    _pronoun_sub_poss,
+    _pronoun_verb_has_have,
+    format_body_part_injuries,
+    get_untreated_injuries_by_part,
+)
 # Injury type resolved via world.combat.damage_types.get_damage_type -> DAMAGE_TYPE_TO_INJURY_TYPE
-def _injury_type_for_weapon(weapon_key, weapon_obj=None):
-    # Surgery is a special non-combat weapon key used by cyberware installation/removal.
-    if weapon_key == "surgery":
-        return "surgery"
-    from world.combat.damage_types import get_damage_type, DAMAGE_TYPE_TO_INJURY_TYPE
-    return DAMAGE_TYPE_TO_INJURY_TYPE.get(get_damage_type(weapon_key, weapon_obj), "trauma")
+# _injury_type_for_weapon moved to world.medical.core.
 
 
-def _pronoun_sub_poss(character):
-    """Return (Sub, poss) for third-person: He/his, She/her, They/their."""
-    key = (getattr(character.db, "pronoun", None) or "neutral").lower()
-    from world.rpg.emote import PRONOUN_MAP
-    sub, poss, _ = PRONOUN_MAP.get(key, PRONOUN_MAP["neutral"])
-    return (sub or "They").capitalize(), (poss or "their")
-
-
-def _pronoun_verb_has_have(character):
-    """Return 'have' for they/neutral, 'has' for he/she (subject-verb agreement)."""
-    key = (getattr(character.db, "pronoun", None) or "neutral").lower()
-    from world.rpg.emote import PRONOUN_MAP
-    sub, _, _ = PRONOUN_MAP.get(key, PRONOUN_MAP["neutral"])
-    return "have" if (sub or "they").lower() == "they" else "has"
-
-
-def format_body_part_injuries(character, body_part, part_entries):
-    """
-    Turn a list of injury entries (dicts with type/severity, or legacy strings) into one combined line.
-    Multiple same type+severity become "two deep cuts" / "multiple deep cuts"; mixed become "X and Y on their part."
-    """
-    if not part_entries:
-        return ""
-    # Legacy: list of pre-formatted strings -> join as-is (no aggregation)
-    if isinstance(part_entries[0], str):
-        return " ".join(part_entries).strip()
-    from collections import Counter
-    sub, poss = _pronoun_sub_poss(character)
-    verb = _pronoun_verb_has_have(character)
-    groups = Counter((e.get("type", "trauma"), e.get("severity", 1)) for e in part_entries if isinstance(e, dict))
-    wording_map = INJURY_SEVERITY_WORDING
-    plural_map = INJURY_SEVERITY_PLURAL
-    bits = []
-    for (itype, sev), count in groups.items():
-        w = wording_map.get(itype, wording_map["trauma"])
-        p = plural_map.get(itype, plural_map["trauma"])
-        singular = w.get(sev, w[1])
-        plural_phrase = p.get(sev, p[1])
-        if count == 1:
-            bits.append(singular)
-        elif count == 2:
-            bits.append(f"two {plural_phrase}")
-        else:
-            bits.append(f"multiple {plural_phrase}")
-    if not bits:
-        return ""
-    combined = " and ".join(bits)
-    return f"|r{sub} {verb} {combined} on {poss} {body_part}.|n"
-
-
-def get_untreated_injuries_by_part(character):
-    """
-    Return dict body_part -> list of {type, severity} for injuries that are not treated.
-    Used for look: show wound line only for untreated injuries; treated parts show bandaged/splinted instead.
-    """
-    injuries = getattr(character.db, "injuries", None) or []
-    by_part = {}
-    for i in injuries:
-        if i.get("treated"):
-            continue
-        part = (i.get("body_part") or "").strip()
-        if not part:
-            continue
-        by_part.setdefault(part, []).append({
-            "type": i.get("type", "trauma"),
-            "severity": i.get("severity", 1),
-        })
-    return by_part
+# Description functions moved to world.medical.descriptions; imported above.
 
 
 # Injury slot system: wounds occupy HP until healed. Regen runs periodically.
 REGEN_INTERVAL_SECS = 600  # 10 min IRL between regen ticks per character
+REGEN_PARALLEL_EFFICIENCY = 0.7  # Multi-wound regen: first wound full, others at reduced efficiency.
+
+from world.medical.infection import (
+    INFECTION_CATALOG,
+    INFECTION_STAGE_LABELS,
+    INFECTION_STAGE_PENALTIES,
+    INFECTION_RISK_THRESHOLD,
+    INFECTION_STAGE_ADVANCE_SECS,
+    get_infection_penalties,
+    get_infection_readout,
+    apply_infection_tick,
+)
+
+from world.medical.injuries import (
+    BLEED_DAMPENING_FACTOR,
+    BLEED_RATE_TO_LEVEL,
+    _set_injury_treatment_quality,
+    ensure_injury_schema,
+    _normalize_injuries,
+    rebuild_derived_trauma_views,
+    get_active_bleed_wounds,
+    compute_effective_bleed_level,
+)
+
+
+# Infection logic moved to world.medical.infection; imported above.
 
 
 def add_injury(character, hp_occupied, body_part=None, weapon_key="fists", weapon_obj=None):
@@ -342,16 +279,21 @@ def add_injury(character, hp_occupied, body_part=None, weapon_key="fists", weapo
     _ensure_medical_db(character)
     severity = 1 if hp_occupied <= 6 else (2 if hp_occupied <= 15 else (3 if hp_occupied <= 28 else 4))
     injury_type = _injury_type_for_weapon(weapon_key, weapon_obj)
-    injury = {
+    injury = ensure_injury_schema({
+        "injury_id": str(uuid.uuid4()),
         "hp_occupied": int(hp_occupied),
         "severity": severity,
         "body_part": body_part or "",
         "type": injury_type,
         "treated": False,
         "created_at": time.time(),
-    }
+        "infection_risk": min(0.4, 0.03 * severity),
+    })
     character.db.injuries = (character.db.injuries or []) + [injury]
+    rebuild_derived_trauma_views(character)
+    compute_effective_bleed_level(character)
     _schedule_regen_if_needed(character)
+    return injury.get("injury_id")
 
 
 def _schedule_regen_if_needed(character):
@@ -397,42 +339,59 @@ def _process_one_regen(character):
     eligible = [i for i in injuries if i["hp_occupied"] > 0 and (i["severity"] == 1 or i.get("treated"))]
     if not eligible:
         return
-    injury = eligible[0]
-    injury["hp_occupied"] -= 1
-    character.db.current_hp = min(max_hp, current + 1)
-    if injury["hp_occupied"] <= 0:
-        healed_part = (injury.get("body_part") or "").strip()
-        was_treated = injury.get("treated")
-        character.db.injuries = [i for i in injuries if i["hp_occupied"] > 0]
-        # If healed injury was treated, remove that part from bandaged_body_parts if no other treated injury there
-        if was_treated and healed_part:
-            bandaged = getattr(character.db, "bandaged_body_parts", None) or []
-            if healed_part in bandaged:
-                remaining_treated_on_part = [
-                    i for i in character.db.injuries
-                    if (i.get("body_part") or "").strip() == healed_part and i.get("treated")
-                ]
-                if not remaining_treated_on_part:
-                    character.db.bandaged_body_parts = [p for p in bandaged if p != healed_part]
-    else:
-        character.db.injuries = injuries
+    healed_total = 0
+    for idx, injury in enumerate(eligible):
+        if character.db.current_hp >= max_hp:
+            break
+        quality = int(injury.get("treatment_quality", 0) or 0)
+        quality_mult = 1.0 + (0.2 * quality)
+        heal_amt = (1.0 if idx == 0 else REGEN_PARALLEL_EFFICIENCY) * quality_mult
+        old_hp = injury["hp_occupied"]
+        injury["hp_occupied"] = max(0, old_hp - heal_amt)
+        healed = max(0.0, old_hp - injury["hp_occupied"])
+        healed_total += healed
+        # Super-rare complications on treated wounds.
+        if injury.get("treated") and random.random() < 0.003:
+            complication_roll = random.random()
+            if complication_roll < 0.45:
+                injury["bleed_treated"] = False
+                injury["bleed_rate"] = max(0.8, float(injury.get("bleed_rate", 0.0) or 0.0) + 0.7)
+                character.msg("|yA treated wound reopens under strain. Seek care again.|n")
+            elif complication_roll < 0.8:
+                injury["infection_risk"] = min(1.0, float(injury.get("infection_risk", 0.0) or 0.0) + 0.12)
+                character.msg("|yA postoperative complication forms under the dressing. You need follow-up care.|n")
+            else:
+                injury["hp_occupied"] = min(float(injury.get("hp_occupied", 0.0) or 0.0) + 1.0, 999.0)
+                character.msg("|yA hematoma forms and recovery slows. You should be re-evaluated.|n")
+    if healed_total > 0:
+        character.db.current_hp = min(max_hp, current + int(round(healed_total)))
+
+    # Remove fully healed injuries and clean treatment cosmetics.
+    remaining = []
+    healed_parts = []
+    for injury in injuries:
+        if injury.get("hp_occupied", 0) > 0:
+            remaining.append(injury)
+        else:
+            healed_parts.append(((injury.get("body_part") or "").strip(), injury.get("treated")))
+    character.db.injuries = remaining
+    if healed_parts:
+        bandaged = getattr(character.db, "bandaged_body_parts", None) or []
+        for healed_part, was_treated in healed_parts:
+            if not (was_treated and healed_part and healed_part in bandaged):
+                continue
+            remaining_treated_on_part = [
+                i for i in remaining
+                if (i.get("body_part") or "").strip() == healed_part and i.get("treated")
+            ]
+            if not remaining_treated_on_part:
+                bandaged = [p for p in bandaged if p != healed_part]
+        character.db.bandaged_body_parts = bandaged
+    rebuild_derived_trauma_views(character)
+    compute_effective_bleed_level(character)
 
 
-def _cardiovascular_resistance(character):
-    """Better endurance = slightly harder to cause severe bleeding. Uses stat level 0-300."""
-    try:
-        from world.levels import level_to_effective_grade, letter_to_level_range, MAX_STAT_LEVEL
-        end = (character.db.stats or {}).get("endurance", 0)
-        if isinstance(end, str):
-            lo, hi = letter_to_level_range(end.upper(), MAX_STAT_LEVEL)
-            end = (lo + hi) // 2
-        val = level_to_effective_grade(end if isinstance(end, int) else 0, MAX_STAT_LEVEL)
-        return 1.0 - (val - 5) * 0.02  # 0.84 to 1.16 roughly; clamp in use
-    except Exception:
-        return 1.0
-
-
-def apply_trauma(character, body_part, damage, is_critical=False, weapon_key="fists", weapon_obj=None):
+def apply_trauma(character, body_part, damage, is_critical=False, weapon_key="fists", weapon_obj=None, injury_id=None):
     """
     Apply trauma from a hit: possible organ damage, fracture, and bleeding.
     Multipliers are damage-type × body-region (e.g. slashing on neck = high bleed; impact on limb = high fracture).
@@ -447,6 +406,9 @@ def apply_trauma(character, body_part, damage, is_critical=False, weapon_key="fi
     from world.combat.damage_types import get_damage_type, get_trauma_multipliers
 
     _ensure_medical_db(character)
+    injuries = _normalize_injuries(character)
+    rebuild_derived_trauma_views(character)
+    compute_effective_bleed_level(character)
     result = {"organ": None, "fracture": None, "bleeding": None}
 
     # Chrome/missing parts have no biological tissue — no trauma possible.
@@ -461,8 +423,36 @@ def apply_trauma(character, body_part, damage, is_critical=False, weapon_key="fi
     organs = get_effective_organs(character, body_part or "torso")
     bones = get_effective_bones(character, body_part or "torso")
 
-    existing_organ_here = any(character.db.organ_damage.get(o, 0) > 0 for o in organs)
-    existing_fracture_here = any(b in (character.db.fractures or []) for b in bones)
+    wound = None
+    if injury_id:
+        for injury in injuries:
+            if injury.get("injury_id") == injury_id:
+                wound = injury
+                break
+    if wound is None:
+        same_part = [i for i in injuries if (i.get("body_part") or "") == (body_part or "")]
+        if same_part:
+            wound = sorted(same_part, key=lambda i: float(i.get("created_at", 0) or 0), reverse=True)[0]
+    if wound is None:
+        # Do not bind trauma to unrelated body parts; create a fresh wound event.
+        inferred_hp = max(1, int(round(max(1, damage) * 0.35)))
+        new_id = add_injury(character, inferred_hp, body_part=body_part or "", weapon_key=weapon_key, weapon_obj=weapon_obj)
+        injuries = _normalize_injuries(character)
+        for injury in injuries:
+            if injury.get("injury_id") == new_id:
+                wound = injury
+                break
+    # New trauma to an existing wound/part degrades prior treatment quality.
+    if wound and (wound.get("body_part") or "") == (body_part or ""):
+        tq = int(wound.get("treatment_quality", 0) or 0)
+        if tq > 0:
+            wound["treatment_quality"] = max(0, tq - 1)
+            if wound["treatment_quality"] == 0:
+                wound["treated"] = False
+            wound["bleed_treated"] = False
+
+    existing_organ_here = any((wound.get("organ_damage") or {}).get(o, 0) > 0 for o in organs) if wound else False
+    existing_fracture_here = bool(wound and wound.get("fracture") in bones)
     rehit_bonus = 1.35 if (existing_organ_here or existing_fracture_here) else 1.0
 
     # --- Organ: lower base, guns/organ-focused weapons higher chance ---
@@ -471,8 +461,8 @@ def apply_trauma(character, body_part, damage, is_critical=False, weapon_key="fi
     if organs and random.random() < organ_chance:
         organ = random.choice(organs)
         severity_roll = random.random()
-        current_sev = character.db.organ_damage.get(organ, 0)
-        if existing_organ_here and organ in character.db.organ_damage:
+        current_sev = (wound.get("organ_damage") or {}).get(organ, 0) if wound else 0
+        if existing_organ_here and wound and organ in (wound.get("organ_damage") or {}):
             step = 2 if (is_critical or damage >= 18) else 1
             new_severity = min(3, current_sev + step)
         elif is_critical and damage >= 20:
@@ -481,7 +471,16 @@ def apply_trauma(character, body_part, damage, is_critical=False, weapon_key="fi
             new_severity = min(3, current_sev + (2 if severity_roll > 0.5 else 1))
         else:
             new_severity = min(3, current_sev + 1)
-        character.db.organ_damage[organ] = new_severity
+        if wound:
+            od = dict(wound.get("organ_damage") or {})
+            od[organ] = new_severity
+            wound["organ_damage"] = od
+            stabilized = dict(getattr(character.db, "stabilized_organs", None) or {})
+            if organ in stabilized:
+                del stabilized[organ]
+                character.db.stabilized_organs = stabilized
+        else:
+            character.db.organ_damage[organ] = new_severity
         result["organ"] = (organ, new_severity)
 
     # --- Fracture: blunt favoured; blades/guns less likely ---
@@ -489,19 +488,21 @@ def apply_trauma(character, body_part, damage, is_critical=False, weapon_key="fi
     fracture_chance = min(0.55, base_fracture * rehit_bonus * fracture_mult)
     if bones and damage >= 10 and random.random() < fracture_chance:
         bone = random.choice(bones)
-        if bone not in character.db.fractures:
+        if wound:
+            wound["fracture"] = bone
+        elif bone not in character.db.fractures:
             character.db.fractures.append(bone)
         result["fracture"] = bone
 
     # --- Bleeding: blades favoured; location + cardiovascular ---
     bleed_data = BODY_PART_BLEED.get(body_part, (0.1, "capillary"))
     base_chance, vessel_type = bleed_data[0], bleed_data[1]
-    cardio = max(0.7, min(1.2, _cardiovascular_resistance(character)))
+    cardio = max(0.6, min(1.2, _cardiovascular_resistance(character, organ_damage=character.db.organ_damage)))
     chance = base_chance * (damage / 30.0) * (1.3 if is_critical else 1.0) * rehit_bonus * bleed_mult / cardio
     chance = min(0.75, chance)
     if random.random() >= chance:
         return result
-    current = character.db.bleeding_level or 0
+    current, _ = compute_effective_bleed_level(character)
     if damage >= 20 or (is_critical and damage >= 12):
         delta = 2
     elif damage >= 10:
@@ -512,10 +513,18 @@ def apply_trauma(character, body_part, damage, is_critical=False, weapon_key="fi
         delta = min(2, delta + 1)
     if delta <= 0 and current == 0:
         return result
-    new_level = min(4, current + delta)
-    character.db.bleeding_level = new_level
+    if wound:
+        rate_map = {"capillary": 1.0, "venous": 2.0, "arterial": 3.0}
+        base_rate = rate_map.get(vessel_type, 1.0)
+        added = float(delta) * (1.2 if is_critical else 1.0)
+        wound["bleed_rate"] = max(float(wound.get("bleed_rate", 0.0) or 0.0), base_rate + added)
+        wound["vessel_type"] = vessel_type
+        wound["bleed_treated"] = False
+        wound["infection_risk"] = min(0.8, float(wound.get("infection_risk", 0.0) or 0.0) + (0.01 * max(1, delta)))
+    new_level, _ = compute_effective_bleed_level(character)
     atk_msg, def_msg = _bleeding_gory_message(body_part, vessel_type, new_level, BLEEDING_LEVELS[new_level], vague=True)
     result["bleeding"] = (new_level, atk_msg, def_msg)
+    rebuild_derived_trauma_views(character)
     return result
 
 
@@ -630,410 +639,32 @@ def get_brutal_hit_flavor(weapon_key, body_part, trauma_result, defender_name, a
     return " ".join(lines_atk), " ".join(lines_def)
 
 
-# Bleeding ticks independently every BLEEDING_TICK_INTERVAL seconds (in and out of combat).
-BLEEDING_TICK_INTERVAL = 18
-# HP lost per bleeding tick by level (1=minor, 2=moderate, 3=severe, 4=critical). Balanced so you don't die in seconds.
-BLEEDING_DRAIN_PER_TICK = (1, 2, 3, 5)
+from world.medical.bleeding import (
+    BLEEDING_TICK_INTERVAL,
+    BLEEDING_DRAIN_PER_TICK,
+    HEMOSTATIC_REOPEN_CHANCE,
+    TOURNIQUET_TICKS_BEFORE_REOPEN,
+    get_bleeding_drain_per_tick,
+    apply_bleeding_tick,
+    bleeding_tick_all,
+)
 
 
-def get_bleeding_drain_per_tick(character):
-    """HP lost per bleeding tick (0 if none). Used by the global bleeding tick, not per combat round."""
-    level = character.db.bleeding_level or 0
-    if level == 0:
-        return 0
-    return BLEEDING_DRAIN_PER_TICK[min(level - 1, 3)]
+from world.medical.summaries import (
+    get_trauma_combat_modifiers,
+    get_medical_summary,
+    get_diagnose_trauma_for_skill,
+    get_medical_detail,
+)
 
 
-# Hemostatic temporary: chance per tick that wound reopens (no suture/surgical follow-up)
-HEMOSTATIC_REOPEN_CHANCE = 0.12
-# Tourniquet: after this many ticks without proper closure, wound reopens
-TOURNIQUET_TICKS_BEFORE_REOPEN = 6
-
-
-def apply_bleeding_tick(character):
-    """
-    Apply one bleeding tick: tourniquet countdown, hemostatic reopen chance, then HP drain if bleeding.
-    Tourniquet: stops drain but after TOURNIQUET_TICKS_BEFORE_REOPEN the wound reopens (level 1).
-    Hemostatic: if wound was sealed with hemostatic only, HEMOSTATIC_REOPEN_CHANCE per tick to worsen by 1.
-    Returns True if character was drained (lost HP this tick).
-    """
-    _ensure_medical_db(character)
-    level = character.db.bleeding_level or 0
-    tourniquet = getattr(character.db, "tourniquet_applied", False)
-
-    # Tourniquet path: no drain while applied; countdown then reopen
-    if tourniquet:
-        if level > 0:
-            character.db.tourniquet_applied = False
-            character.db.tourniquet_ticks = 0
-        else:
-            ticks = getattr(character.db, "tourniquet_ticks", 0) or 0
-            character.db.tourniquet_ticks = ticks + 1
-            if character.db.tourniquet_ticks >= TOURNIQUET_TICKS_BEFORE_REOPEN:
-                character.db.bleeding_level = 1
-                character.db.tourniquet_applied = False
-                character.db.tourniquet_ticks = 0
-                if character.location:
-                    character.msg("|yThe tourniquet has been on too long. You loosen it; the wound reopens. Get proper closure soon.|n")
-                    character.location.msg_contents(
-                        "|y%s loosens the tourniquet; the wound reopens.|n" % character.get_display_name(character),
-                        exclude=character,
-                    )
-            return False
-        # fall through to normal drain if we just cleared inconsistent tourniquet
-
-    # Hemostatic temporary: chance to reopen (seal fails; level goes up by 1 or from 0 to 1)
-    if getattr(character.db, "bleeding_hemostatic_stabilized", False) and random.random() < HEMOSTATIC_REOPEN_CHANCE:
-        character.db.bleeding_level = min(4, level + 1)
-        character.db.bleeding_hemostatic_stabilized = False
-        level = character.db.bleeding_level
-        if character.location:
-            character.msg("|yThe hemostatic seal gives. The wound is bleeding again.|n")
-            character.location.msg_contents(
-                "|y%s's wound reopens; the hemostatic seal did not hold.|n" % character.get_display_name(character),
-                exclude=character,
-            )
-
-    if level == 0:
-        return False
-
-    drain = get_bleeding_drain_per_tick(character)
-    if drain <= 0:
-        return False
-    current = character.db.current_hp
-    if current is None and hasattr(character, "max_hp"):
-        character.db.current_hp = character.max_hp
-        current = character.db.current_hp
-    if (current or 0) <= 0:
-        return False
-    character.db.current_hp = max(0, (current or 0) - drain)
-    if character.location:
-        character.msg("|rYou're bleeding.|n")
-        character.location.msg_contents(
-            "|r%s is bleeding.|n" % character.get_display_name(character),
-            exclude=character,
-        )
-    return True
-
-
-def bleeding_tick_all():
-    """Run one bleeding tick for every in-world character with bleeding_level > 0 or tourniquet applied."""
-    try:
-        from evennia.objects.models import ObjectDB
-        from world.death import is_flatlined, is_permanently_dead
-        for obj in ObjectDB.objects.filter(db_location__isnull=False):
-            try:
-                if not getattr(obj, "db", None):
-                    continue
-                level = getattr(obj.db, "bleeding_level", 0) or 0
-                tourniquet = getattr(obj.db, "tourniquet_applied", False)
-                if level == 0 and not tourniquet:
-                    continue
-                if is_flatlined(obj) or is_permanently_dead(obj):
-                    continue
-                apply_bleeding_tick(obj)
-                if (obj.db.current_hp or 0) <= 0:
-                    if hasattr(obj, "at_damage"):
-                        obj.at_damage(None, 0)
-            except Exception:
-                pass
-    except Exception:
-        pass
-
-
-# Bones that impair attack (arm, hand, shoulder) vs defense (leg, foot, spine)
-_FRACTURE_ATTACK_BONES = frozenset({"humerus", "metacarpals", "clavicle", "scapula", "jaw", "nose"})
-_FRACTURE_DEFENSE_BONES = frozenset({"femur", "ankle", "metatarsals", "cervical_spine", "spine", "pelvis", "ribs"})
-
-
-def get_trauma_combat_modifiers(character):
-    """
-    Return (attack_penalty, defense_penalty) from existing trauma.
-    Fractured arms/hands reduce attack; fractured legs/feet/spine reduce dodge.
-    Splinted bones apply only half penalty. Bleeding adds a penalty to both.
-    """
-    _ensure_medical_db(character)
-    atk_penalty = 0
-    def_penalty = 0
-    fractures = character.db.fractures or []
-    splinted = character.db.splinted_bones or []
-    for bone in fractures:
-        mult = 0.5 if bone in splinted else 1.0
-        if bone in _FRACTURE_ATTACK_BONES:
-            atk_penalty -= int(8 * mult)
-        if bone in _FRACTURE_DEFENSE_BONES:
-            def_penalty -= int(10 * mult)
-    level = character.db.bleeding_level or 0
-    if level >= 1:
-        atk_penalty -= (1, 3, 6, 12)[min(level - 1, 3)]
-        def_penalty -= (1, 3, 6, 12)[min(level - 1, 3)]
-    return (atk_penalty, def_penalty)
-
-
-def get_medical_summary(character):
-    """
-    User-friendly one-paragraph summary of trauma: organs, bones, bleeding, splints.
-    """
-    _ensure_medical_db(character)
-    lines = []
-
-    # Organ damage
-    organ_damage = character.db.organ_damage or {}
-    if organ_damage:
-        parts = []
-        for organ_key, severity in organ_damage.items():
-            if severity <= 0:
-                continue
-            names = ORGAN_INFO.get(organ_key, (organ_key,)*4)
-            desc = names[min(severity, 3)]
-            stab = " [recent surgery]" if (character.db.stabilized_organs or {}).get(organ_key) else ""
-            parts.append(f"{names[0]} ({desc}){stab}")
-        if parts:
-            lines.append("|rOrgan trauma:|n " + "; ".join(parts))
-
-    # Fractures (mark splinted)
-    fractures = character.db.fractures or []
-    splinted = character.db.splinted_bones or []
-    if fractures:
-        bone_names = [BONE_INFO.get(b, b) + (" (splinted)" if b in splinted else "") for b in fractures]
-        lines.append("|yFractures:|n " + ", ".join(bone_names))
-
-    # Bleeding
-    level = character.db.bleeding_level or 0
-    if level > 0:
-        lines.append("|rBleeding:|n " + BLEEDING_LEVELS[min(level, 4)])
-
-    if not lines:
-        return "|gNo significant trauma. Vitals within acceptable parameters.|n"
-    return "\n".join(lines)
-
-
-def get_diagnose_trauma_for_skill(character, medicine_level):
-    """
-    Physical-exam style trauma summary for diagnose command, tiered by medicine skill.
-    Returns extra lines to show (or empty string). Not as detailed as scanner; scanner
-    remains the only way to get exact vitals and precise organ/bone labels.
-    """
-    _ensure_medical_db(character)
-    if medicine_level is None or medicine_level < DIAGNOSE_TIER_1:
-        return ""
-
-    bleeding_level = character.db.bleeding_level or 0
-    fractures = character.db.fractures or []
-    splinted = character.db.splinted_bones or []
-    organ_damage = character.db.organ_damage or {}
-    if not bleeding_level and not fractures and not organ_damage:
-        return ""
-
-    lines = []
-    # Tier 1 (10+): bleeding present/absent, possible fracture — one Physical exam line
-    if medicine_level >= DIAGNOSE_TIER_1:
-        exam_bits = []
-        if bleeding_level > 0:
-            exam_bits.append("They are bleeding.")
-        if fractures:
-            exam_bits.append("You notice possible fracture or serious limb injury.")
-        if exam_bits:
-            lines.append("|yPhysical exam:|n " + " ".join(exam_bits))
-        if medicine_level < DIAGNOSE_TIER_2:
-            return "\n".join(lines) if lines else ""
-
-    # Tier 2 (25+): bleeding level, fracture by region
-    if medicine_level >= DIAGNOSE_TIER_2:
-        lines = []
-        if bleeding_level > 0:
-            lines.append("|yBleeding:|n " + BLEEDING_LEVELS[min(bleeding_level, 4)])
-        if fractures:
-            regions = set()
-            for b in fractures:
-                r = BONE_TO_REGION.get(b, b)
-                if r:
-                    regions.add(r)
-            if regions:
-                lines.append("|yPossible fracture / serious injury:|n " + ", ".join(sorted(regions)))
-        if medicine_level < DIAGNOSE_TIER_3:
-            return "\n".join(lines) if lines else ""
-
-    # Tier 3 (50+): fractures by bone name, bleeding, internal trauma by region
-    if medicine_level >= DIAGNOSE_TIER_3:
-        lines = []
-        if bleeding_level > 0:
-            lines.append("|yBleeding:|n " + BLEEDING_LEVELS[min(bleeding_level, 4)])
-        if fractures:
-            bone_names = [BONE_INFO.get(b, b) + (" (splinted)" if b in splinted else "") for b in fractures]
-            lines.append("|yFractures:|n " + ", ".join(bone_names))
-        if organ_damage:
-            regions = set()
-            for ok in organ_damage:
-                if organ_damage.get(ok, 0) <= 0:
-                    continue
-                r = ORGAN_TO_REGION.get(ok, "internal")
-                regions.add(r)
-            if regions:
-                lines.append("|ySigns of internal trauma:|n " + ", ".join(sorted(regions)) + " — scanner needed for detail.")
-        if medicine_level < DIAGNOSE_TIER_4:
-            return "\n".join(lines) if lines else ""
-
-    # Tier 4 (75+): full physical-exam summary (still no vitals; scanner for exact organs)
-    lines = []
-    if bleeding_level > 0:
-        lines.append("|yBleeding:|n " + BLEEDING_LEVELS[min(bleeding_level, 4)])
-    if fractures:
-        bone_names = [BONE_INFO.get(b, b) + (" (splinted)" if b in splinted else "") for b in fractures]
-        lines.append("|yFractures:|n " + ", ".join(bone_names))
-    if organ_damage:
-        regions = set()
-        for ok in organ_damage:
-            if organ_damage.get(ok, 0) <= 0:
-                continue
-            r = ORGAN_TO_REGION.get(ok, "internal")
-            regions.add(r)
-        if regions:
-            lines.append("|yInternal trauma (by region):|n " + ", ".join(sorted(regions)) + ". Use a bioscanner for precise assessment.")
-    return "\n".join(lines) if lines else ""
-
-
-def get_medical_detail(character):
-    """Full medical readout for diagnose command: organs, fractures, bleeding."""
-    _ensure_medical_db(character)
-    out = []
-
-    out.append("|wTRAUMA ASSESSMENT|n")
-    # Organs
-    organ_damage = character.db.organ_damage or {}
-    if organ_damage:
-        out.append("|wInternal / organ trauma:|n")
-        for organ_key, severity in sorted(organ_damage.items()):
-            if severity <= 0:
-                continue
-            names = ORGAN_INFO.get(organ_key, (organ_key,)*4)
-            out.append(f"  {names[0].title()}: {names[min(severity, 3)]}")
-    else:
-        out.append("|wInternal / organ trauma:|n  None noted.")
-
-    # Fractures
-    fractures = character.db.fractures or []
-    if fractures:
-        out.append("|wFractures:|n " + ", ".join(BONE_INFO.get(b, b) for b in fractures))
-    else:
-        out.append("|wFractures:|n  None.")
-
-    # Bleeding
-    level = character.db.bleeding_level or 0
-    out.append("|wBleeding:|n " + BLEEDING_LEVELS[min(level, 4)])
-
-    return "\n".join(out)
-
-
-# -----------------------------------------------------------------------------
-# HT (health check) summary: condition, rested, recovering. Pronoun-aware.
-# -----------------------------------------------------------------------------
-# At 100% HP, condition tier by max_hp. HP = 26.5 + end_display + max(0, (str_display-100)*0.5).
-# - Excellent < 115: default; everyone leaves cgen here (HP ~34-68).
-# - Spectacular 115-129: end display 89+ (178 stored); ~356 XP from 0, ~256 from cgen.
-# - Magnificent 130-151: end display 104+ (208 stored); ~473 XP from 0, ~373 from cgen.
-# - Miraculous 152+: end display 126+ (252 stored) or end+str; ~1131 XP from 0 (end-only), ~1031 from cgen.
-HT_CONDITION_FULL_HP_TIERS = [
-    (115, "excellent"),
-    (130, "spectacular"),
-    (152, "magnificent"),
-    (9999, "miraculous"),
-]
-# Below 100% HP: (min_percent, label) for injury condition. 9 tiers.
-HT_CONDITION_INJURED_TIERS = [
-    (95, "lightly injured"),
-    (85, "injured"),
-    (70, "fairly injured"),
-    (50, "badly injured"),
-    (35, "severely injured"),
-    (20, "critically injured"),
-    # Below 10% HP you are on your last legs but still technically conscious; true
-    # unconscious/flatlined is handled separately when HP <= 0 and death_state=flatlined.
-    (10, "mortally injured and struggling to remain conscious"),
-    (0, "on the verge of collapse"),
-]
-# Flatlined gets special message; permanently dead is not shown by ht
-HT_CONDITION_DEAD = "beyond help"
-
-# Rested (stamina %): label
-HT_RESTED_TIERS = [
-    (90, "very well rested"),
-    (70, "well rested"),
-    (50, "moderately rested"),
-    (25, "tired"),
-    (0, "exhausted"),
-]
-
-def get_ht_summary(character, first_person=True):
-    """
-    One-line health summary for the ht command: condition, rested, recovering.
-    first_person: True = "You are ..."; False = use character's pronouns (He/She/They is ...).
-    """
-    from world.rpg.emote import PRONOUN_MAP
-    from world.death import is_flatlined, is_permanently_dead
-
-    mx_hp = getattr(character, "max_hp", 100) or 100
-    cur_hp = character.db.current_hp
-    if cur_hp is None:
-        character.db.current_hp = mx_hp
-        cur_hp = mx_hp
-    percent_hp = (cur_hp / mx_hp) * 100 if mx_hp > 0 else 0
-
-    # Condition
-    if cur_hp <= 0:
-        try:
-            if is_permanently_dead(character):
-                condition = HT_CONDITION_DEAD
-            elif is_flatlined(character):
-                condition = HT_CONDITION_INJURED_TIERS[7][1]  # dying and unconscious
-            else:
-                condition = HT_CONDITION_DEAD
-        except Exception:
-            condition = HT_CONDITION_DEAD
-    elif percent_hp >= 100:
-        for threshold, label in HT_CONDITION_FULL_HP_TIERS:
-            if mx_hp < threshold:
-                condition = label
-                break
-        else:
-            condition = "miraculous"
-    else:
-        condition = HT_CONDITION_INJURED_TIERS[0][1]
-        for min_pct, label in HT_CONDITION_INJURED_TIERS:
-            if percent_hp >= min_pct:
-                condition = label
-                break
-
-    # Rested (stamina)
-    mx_stam = getattr(character, "max_stamina", 100) or 100
-    cur_stam = character.db.current_stamina
-    if cur_stam is None and hasattr(character, "max_stamina"):
-        character.db.current_stamina = character.max_stamina
-        cur_stam = character.db.current_stamina or mx_stam
-    percent_stam = (cur_stam / mx_stam) * 100 if mx_stam > 0 else 0
-    rested = "exhausted"
-    for min_pct, label in HT_RESTED_TIERS:
-        if percent_stam >= min_pct:
-            rested = label
-            break
-
-    # When viewing another player: only show HP condition, not rested or recovery
-    if not first_person:
-        key = (getattr(character.db, "pronoun", None) or "neutral").lower()
-        sub, poss, _ = PRONOUN_MAP.get(key, PRONOUN_MAP["neutral"])
-        sub_cap = (sub or "they").capitalize()
-        verb = "is" if (sub or "they").lower() in ("he", "she") else "are"
-        return f"{sub_cap} {verb} in {condition} condition."
-
-    # Recovering: stamina recovery condition (only for self); base moderately, combat/injury/bleeding down, sitting/lying up
-    try:
-        from world.rpg.stamina import get_stamina_recovery_label
-        recovering = get_stamina_recovery_label(character)
-    except Exception:
-        recovering = "recovering moderately"
-
-    # Build sentence for self: condition + rested + recovering
-    return f"You are in {condition} condition, are physically {rested} and {recovering}."
+from world.medical.vitals import (
+    HT_CONDITION_FULL_HP_TIERS,
+    HT_CONDITION_INJURED_TIERS,
+    HT_CONDITION_DEAD,
+    HT_RESTED_TIERS,
+    get_ht_summary,
+)
 
 
 def reset_medical(character):
@@ -1052,4 +683,10 @@ def reset_medical(character):
     character.db.tourniquet_ticks = 0
     if hasattr(character.db, "bleeding_hemostatic_stabilized"):
         character.db.bleeding_hemostatic_stabilized = False
+    # Clear infection state on all known wounds.
+    for i in (getattr(character.db, "injuries", None) or []):
+        i["infection_type"] = None
+        i["infection_stage"] = 0
+        i["infection_since"] = 0.0
+        i["infection_risk"] = 0.0
     character.db.combat_ended = False

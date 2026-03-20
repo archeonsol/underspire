@@ -8,11 +8,17 @@ from evennia.utils import delay
 from evennia.utils.search import search_object
 from evennia import TICKER_HANDLER as ticker
 
-try:
-    from world.combat import _combat_display_name
-except ImportError:
-    def _combat_display_name(char, viewer):
-        return getattr(char, "name", None) or getattr(char, "key", None) or "Someone"
+from world.combat.utils import combat_display_name as _combat_display_name
+from world.combat.engine import _body_part_and_multiplier
+from world.combat.range_system import (
+    get_combat_range,
+    is_weapon_optimal,
+    get_weapon_optimal_ranges,
+    attempt_advance,
+    attempt_retreat,
+)
+from world.combat.cover import try_take_cover, clear_cover_state, set_suppressed
+from world.ammo import is_ranged_weapon
 
 # Seconds per "tick" for creature telegraphs (wind-up then execute).
 CREATURE_TICK_INTERVAL = 3.0
@@ -20,6 +26,35 @@ CREATURE_TICK_INTERVAL = 3.0
 CREATURE_AI_INTERVAL = 8.0
 # Cooldown: ignore a tick if we already attacked within this many seconds (prevents ghost double-fire).
 CREATURE_AI_COOLDOWN = 4.0
+
+
+def creature_range_decision(creature, target, weapon_key):
+    current = get_combat_range(creature, target)
+    if is_weapon_optimal(weapon_key, current):
+        return "attack"
+    optimal = get_weapon_optimal_ranges(weapon_key)
+    if not optimal:
+        return "attack"
+    nearest_optimal = min(optimal, key=lambda r: abs(r - current))
+    if nearest_optimal < current:
+        return "advance"
+    if nearest_optimal > current:
+        return "retreat"
+    return "attack"
+
+
+def creature_cover_decision(creature, target, weapon_key):
+    hp = int(getattr(creature.db, "current_hp", 0) or 0)
+    max_hp = int(getattr(creature, "max_hp", 1) or 1)
+    low_hp = max_hp > 0 and (hp / max_hp) < 0.5
+    in_cover = bool(getattr(creature.db, "in_cover", False))
+    if is_ranged_weapon(weapon_key):
+        if low_hp and not in_cover:
+            return "take_cover"
+    else:
+        if in_cover:
+            return "leave_cover"
+    return "ignore"
 
 
 def _creature_ai_ticker_id(creature):
@@ -145,12 +180,6 @@ def _resolve_creature_attack(creature, target):
     Returns (hit: bool, attack_value: int).
     """
     try:
-        from world.rpg.stamina import is_exhausted
-        if is_exhausted(target):
-            return True, 99
-    except ImportError:
-        pass
-    try:
         from world.combat.rolls import DEFAULT_CFG, combat_rating, opposed_probability, quality_value
         from world.skills import DEFENSE_SKILL, SKILL_STATS
         cfg = DEFAULT_CFG
@@ -227,17 +256,7 @@ def execute_creature_move(creature, target, move_key, move_spec=None):
         return True
 
     # Hit: body part and damage multiplier (same as regular combat)
-    try:
-        from world.combat import _body_part_and_multiplier
-        body_part, multiplier = _body_part_and_multiplier(attack_value)
-    except ImportError:
-        try:
-            from world.medical import BODY_PARTS
-            body_part = random.choice(BODY_PARTS) if BODY_PARTS else "torso"
-            multiplier = 1.0
-        except Exception:
-            body_part = "torso"
-            multiplier = 1.0
+    body_part, multiplier = _body_part_and_multiplier(attack_value, defender=target)
 
     base_damage = int(spec.get("damage", 0))
     damage = max(1, int(base_damage * multiplier))
@@ -416,6 +435,31 @@ def creature_ai_tick(creature):
         return
     move_key, move_spec = pick_creature_move(creature)
     if not move_spec:
+        return
+    weapon_key = move_spec.get("weapon_key") or "fists"
+    cover_action = creature_cover_decision(creature, target, weapon_key)
+    if cover_action == "take_cover":
+        try_take_cover(creature, difficulty=6)
+        return
+    if cover_action == "leave_cover":
+        clear_cover_state(creature, reset_pose=True)
+    range_action = creature_range_decision(creature, target, weapon_key)
+    if range_action == "advance":
+        attempt_advance(creature, target)
+        return
+    if range_action == "retreat":
+        attempt_retreat(creature, target)
+        return
+    if weapon_key == "automatic" and int(getattr(target.db, "cover_quality", 0) or 0) >= 2:
+        set_suppressed(target)
+        loc = getattr(creature, "location", None)
+        if loc and hasattr(loc, "contents_get"):
+            for v in loc.contents_get(content_type="character"):
+                if v == creature:
+                    continue
+                v.msg(
+                    f"{_combat_display_name(creature, v)} opens up on {_combat_display_name(target, v)}'s position, suppressing fire."
+                )
         return
     creature.db.last_creature_attack_at = now
     if move_spec.get("type") == "telegraph":

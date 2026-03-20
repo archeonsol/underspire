@@ -3,6 +3,7 @@ Surgery on the operating table: delayed narrative messages (grimdark/arcanepunk)
 Patient must be lying on an operating table; surgeon runs the surgery <organ> command.
 """
 from evennia.utils import delay
+import time
 
 # Delays in seconds (longer than defib: ~5, 12, 20, 28 then finish)
 SURGERY_MSG1, SURGERY_MSG2, SURGERY_MSG3, SURGERY_MSG4 = 5, 12, 20, 28
@@ -109,17 +110,40 @@ ORGAN_SURGERY_NARRATIVES = {
     ],
 }
 
+_GENERIC_BONE_NARRATIVE = [
+    "You expose the fracture and clear shredded tissue. Bone ends are displaced and unstable. You irrigate, reduce, and prepare fixation.",
+    "You align the fragments under direct vision. Plate and screws go in, one by one. The reduction is not elegant, but it is solid.",
+    "You test stability and confirm no major bleed has restarted. The construct holds. You close in layers and dress the field.",
+    "You secure the dressing and step back. The bone is fixed for now; rehab and time will decide the rest.",
+]
+
+BONE_SURGERY_NARRATIVES = {
+    "femur": _GENERIC_BONE_NARRATIVE,
+    "humerus": _GENERIC_BONE_NARRATIVE,
+    "clavicle": _GENERIC_BONE_NARRATIVE,
+    "scapula": _GENERIC_BONE_NARRATIVE,
+    "pelvis": _GENERIC_BONE_NARRATIVE,
+    "spine": _GENERIC_BONE_NARRATIVE,
+    "cervical_spine": _GENERIC_BONE_NARRATIVE,
+    "ribs": _GENERIC_BONE_NARRATIVE,
+    "metacarpals": _GENERIC_BONE_NARRATIVE,
+    "metatarsals": _GENERIC_BONE_NARRATIVE,
+    "ankle": _GENERIC_BONE_NARRATIVE,
+    "jaw": _GENERIC_BONE_NARRATIVE,
+    "nose": _GENERIC_BONE_NARRATIVE,
+    "skull": _GENERIC_BONE_NARRATIVE,
+}
 
 def _surgery_msg(caller, target, table, organ_key, step):
     """Send one narrative message to caller and short line to room."""
     if not caller or not target or not hasattr(caller, "msg"):
         return
-    narratives = ORGAN_SURGERY_NARRATIVES.get(organ_key)
+    narratives = ORGAN_SURGERY_NARRATIVES.get(organ_key) or BONE_SURGERY_NARRATIVES.get(organ_key)
     if not narratives or step < 0 or step >= len(narratives):
         return
-    from world.medical import ORGAN_INFO
-    names = ORGAN_INFO.get(organ_key, (organ_key,) * 4)
-    organ_name = names[0]
+    from world.medical import ORGAN_INFO, BONE_INFO
+    names = ORGAN_INFO.get(organ_key, (None,) * 4)
+    organ_name = names[0] if names and names[0] else BONE_INFO.get(organ_key, organ_key)
     # To caller
     caller.msg("|w%s|n" % narratives[step])
     # To room (short)
@@ -149,27 +173,36 @@ def _surgery_finish(ids, organ_key):
     if hasattr(caller, "db"):
         caller.db.surgery_in_progress = False
 
+    from world.medical import ORGAN_INFO, BONE_INFO, rebuild_derived_trauma_views
+    rebuild_derived_trauma_views(target)
     organ_damage = target.db.organ_damage or {}
+    fractures = target.db.fractures or []
+    is_bone_case = organ_key in fractures
     severity = organ_damage.get(organ_key, 0)
-    if severity <= 0:
-        caller.msg("There is no significant trauma to that organ. The field is clean.")
+    if severity <= 0 and not is_bone_case:
+        caller.msg("There is no significant trauma to that target. The field is clean.")
         return
 
-    from world.medical import ORGAN_INFO
     from world.medical.medical_treatment import (
         _ensure_medical_db,
         _organ_difficulty,
+        _splint_difficulty,
         _medicine_roll,
         TOOL_SURGICAL_KIT,
     )
+    from world.medical import _set_injury_treatment_quality
     _ensure_medical_db(target)
     stabilized = target.db.stabilized_organs or {}
-    if stabilized.get(organ_key):
+    if (not is_bone_case) and stabilized.get(organ_key):
         caller.msg("That organ is already stabilized. Nothing more to do.")
         return
 
     names = ORGAN_INFO.get(organ_key, (organ_key,) * 4)
-    difficulty = _organ_difficulty(severity)
+    difficulty = _splint_difficulty(organ_key) + 8 if is_bone_case else _organ_difficulty(severity)
+    sedated_until = float(getattr(target.db, "sedated_until", 0.0) or 0.0)
+    if sedated_until <= time.time():
+        # Awake surgery is much harder due to movement/pain response.
+        difficulty += 18
     # Table gives a bonus: proper OR, full kit, patient immobilized
     table_mod = 20
     success_level, _ = _medicine_roll(caller, max(0, difficulty - table_mod), table_mod)
@@ -186,30 +219,55 @@ def _surgery_finish(ids, organ_key):
                 ))
         return
 
-    target.db.organ_damage[organ_key] = severity - 1
-    if severity - 1 <= 0:
-        del target.db.organ_damage[organ_key]
-    stabilized = dict(stabilized)
-    stabilized[organ_key] = True
-    target.db.stabilized_organs = stabilized
     injuries = getattr(target.db, "injuries", None) or []
-    for i in injuries:
-        if not i.get("treated") and i.get("severity", 1) >= 2:
-            i["treated"] = True
-            target.db.injuries = injuries
+    if is_bone_case:
+        target.db.fractures = [b for b in fractures if b != organ_key]
+        target.db.splinted_bones = [b for b in (target.db.splinted_bones or []) if b != organ_key]
+        for i in injuries:
+            if i.get("fracture") == organ_key:
+                i["fracture"] = None
+                _set_injury_treatment_quality(i, 3)
+                # Surgery gives immediate partial restoration to reduce idle waiting.
+                hp_occ = float(i.get("hp_occupied", 0) or 0)
+                restore = max(1, int(round(hp_occ * 0.25)))
+                i["hp_occupied"] = max(0, hp_occ - restore)
+                target.db.current_hp = min(getattr(target, "max_hp", 100) or 100, (target.db.current_hp or 0) + restore)
+                break
+    else:
+        target.db.organ_damage[organ_key] = severity - 1
+        if severity - 1 <= 0:
+            del target.db.organ_damage[organ_key]
+        stabilized = dict(stabilized)
+        stabilized[organ_key] = True
+        target.db.stabilized_organs = stabilized
+        for i in injuries:
+            od = dict(i.get("organ_damage") or {})
+            if organ_key not in od:
+                continue
+            od[organ_key] = max(0, int(od.get(organ_key, 0)) - 1)
+            if od[organ_key] <= 0:
+                del od[organ_key]
+            i["organ_damage"] = od
+            _set_injury_treatment_quality(i, 3)
+            hp_occ = float(i.get("hp_occupied", 0) or 0)
+            restore = max(1, int(round(hp_occ * 0.2)))
+            i["hp_occupied"] = max(0, hp_occ - restore)
+            target.db.current_hp = min(getattr(target, "max_hp", 100) or 100, (target.db.current_hp or 0) + restore)
             break
+    target.db.injuries = injuries
+    rebuild_derived_trauma_views(target)
 
     caller.msg("|gThe organ holds. You have done what you could. They may yet live.|n")
-        if target != caller:
-            target.msg("|gYou drift back. The pain is still there, but the worst has passed. Someone has pulled you through.|n")
-            if target.location and hasattr(target.location, "contents_get"):
-                for v in target.location.contents_get(content_type="character"):
-                    if v in (caller, target):
-                        continue
-                    v.msg("|g%s finishes the procedure. %s lies still on the table — alive.|n" % (
-                        caller.get_display_name(v) if hasattr(caller, "get_display_name") else caller.name,
-                        target.get_display_name(v) if hasattr(target, "get_display_name") else target.name,
-                    ))
+    if target != caller:
+        target.msg("|gYou drift back. The pain is still there, but the worst has passed. Someone has pulled you through.|n")
+        if target.location and hasattr(target.location, "contents_get"):
+            for v in target.location.contents_get(content_type="character"):
+                if v in (caller, target):
+                    continue
+                v.msg("|g%s finishes the procedure. %s lies still on the table — alive.|n" % (
+                    caller.get_display_name(v) if hasattr(caller, "get_display_name") else caller.name,
+                    target.get_display_name(v) if hasattr(target, "get_display_name") else target.name,
+                ))
 
 
 def start_surgery_sequence(caller, target, table, organ_key):
@@ -226,12 +284,19 @@ def start_surgery_sequence(caller, target, table, organ_key):
         return False, "They are not on the operating table."
     if caller.location != table.location:
         return False, "You must be at the operating table to perform surgery."
+    from world.medical import rebuild_derived_trauma_views
+    rebuild_derived_trauma_views(target)
     organ_damage = target.db.organ_damage or {}
-    if organ_damage.get(organ_key, 0) <= 0:
-        return False, "That organ does not require surgery."
+    fractures = target.db.fractures or []
+    if organ_damage.get(organ_key, 0) <= 0 and organ_key not in fractures:
+        return False, "That target does not require surgery."
     from world.medical.medical_treatment import ORGAN_INFO
-    if organ_key not in ORGAN_SURGERY_NARRATIVES:
+    if organ_key not in ORGAN_SURGERY_NARRATIVES and organ_key not in BONE_SURGERY_NARRATIVES:
         return False, "No surgical procedure for that organ."
+
+    sedated_until = float(getattr(target.db, "sedated_until", 0.0) or 0.0)
+    if sedated_until <= time.time() and hasattr(caller, "msg"):
+        caller.msg("|yWarning: patient is not sedated. The surgery will be harder.|n")
 
     caller.db.surgery_in_progress = True
     ids = (caller.id, target.id, table.id)

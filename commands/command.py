@@ -31,12 +31,26 @@ from commands.combat_cmds import (
     CmdExecute,
 )
 
+from commands.range_cmds import (
+    CmdAdvance,
+    CmdRetreat,
+    CmdRange,
+)
+
+from commands.cover_commands import (
+    CmdCover,
+    CmdLeaveCover,
+    CmdPeek,
+    CmdSuppress,
+)
+
 # medical_cmds
 from commands.medical_cmds import (
     CmdHt,
     CmdUse,
     CmdApply,
     CmdStabilize,
+    CmdSedate,
     CmdSurgery,
     CmdDefib,
 )
@@ -273,10 +287,18 @@ __all__ = [
     "CmdLetGo",
     "CmdResist",
     "CmdExecute",
+    "CmdAdvance",
+    "CmdRetreat",
+    "CmdRange",
+    "CmdCover",
+    "CmdLeaveCover",
+    "CmdPeek",
+    "CmdSuppress",
     "CmdHt",
     "CmdUse",
     "CmdApply",
     "CmdStabilize",
+    "CmdSedate",
     "CmdSurgery",
     "CmdDefib",
     "CmdScavenge",

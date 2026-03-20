@@ -118,9 +118,20 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
 
         from commands.base_cmds import CmdLook, CmdExamine, CmdGet, CmdPut, CmdStopWalking, CmdOperate
         from commands.matrix_cmds import CmdMacl
-        from commands.combat_cmds import CmdAttack, CmdStop, CmdFlee, CmdStance, CmdExecute, CmdGrapple, CmdLetGo, CmdResist
+        from commands.combat_cmds import (
+            CmdAttack,
+            CmdStop,
+            CmdFlee,
+            CmdStance,
+            CmdExecute,
+            CmdGrapple,
+            CmdLetGo,
+            CmdResist,
+        )
+        from commands.range_cmds import CmdAdvance, CmdRetreat, CmdRange
+        from commands.cover_commands import CmdCover, CmdLeaveCover, CmdPeek, CmdSuppress
         from commands.scavenge_cmds import CmdScavenge, CmdSkin, CmdButcher, CmdSever, CmdLoot
-        from commands.medical_cmds import CmdHt, CmdUse, CmdApply, CmdStabilize, CmdSurgery, CmdDefib
+        from commands.medical_cmds import CmdHt, CmdUse, CmdApply, CmdStabilize, CmdSedate, CmdSurgery, CmdDefib
         from commands.survival_cmds import CmdEat, CmdDrink
         from commands.inventory_cmds import CmdWield, CmdUnwield, CmdFreehands, CmdInventory, CmdReload, CmdUnload, CmdCheckAmmo, CmdWear, CmdRemove, CmdStrip, CmdFrisk
         from commands.crafting_cmds import CmdSurvey, CmdRepairArmor, CmdTailor
@@ -185,9 +196,17 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdGrapple())
         self.add(CmdLetGo())
         self.add(CmdResist())
+        self.add(CmdAdvance())
+        self.add(CmdRetreat())
+        self.add(CmdRange())
+        self.add(CmdCover())
+        self.add(CmdLeaveCover())
+        self.add(CmdPeek())
+        self.add(CmdSuppress())
         self.add(CmdSit())
         self.add(CmdLieOnTable())
         self.add(CmdGetOffTable())
+        self.add(CmdSedate())
         self.add(CmdSurgery())
         self.add(CmdEat())
         self.add(CmdDrink())

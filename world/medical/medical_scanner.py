@@ -3,7 +3,7 @@ Rich bioscanner readout: vitals randomized by HP state for immersion.
 BP, SpO2, HR, RR, temp, status line; plausible ranges per health tier.
 """
 import random
-from world.medical import get_medical_detail, get_medical_summary, _ensure_medical_db
+from world.medical import get_medical_detail, get_medical_summary, _ensure_medical_db, get_infection_readout, get_active_bleed_wounds
 
 
 def _vital_ranges(pct):
@@ -59,6 +59,9 @@ def get_scanner_readout(target):
     pct = (hp / mx * 100) if mx else 0
     in_arrest = pct <= 0
 
+    infections = get_infection_readout(target)
+    max_inf_stage = max([i.get("stage", 0) for i in infections], default=0)
+
     if in_arrest:
         status_key = "arrest"
         status = STATUS_LABELS.get(status_key, "|RARREST|n")
@@ -67,6 +70,14 @@ def get_scanner_readout(target):
         vital_line2 = "  |wHR|n      --- bpm           |wRR|n     ---/min   |wTemp|n   (cooling)"
     else:
         (bp_sys_r, bp_dia_r, spo2_r, hr_r, rr_r, temp_r, status_key) = _vital_ranges(pct)
+        if max_inf_stage >= 2:
+            # Fever/tachycardia signature for active infection.
+            temp_r = (max(temp_r[0], 374), max(temp_r[1], 389 if max_inf_stage >= 3 else 382))
+            hr_r = (max(hr_r[0], 94), max(hr_r[1], 150 if max_inf_stage >= 3 else 130))
+            if status_key in ("stable", "compensated"):
+                status_key = "compromised"
+            if max_inf_stage >= 4:
+                status_key = "critical"
         bp_sys = _rand(bp_sys_r)
         bp_dia = _rand(bp_dia_r)
         spo2 = _rand(spo2_r)
@@ -112,5 +123,25 @@ def get_scanner_readout(target):
     ]
     for line in detail.split("\n"):
         lines.append("  " + line if line.strip() else "")
+    lines.extend(["", "  |wINFECTION ALERTS|n", "  " + "-" * 50])
+    if infections:
+        for inf in infections:
+            lines.append(
+                f"  {inf['body_part'].title()}: {inf['label']} - {inf['stage_label']} "
+                f"(risk {int(inf['risk'] * 100)}%)"
+            )
+    else:
+        lines.append("  None detected.")
+    lines.extend(["", "  |wACTIVE BLEED SOURCES|n", "  " + "-" * 50])
+    active_bleeds = get_active_bleed_wounds(target)
+    if active_bleeds:
+        for w in active_bleeds:
+            lines.append(
+                f"  {(w.get('body_part') or 'unknown').title()}: "
+                f"rate {float(w.get('bleed_rate', 0.0) or 0.0):.1f}, "
+                f"{(w.get('vessel_type') or 'capillary')}"
+            )
+    else:
+        lines.append("  None detected.")
     lines.append("|c" + "=" * 54 + "|n")
     return "\n".join(lines)

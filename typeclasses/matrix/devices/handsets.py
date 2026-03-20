@@ -17,6 +17,20 @@ import time
 
 from typeclasses.matrix.items import NetworkedItem
 from world.matrix_accounts import get_account, set_alias, get_alias, has_alias
+from world.matrix_ids import BASE32_CHARS, ID_LENGTH
+
+# Bump when device command names/handlers change; triggers full re-registration.
+HANDSET_COMMANDS_VERSION = 4
+
+
+def _validate_matrix_id_token(raw: str) -> str | None:
+    """Return normalized ^ID if raw is a valid Matrix ID body (base32, fixed length), else None."""
+    tok = (raw or "").strip().upper()
+    if len(tok) != ID_LENGTH:
+        return None
+    if not all(c in BASE32_CHARS for c in tok):
+        return None
+    return "^" + tok
 
 
 class Handset(NetworkedItem):
@@ -52,6 +66,10 @@ class Handset(NetworkedItem):
         if not getattr(self.db, "texts", None):
             self.db.texts = []
 
+        # Per-handset group chats (decentralized; keyed by group id).
+        if not getattr(self.db, "group_chats", None):
+            self.db.group_chats = {}
+
         # Per-handset photo album (list of dicts). Stored ONLY on this handset.
         if not getattr(self.db, "photos", None):
             self.db.photos = []
@@ -85,55 +103,66 @@ class Handset(NetworkedItem):
 
         This is safe to call multiple times and helps migrate older handset objects.
         """
-        # NetworkedMixin stores these registrations on self.db.device_commands.
-        existing = getattr(self.db, "device_commands", None) or {}
-        if not isinstance(existing, dict):
-            existing = {}
-            self.db.device_commands = existing
+        ver = getattr(self.db, "_handset_cmd_version", 0)
+        try:
+            ver = int(ver)
+        except Exception:
+            ver = 0
+        if ver >= HANDSET_COMMANDS_VERSION:
+            return
 
-        if "account" not in existing:
-            self.register_device_command(
-                "account",
-                "handle_account_info",
-                help_text="View your Matrix account information",
-                auth_level=0,
-                visibility_threshold=0,
-            )
-        if "set_alias" not in existing:
-            self.register_device_command(
-                "set_alias",
-                "handle_set_alias",
-                help_text="Set your Matrix alias: set_alias @name",
-                auth_level=0,
-                physical_only=True,
-                visibility_threshold=0,
-            )
-        if "contacts" not in existing:
-            self.register_device_command(
-                "contacts",
-                "handle_contacts",
-                help_text="View your contacts",
-                auth_level=0,
-                visibility_threshold=0,
-            )
-        if "messages" not in existing:
-            self.register_device_command(
-                "messages",
-                "handle_messages",
-                help_text="View recent text messages (last 24h)",
-                auth_level=0,
-                visibility_threshold=0,
-            )
-
-        if "photos" not in existing:
-            # This is primarily used by the device interface menu; it routes to the photo viewer.
-            self.register_device_command(
-                "photos",
-                "handle_photos",
-                help_text="View photos saved on this handset",
-                auth_level=0,
-                visibility_threshold=0,
-            )
+        self.db.device_commands = {}
+        self.register_device_command(
+            "account",
+            "handle_account_info",
+            help_text="View your Matrix account information",
+            auth_level=0,
+            visibility_threshold=0,
+        )
+        self.register_device_command(
+            "set_alias",
+            "handle_set_alias",
+            help_text="Set your Matrix alias: set_alias @name",
+            auth_level=0,
+            physical_only=True,
+            visibility_threshold=0,
+        )
+        self.register_device_command(
+            "contacts",
+            "handle_contacts",
+            help_text="View your contacts",
+            auth_level=0,
+            visibility_threshold=0,
+        )
+        self.register_device_command(
+            "messages",
+            "handle_messages",
+            help_text="View recent text messages (last 24h)",
+            auth_level=0,
+            visibility_threshold=0,
+        )
+        self.register_device_command(
+            "photos",
+            "handle_photos",
+            help_text="View photos saved on this handset",
+            auth_level=0,
+            visibility_threshold=0,
+        )
+        self.register_device_command(
+            "call_history",
+            "handle_call_history",
+            help_text="View recent call history on this handset",
+            auth_level=0,
+            visibility_threshold=0,
+        )
+        self.register_device_command(
+            "groups",
+            "handle_groups",
+            help_text="Group chats on this handset",
+            auth_level=0,
+            visibility_threshold=0,
+        )
+        self.db._handset_cmd_version = HANDSET_COMMANDS_VERSION
 
     def get_authenticated_user(self):
         """
@@ -199,7 +228,37 @@ class Handset(NetworkedItem):
             self.db.texts = kept
         return kept
 
-    def add_text_message(self, sender_id: str, msg: str, ts_display: str):
+    def append_texts_entry(self, entry: dict) -> bool:
+        """
+        Append a dict to the unified texts buffer (DMs, group, invites, system).
+
+        Requires 'from' and either a non-empty 'msg' or a group_invite payload.
+        """
+        if not isinstance(entry, dict):
+            return False
+        sender_id = (entry.get("from") or "").strip()
+        msg = entry.get("msg", "")
+        if isinstance(msg, str):
+            msg = msg.strip()
+        else:
+            msg = str(msg or "").strip()
+        if not sender_id:
+            return False
+        if not msg and not entry.get("group_invite"):
+            return False
+        if not sender_id.startswith("^"):
+            sender_id = "^" + sender_id
+        row = dict(entry)
+        row["from"] = sender_id
+        row["msg"] = msg
+        if "t" not in row or row.get("t") is None:
+            row["t"] = time.time()
+        raw = list(getattr(self.db, "texts", []) or [])
+        raw.append(row)
+        self.db.texts = raw
+        return True
+
+    def add_text_message(self, sender_id: str, msg: str, ts_display: str, msg_kind: str | None = None):
         """
         Add a text message to this handset's buffer.
 
@@ -213,10 +272,9 @@ class Handset(NetworkedItem):
         if not sender_id.startswith("^"):
             sender_id = "^" + sender_id
         entry = {"t": time.time(), "ts": ts_display, "from": sender_id, "msg": msg}
-        raw = list(getattr(self.db, "texts", []) or [])
-        raw.append(entry)
-        self.db.texts = raw
-        return True
+        if msg_kind:
+            entry["kind"] = str(msg_kind).strip().lower()
+        return self.append_texts_entry(entry)
 
     def get_text_messages(self):
         """
@@ -230,23 +288,29 @@ class Handset(NetworkedItem):
         """
         Display handset text buffer (last 24 hours).
         """
+        # Messages that arrive after this moment stay "unread" until the next view.
+        view_started = time.time()
         # Do not prune on view; cleanup script keeps this within 24h.
         msgs = self.get_text_messages()
         if not msgs:
             caller.msg("No recent texts on this handset (last 24 hours).")
+            try:
+                self.db.last_texts_viewed_t = view_started
+            except Exception:
+                pass
             return True
+        from world.matrix_groups import format_inbox_line
+
         lines = [f"|c=== Messages on {self.key} (last 24h) ===|n"]
         for entry in msgs[-50:]:
-            ts = entry.get("ts", "")
-            frm = entry.get("from", "")
-            msg = entry.get("msg", "")
-            display = self.display_alias_or_id(frm)
-            lines.append(f"[{ts}]{display}: {msg}")
+            if isinstance(entry, dict):
+                lines.append(format_inbox_line(self, entry))
+            else:
+                lines.append(str(entry))
         caller.msg("\n".join(lines))
 
-        # Mark messages as "viewed" for notification counts.
         try:
-            self.db.last_texts_viewed_t = time.time()
+            self.db.last_texts_viewed_t = view_started
         except Exception:
             pass
         return True
@@ -347,6 +411,34 @@ class Handset(NetworkedItem):
             caller,
             "typeclasses.matrix.device_menu",
             startnode="node_view_photos",
+            startnode_input=("", {"device": self, "from_matrix": from_matrix}),
+            cmd_on_exit=None,
+            persistent=False,
+            **get_matrix_formatters(),
+            device=self,
+            from_matrix=from_matrix,
+        )
+        return True
+
+    def handle_groups(self, caller, *args):
+        """
+        Open the handset group chat menu (EvMenu).
+        """
+        try:
+            from evennia import EvMenu
+            from typeclasses.matrix.menu_formatters import get_matrix_formatters
+        except Exception:
+            caller.msg("|rGroup chat menu unavailable.|n")
+            return False
+        try:
+            from typeclasses.matrix.avatars import MatrixAvatar
+            from_matrix = isinstance(caller, MatrixAvatar)
+        except Exception:
+            from_matrix = False
+        EvMenu(
+            caller,
+            "typeclasses.matrix.device_menu",
+            startnode="node_view_groups",
             startnode_input=("", {"device": self, "from_matrix": from_matrix}),
             cmd_on_exit=None,
             persistent=False,
@@ -565,24 +657,45 @@ class Handset(NetworkedItem):
         """Return contacts dict (alias_lower -> matrix_id)."""
         contacts = getattr(self.db, "contacts", None)
         if not isinstance(contacts, dict):
-            contacts = {}
-            self.db.contacts = contacts
-        # Normalize keys to lowercase for matching.
+            self.db.contacts = {}
+            return {}
         normalized = {}
+        dirty = False
         for k, v in contacts.items():
             if not k or not v:
+                dirty = True
                 continue
-            normalized[str(k).strip().lower()] = str(v).strip()
-        if normalized != contacts:
+            nk = str(k).strip().lower()
+            nv = str(v).strip()
+            if nk != k or nv != v:
+                dirty = True
+            normalized[nk] = nv
+        if dirty:
             self.db.contacts = normalized
-        return normalized
+            return normalized
+        return contacts
+
+    def remove_contact(self, alias: str):
+        """Remove a contact by alias (case-insensitive)."""
+        alias = (alias or "").strip().lower()
+        if not alias:
+            return False, "Usage: hs remove <alias>"
+        contacts = self.get_contacts()
+        if alias not in contacts:
+            return False, "No contact with that name."
+        del contacts[alias]
+        self.db.contacts = contacts
+        return True, f"|gRemoved|n {alias} from contacts."
 
     def save_contact(self, matrix_id: str, alias: str):
         """Save a contact on this handset."""
         matrix_id = (matrix_id or "").strip()
         alias = (alias or "").strip()
-        if not matrix_id or not alias:
+        if matrix_id is None or not str(matrix_id).strip():
+            return False, "|rInvalid Matrix ID.|n"
+        if not alias:
             return False, "Usage: handset save <ID> as <alias>"
+        matrix_id = str(matrix_id).strip()
         if not matrix_id.startswith("^"):
             matrix_id = "^" + matrix_id
         contacts = self.get_contacts()
@@ -597,7 +710,7 @@ class Handset(NetworkedItem):
         """
         Resolve an input token to a handset Matrix ID.
         Accepts:
-          - a Matrix ID with or without '^'
+          - a Matrix ID with or without '^' (must match base32 length)
           - a saved contact alias (case-insensitive)
         """
         raw = (raw or "").strip()
@@ -607,13 +720,9 @@ class Handset(NetworkedItem):
         key = raw.lower()
         if key in contacts:
             return contacts[key]
-        # Treat as raw ID, allow missing prefix.
         if raw.startswith("^"):
-            return raw
-        # If it looks like a 6-char base32 token, allow it.
-        if len(raw) == 6:
-            return "^" + raw.upper()
-        return "^" + raw
+            return _validate_matrix_id_token(raw[1:])
+        return _validate_matrix_id_token(raw)
 
     def display_alias_or_id(self, matrix_id: str):
         """Return saved alias for matrix_id if present, else matrix_id."""
@@ -627,10 +736,69 @@ class Handset(NetworkedItem):
                 return alias
         return matrix_id
 
+    def get_call_log(self):
+        """Recent call events (oldest first), capped at 20 on write."""
+        return list(getattr(self.db, "call_log", None) or [])
+
+    def log_call_event(self, peer_id: str, direction: str, outcome: str):
+        peer_id = (peer_id or "").strip()
+        direction = (direction or "").strip().lower()
+        outcome = (outcome or "").strip().lower()
+        log = list(getattr(self.db, "call_log", None) or [])
+        log.append({"t": time.time(), "peer": peer_id, "dir": direction, "outcome": outcome})
+        self.db.call_log = log[-20:]
+
+    def handle_call_history(self, caller, *args):
+        """Show recent call history (device menu / operate)."""
+        log = self.get_call_log()
+        if not log:
+            caller.msg("No recent calls logged on this handset.")
+            return True
+        lines = ["|c=== Recent calls (last 20) ===|n"]
+        for entry in log[-20:][::-1]:
+            t = entry.get("t", 0)
+            try:
+                from datetime import datetime
+
+                ts = datetime.fromtimestamp(float(t)).strftime("%b %d %H:%M")
+            except Exception:
+                ts = "?"
+            peer_disp = self.display_alias_or_id(entry.get("peer", "") or "")
+            d = (entry.get("dir") or "").strip().lower()
+            o = (entry.get("outcome") or "").strip().lower()
+            dlab = "Incoming" if d == "in" else "Outgoing" if d == "out" else d or "?"
+            lines.append(f"[{ts}] {dlab} — {peer_disp} — {o}")
+        caller.msg("\n".join(lines))
+        return True
+
     def _call_state(self):
-        return str(getattr(self.ndb, "call_state", "idle") or "idle")
+        from world.handset_call_utils import clear_call, get_call_peer
+
+        state = str(getattr(self.ndb, "call_state", "idle") or "idle")
+        if state != "idle":
+            peer = get_call_peer(self)
+            peer_state = str(getattr(peer.ndb, "call_state", "idle") or "idle") if peer else "idle"
+            if not peer or peer_state == "idle":
+                clear_call(self)
+                holder = self.get_authenticated_user()
+                if holder:
+                    holder.msg("|yThe call was lost.|n")
+                return "idle"
+        return state
 
     def _set_call_state(self, state: str, peer_dbref: int | None = None):
+        try:
+            prev = getattr(self.ndb, "call_peer", None)
+            if peer_dbref is None:
+                self.ndb._call_peer_obj = None
+            elif prev is not None:
+                try:
+                    if int(prev) != int(peer_dbref):
+                        self.ndb._call_peer_obj = None
+                except Exception:
+                    self.ndb._call_peer_obj = None
+        except Exception:
+            pass
         self.ndb.call_state = state
         self.ndb.call_peer = peer_dbref
 
