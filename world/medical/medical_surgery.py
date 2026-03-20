@@ -203,8 +203,8 @@ def _surgery_finish(ids, organ_key):
     sedated = (
         float(getattr(target.db, "sedated_until", 0.0) or 0.0) > now_ts
         or (
-            bool(getattr(target.db, "unconscious", False))
-            and float(getattr(target.db, "unconscious_until", 0.0) or 0.0) > now_ts
+            bool(getattr(target.db, "medical_unconscious", False))
+            and float(getattr(target.db, "medical_unconscious_until", 0.0) or 0.0) > now_ts
         )
     )
     if not sedated:
@@ -305,8 +305,8 @@ def start_surgery_sequence(caller, target, table, organ_key):
     sedated = (
         float(getattr(target.db, "sedated_until", 0.0) or 0.0) > now_ts
         or (
-            bool(getattr(target.db, "unconscious", False))
-            and float(getattr(target.db, "unconscious_until", 0.0) or 0.0) > now_ts
+            bool(getattr(target.db, "medical_unconscious", False))
+            and float(getattr(target.db, "medical_unconscious_until", 0.0) or 0.0) > now_ts
         )
     )
     if not sedated and hasattr(caller, "msg"):

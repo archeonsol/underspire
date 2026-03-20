@@ -94,7 +94,8 @@ def is_unconscious(character):
     and any future mechanics (drugs, injuries, etc.) that need to check
     or set unconsciousness.
     """
-    return bool(getattr(getattr(character, "db", None), "unconscious", False))
+    db = getattr(character, "db", None)
+    return bool(getattr(db, "unconscious", False) or getattr(db, "medical_unconscious", False))
 
 # Body part -> bones that can fracture
 BODY_PART_BONES = {

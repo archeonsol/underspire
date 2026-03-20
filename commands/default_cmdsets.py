@@ -132,7 +132,7 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         from commands.cover_commands import CmdCover, CmdLeaveCover, CmdPeek, CmdSuppress
         from commands.scavenge_cmds import CmdScavenge, CmdSkin, CmdButcher, CmdSever, CmdLoot
         from commands.salvage_cmds import CmdSalvage
-        from commands.medical_cmds import CmdHt, CmdPatient, CmdUse, CmdApply, CmdStabilize, CmdSedate, CmdSurgery, CmdDefib
+        from commands.medical_cmds import CmdHt, CmdPatient, CmdUse, CmdApply, CmdStabilize, CmdSedate, CmdWakePatient, CmdSurgery, CmdDefib
         from commands.survival_cmds import CmdEat, CmdDrink
         from commands.inventory_cmds import CmdWield, CmdUnwield, CmdFreehands, CmdInventory, CmdReload, CmdUnload, CmdCheckAmmo, CmdWear, CmdRemove, CmdStrip, CmdFrisk
         from commands.crafting_cmds import CmdSurvey, CmdRepairArmor, CmdTailor
@@ -209,6 +209,7 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdLieOnTable())
         self.add(CmdGetOffTable())
         self.add(CmdSedate())
+        self.add(CmdWakePatient())
         self.add(CmdSurgery())
         self.add(CmdEat())
         self.add(CmdDrink())

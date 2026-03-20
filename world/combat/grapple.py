@@ -570,17 +570,19 @@ def _wake_unconscious_callback(character_id):
         return
     character.db.unconscious = False
     character.db.unconscious_until = 0.0
-    prev_pose = getattr(character.db, "_unconscious_prev_room_pose", None)
-    if prev_pose is not None:
-        character.db.room_pose = prev_pose
+    med_active = bool(getattr(character.db, "medical_unconscious", False))
+    if not med_active:
+        prev_pose = getattr(character.db, "_unconscious_prev_room_pose", None)
+        if prev_pose is not None:
+            character.db.room_pose = prev_pose
+            try:
+                character.attributes.remove("_unconscious_prev_room_pose")
+            except Exception:
+                pass
         try:
-            character.attributes.remove("_unconscious_prev_room_pose")
+            character.cmdset.remove("UnconsciousCmdSet")
         except Exception:
             pass
-    try:
-        character.cmdset.remove("UnconsciousCmdSet")
-    except Exception:
-        pass
     character.msg("|gYou groggily come to.|n")
     if character.location and hasattr(character.location, "contents_get"):
         for v in character.location.contents_get(content_type="character"):
@@ -621,6 +623,110 @@ def set_unconscious_for_seconds(character, seconds):
     delay(secs, _wake_unconscious_callback, character.id)
 
 
+def _wake_medical_unconscious_callback(character_id):
+    """Scheduled when medical KO is set; clears only medical KO state."""
+    try:
+        result = search_object("#%s" % character_id)
+        if not result:
+            return
+        character = result[0]
+    except Exception:
+        return
+    if not getattr(character.db, "medical_unconscious", False):
+        return
+    wake_at = float(getattr(character.db, "medical_unconscious_until", 0.0) or 0.0)
+    now = time.time()
+    if wake_at > now:
+        delay(max(1.0, wake_at - now), _wake_medical_unconscious_callback, character.id)
+        return
+    force_wake_medical_unconscious(character, silent=False)
+
+
+def set_medical_unconscious_for_seconds(character, seconds):
+    """
+    Put character in medically-induced unconscious state for at least `seconds`.
+    This is distinct from trauma KO (db.unconscious).
+    """
+    if not character or not getattr(character, "db", None):
+        return
+    now = time.time()
+    secs = max(1.0, float(seconds or 0.0))
+    character.db.medical_unconscious = True
+    until = now + secs
+    old_until = float(getattr(character.db, "medical_unconscious_until", 0.0) or 0.0)
+    character.db.medical_unconscious_until = max(old_until, until)
+    if not hasattr(character.db, "_unconscious_prev_room_pose"):
+        character.db._unconscious_prev_room_pose = getattr(character.db, "room_pose", None) or "standing here"
+    character.db.room_pose = "lying here, unconscious"
+    try:
+        character.cmdset.add("commands.default_cmdsets.UnconsciousCmdSet")
+    except Exception:
+        pass
+    delay(secs, _wake_medical_unconscious_callback, character.id)
+
+
+def force_wake_unconscious(character, silent=False):
+    """
+    Immediately wake a character and clear unconscious lock state.
+    """
+    if not character or not getattr(character, "db", None):
+        return
+    was_uncon = bool(getattr(character.db, "unconscious", False))
+    character.db.unconscious = False
+    character.db.unconscious_until = 0.0
+    med_active = bool(getattr(character.db, "medical_unconscious", False))
+    if not med_active:
+        prev_pose = getattr(character.db, "_unconscious_prev_room_pose", None)
+        if prev_pose is not None:
+            character.db.room_pose = prev_pose
+            try:
+                character.attributes.remove("_unconscious_prev_room_pose")
+            except Exception:
+                pass
+        try:
+            character.cmdset.remove("UnconsciousCmdSet")
+        except Exception:
+            pass
+    if (not silent) and was_uncon:
+        character.msg("|gYou groggily come to.|n")
+        if character.location and hasattr(character.location, "contents_get"):
+            for v in character.location.contents_get(content_type="character"):
+                if v == character:
+                    continue
+                v.msg("%s groggily comes to." % _combat_display_name(character, v))
+
+
+def force_wake_medical_unconscious(character, silent=False):
+    """
+    Immediately clear medical KO without touching trauma KO.
+    """
+    if not character or not getattr(character, "db", None):
+        return
+    was_uncon = bool(getattr(character.db, "medical_unconscious", False))
+    character.db.medical_unconscious = False
+    character.db.medical_unconscious_until = 0.0
+    trauma_active = bool(getattr(character.db, "unconscious", False))
+    if not trauma_active:
+        prev_pose = getattr(character.db, "_unconscious_prev_room_pose", None)
+        if prev_pose is not None:
+            character.db.room_pose = prev_pose
+            try:
+                character.attributes.remove("_unconscious_prev_room_pose")
+            except Exception:
+                pass
+        try:
+            character.cmdset.remove("UnconsciousCmdSet")
+        except Exception:
+            pass
+    if (not silent) and was_uncon:
+        character.msg("|gYou groggily come to.|n")
+        if character.location and hasattr(character.location, "contents_get"):
+            for v in character.location.contents_get(content_type="character"):
+                if v == character:
+                    continue
+                v.msg("%s groggily comes to." % _combat_display_name(character, v))
+
+
 def reconcile_unconscious_state(character):
     """
     Repair unconscious state after reload/startup.
@@ -632,30 +738,41 @@ def reconcile_unconscious_state(character):
         return
     is_uncon = bool(getattr(character.db, "unconscious", False))
     wake_at = float(getattr(character.db, "unconscious_until", 0.0) or 0.0)
+    is_med_uncon = bool(getattr(character.db, "medical_unconscious", False))
+    med_wake_at = float(getattr(character.db, "medical_unconscious_until", 0.0) or 0.0)
     now = time.time()
-    if not is_uncon:
-        return
-    if wake_at > now:
+    if is_uncon and wake_at > now:
         try:
             character.cmdset.add("commands.default_cmdsets.UnconsciousCmdSet")
         except Exception:
             pass
         delay(max(1.0, wake_at - now), _wake_unconscious_callback, character.id)
-        return
-    # Expired unconscious state: clear stale lock.
-    character.db.unconscious = False
-    character.db.unconscious_until = 0.0
-    prev_pose = getattr(character.db, "_unconscious_prev_room_pose", None)
-    if prev_pose is not None:
-        character.db.room_pose = prev_pose
+    elif is_uncon:
+        character.db.unconscious = False
+        character.db.unconscious_until = 0.0
+
+    if is_med_uncon and med_wake_at > now:
         try:
-            character.attributes.remove("_unconscious_prev_room_pose")
+            character.cmdset.add("commands.default_cmdsets.UnconsciousCmdSet")
         except Exception:
             pass
-    try:
-        character.cmdset.remove("UnconsciousCmdSet")
-    except Exception:
-        pass
+        delay(max(1.0, med_wake_at - now), _wake_medical_unconscious_callback, character.id)
+    elif is_med_uncon:
+        character.db.medical_unconscious = False
+        character.db.medical_unconscious_until = 0.0
+
+    if not bool(getattr(character.db, "unconscious", False)) and not bool(getattr(character.db, "medical_unconscious", False)):
+        prev_pose = getattr(character.db, "_unconscious_prev_room_pose", None)
+        if prev_pose is not None:
+            character.db.room_pose = prev_pose
+            try:
+                character.attributes.remove("_unconscious_prev_room_pose")
+            except Exception:
+                pass
+        try:
+            character.cmdset.remove("UnconsciousCmdSet")
+        except Exception:
+            pass
 
 
 def grapple_strike(grappler, victim):

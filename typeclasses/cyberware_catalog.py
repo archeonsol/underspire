@@ -452,6 +452,17 @@ class RetractableClaws(CyberwareBase):
     def are_deployed(self):
         return bool(getattr(self.db, "claws_deployed", False))
 
+    def _echo_room(self, character, template):
+        """Send per-viewer room text so recog/sdesc resolves correctly."""
+        loc = getattr(character, "location", None)
+        if not loc or not hasattr(loc, "contents_get"):
+            return
+        for viewer in loc.contents_get(content_type="character"):
+            if viewer == character:
+                continue
+            name = character.get_display_name(viewer) if hasattr(character, "get_display_name") else character.name
+            viewer.msg(template.format(name=name))
+
     def deploy(self, character):
         if self.are_deployed():
             return False, "Your claws are already deployed."
@@ -467,6 +478,7 @@ class RetractableClaws(CyberwareBase):
                 appended[part] = {}
             appended[part][self.typeclass_path] = text
             character.db.appended_descriptions = appended
+        self._echo_room(character, "{name}'s chrome talons slide out from their fingertips.")
         return True, "Chrome talons slide out from your fingertips."
 
     def retract(self, character):
@@ -479,7 +491,8 @@ class RetractableClaws(CyberwareBase):
                 appended[part].pop(self.typeclass_path, None)
             character.db.appended_descriptions = appended
         self.body_mods = {}
-        return True, "The claws retract flush beneath your fingertips."
+        self._echo_room(character, "{name}'s chrome talons retract flush beneath their fingertips.")
+        return True, "The talons retract flush beneath your fingertips."
 
 
 class ChromeHeart(CyberwareBase):

@@ -76,8 +76,8 @@ def _is_sedated(target):
     now = time.time()
     if float(getattr(target.db, "sedated_until", 0.0) or 0.0) > now:
         return True
-    if bool(getattr(target.db, "unconscious", False)):
-        wake_at = float(getattr(target.db, "unconscious_until", 0.0) or 0.0)
+    if bool(getattr(target.db, "medical_unconscious", False)):
+        wake_at = float(getattr(target.db, "medical_unconscious_until", 0.0) or 0.0)
         return wake_at <= 0.0 or wake_at > now
     return False
 
