@@ -20,6 +20,7 @@ from evennia.utils import delay
 from evennia.utils.evmore import EvMore
 
 from commands.base_cmds import Command as ICBaseCommand
+from world.ui_utils import fade_rule
 from world.network.network_decoys import DECOY_COUNT_RANGE, generate_decoy_entries
 from world.utils import get_containing_room, room_has_network_coverage
 
@@ -309,31 +310,48 @@ class CmdNetworkWho(ICBaseCommand):
             entries = [(a, t) for a, t in entries if filter_str in a.lower()]
 
         # --- Visual aesthetic ---
-        border = "=" * TABLE_WIDTH
+        # Each call to these helpers re-rolls jitter so every line looks distinct.
+        # Column divider sits at: ║(1) + space(1) + ID_COL_WIDTH(14) + space(1) = 17
+        col_div_pos = 1 + 1 + ID_COL_WIDTH + 1
 
-        title = "THE NETWORK"
-        subtitle = f"On Network - Active Users [{len(entries)}]" if not filter_str else f"On Network - Filter: {filter_str} [{len(entries)}]"
+        def _rule(left, junction=None, heavy=True):
+            """
+            Build one horizontal rule with a proper left-border box char.
+
+            left      — the double-box char at position 0 (corner or tee).
+            junction  — optional double-box T/cross char at col_div_pos.
+            heavy     — True uses ━, False uses ─ for the solid run.
+
+            """
+            ch = "━" if heavy else "─"
+            solid = left + ch * (col_div_pos - 1)
+            if junction:
+                tail = fade_rule(TABLE_WIDTH - col_div_pos - 1, "─", start_ratio=0.45, decay=0.55, initial_gap=1, gap_growth_every=2, jitter=0.25)
+                return solid + junction + tail
+            else:
+                tail = fade_rule(TABLE_WIDTH - col_div_pos, "─", start_ratio=0.45, decay=0.55, initial_gap=1, gap_growth_every=2, jitter=0.25)
+                return solid + tail
+
+        title = f"|yTHE NETWORK |x-|g Active Users [{len(entries)}]" if not filter_str else f"On Network - Filter: {filter_str} [{len(entries)}]"
 
         # Randomize the order each time.
         random.shuffle(entries)
 
         # Render as: banner + subtitle + a fixed-width two-column table.
         out_lines = []
-        out_lines.append(f"|r{border}|n")
-        out_lines.append(f"|y{title.center(TABLE_WIDTH)}|n")
-        out_lines.append(f"|r{border}|n")
-        out_lines.append(f"|g{subtitle.center(TABLE_WIDTH)}|n")
-        out_lines.append(f"|r{border}|n")
+        out_lines.append(f"|r{_rule('┌', heavy=False)}|n")
+        out_lines.append(f"|r│{title.center(TABLE_WIDTH)}|n")
+        out_lines.append(f"|r{_rule('┢', '┱')}|n")
 
         # Header row with vertical separators (ID | TAG).
-        out_lines.append(f"|w| {'ID'.ljust(ID_COL_WIDTH)} | {'TAG'.ljust(TAG_COL_WIDTH)} |n")
-        # Divider row: separates headers from the actual data rows.
-        out_lines.append(f"|r{'-' * TABLE_WIDTH}|n")
+        out_lines.append(f"|r┃|w {'Alias / ID'.ljust(ID_COL_WIDTH)} |r┃|w {'TAG'.ljust(TAG_COL_WIDTH)} |n")
+        # Thin divider between header and data rows.
+        out_lines.append(f"|r{_rule('┠', '╂', heavy=False)}|n")
 
         for alias, tag in entries:
-            out_lines.append(f"|w| {alias:<{ID_COL_WIDTH}} | {tag:<{TAG_COL_WIDTH}} |n")
+            out_lines.append(f"|r┃|m {alias:<{ID_COL_WIDTH}} |r┃|n {tag:<{TAG_COL_WIDTH}}")
 
-        out_lines.append(f"|r{border}|n")
+        out_lines.append(f"|r{_rule('┗', '┹')}|n")
 
         output = "\n".join(out_lines)
         # Pagination: if many entries, use EvMore.
