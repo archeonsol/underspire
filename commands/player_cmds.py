@@ -264,6 +264,13 @@ class CmdXp(Command):
             return
 
         target_name = parts[2].strip().lower()
+        # Normalize common player input variants for skills with underscores.
+        # Example: cybersurgery / cyber-surgery -> cyber_surgery.
+        target_name_normalized = target_name.replace("-", "_")
+        skill_aliases = {
+            "cybersurgery": "cyber_surgery",
+            "cyber_surgery": "cyber_surgery",
+        }
         try:
             bulk_n = int(parts[3]) if len(parts) > 3 else 1
             if bulk_n < 1:
@@ -364,9 +371,10 @@ class CmdXp(Command):
             return
 
         if sub == "skill":
+            target_skill = skill_aliases.get(target_name, target_name_normalized)
             skill_key = None
             for s in SKILL_KEYS:
-                if s.startswith(target_name) or target_name == s:
+                if s.startswith(target_skill) or target_skill == s:
                     skill_key = s
                     break
             if not skill_key:

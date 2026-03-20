@@ -116,6 +116,7 @@ PROTOTYPE_MODULES = [
     "world.prototypes.alcohol_prototypes",
     "world.prototypes.performance_prototypes",
     "world.prototypes.medical_prototypes",
+    "world.prototypes.cyberware_prototypes",
     "world.prototypes.armor_prototypes",
 ]
 

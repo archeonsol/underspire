@@ -199,8 +199,15 @@ def _surgery_finish(ids, organ_key):
 
     names = ORGAN_INFO.get(organ_key, (organ_key,) * 4)
     difficulty = _splint_difficulty(organ_key) + 8 if is_bone_case else _organ_difficulty(severity)
-    sedated_until = float(getattr(target.db, "sedated_until", 0.0) or 0.0)
-    if sedated_until <= time.time():
+    now_ts = time.time()
+    sedated = (
+        float(getattr(target.db, "sedated_until", 0.0) or 0.0) > now_ts
+        or (
+            bool(getattr(target.db, "unconscious", False))
+            and float(getattr(target.db, "unconscious_until", 0.0) or 0.0) > now_ts
+        )
+    )
+    if not sedated:
         # Awake surgery is much harder due to movement/pain response.
         difficulty += 18
     # Table gives a bonus: proper OR, full kit, patient immobilized
@@ -294,8 +301,15 @@ def start_surgery_sequence(caller, target, table, organ_key):
     if organ_key not in ORGAN_SURGERY_NARRATIVES and organ_key not in BONE_SURGERY_NARRATIVES:
         return False, "No surgical procedure for that organ."
 
-    sedated_until = float(getattr(target.db, "sedated_until", 0.0) or 0.0)
-    if sedated_until <= time.time() and hasattr(caller, "msg"):
+    now_ts = time.time()
+    sedated = (
+        float(getattr(target.db, "sedated_until", 0.0) or 0.0) > now_ts
+        or (
+            bool(getattr(target.db, "unconscious", False))
+            and float(getattr(target.db, "unconscious_until", 0.0) or 0.0) > now_ts
+        )
+    )
+    if not sedated and hasattr(caller, "msg"):
         caller.msg("|yWarning: patient is not sedated. The surgery will be harder.|n")
 
     caller.db.surgery_in_progress = True

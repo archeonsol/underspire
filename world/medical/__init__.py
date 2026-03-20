@@ -329,6 +329,19 @@ def _process_one_regen(character):
     """
     _ensure_medical_db(character)
     injuries = character.db.injuries or []
+    now = time.time()
+    for injury in injuries:
+        if not injury.get("cyberware_dbref"):
+            continue
+        started = float(injury.get("recovery_started", now) or now)
+        elapsed = now - started
+        if elapsed < 24 * 3600:
+            injury["recovery_phase"] = "acute"
+        elif elapsed < 72 * 3600:
+            injury["recovery_phase"] = "adapting"
+        else:
+            injury["recovery_phase"] = "integrated"
+            injury["rejection_risk"] = max(0.0, float(injury.get("rejection_risk", 0.0) or 0.0) * 0.1)
     max_hp = getattr(character, "max_hp", 100) or 100
     current = character.db.current_hp
     if current is None:
@@ -402,7 +415,7 @@ def apply_trauma(character, body_part, damage, is_critical=False, weapon_key="fi
 
     Returns dict: { "organ": ..., "fracture": ..., "bleeding": ... } for combat messaging.
     """
-    from world.body import get_part_state, get_effective_organs, get_effective_bones
+    from world.body import get_part_state, get_effective_organs, get_effective_bones, get_cyberware_for_part
     from world.combat.damage_types import get_damage_type, get_trauma_multipliers
 
     _ensure_medical_db(character)
@@ -411,14 +424,68 @@ def apply_trauma(character, body_part, damage, is_critical=False, weapon_key="fi
     compute_effective_bleed_level(character)
     result = {"organ": None, "fracture": None, "bleeding": None}
 
-    # Chrome/missing parts have no biological tissue — no trauma possible.
-    # HP damage is still applied by at_damage (the blow still hurts); this
-    # function only handles biological consequences (organs, bones, bleeding).
+    # Chrome/missing parts have no biological tissue — no biological trauma.
     part_state = get_part_state(character, body_part or "torso")
-    if part_state in ("missing", "chrome"):
+    if part_state == "missing":
+        return result
+    if part_state == "chrome":
+        chrome_damage_mult = {"arc": 1.5, "void": 1.8, "impact": 0.8, "slashing": 0.5, "penetrating": 0.7, "burn": 0.6, "freeze": 0.4}
+        damage_type = get_damage_type(weapon_key, weapon_obj)
+        mult = chrome_damage_mult.get(damage_type, 0.6)
+        effective_damage = int(damage * mult)
+        if effective_damage >= 15:
+            cw_list = get_cyberware_for_part(character, body_part or "torso")
+            if cw_list:
+                cw = cw_list[0]
+                chrome_hp = getattr(cw.db, "chrome_hp", None)
+                if chrome_hp is None:
+                    chrome_hp = int(getattr(cw, "chrome_max_hp", 100) or 100)
+                    cw.db.chrome_hp = chrome_hp
+                    cw.db.chrome_max_hp = chrome_hp
+                cw.db.chrome_hp = max(0, int(chrome_hp) - effective_damage)
+                result["chrome_damage"] = (cw, effective_damage, cw.db.chrome_hp)
+                # Memory core instability under heavy damage can trigger flashback episodes.
+                if type(cw).__name__ == "MemoryCore":
+                    mx = int(getattr(cw.db, "chrome_max_hp", getattr(cw, "chrome_max_hp", 25)) or 25)
+                    if cw.db.chrome_hp < (mx * 0.5):
+                        if random.random() < 0.35:
+                            character.db.memory_core_flashback_until = time.time() + 120
+                            memories = list(getattr(character.db, "memories", None) or [])
+                            if memories and random.random() < 0.25:
+                                lose_idx = random.randint(0, len(memories) - 1)
+                                lost = memories.pop(lose_idx)
+                                character.db.memories = memories
+                                character.msg(f"|mA violent memory loop wipes a stored memory: {lost}|n")
+                            else:
+                                character.msg("|mA vivid memory loop hijacks your thoughts.|n")
+                if cw.db.chrome_hp <= 0:
+                    result["chrome_destroyed"] = cw
+                    cw.db.malfunctioning = True
+                    if getattr(cw, "buff_class", None):
+                        character.buffs.remove(cw.buff_class.key)
+                    # Cardiopulmonary failure cascades into immediate stamina collapse.
+                    if type(cw).__name__ == "CardioPulmonaryBooster":
+                        character.db.current_stamina = 0
         return result
 
     damage_type = get_damage_type(weapon_key, weapon_obj)
+    if damage_type == "arc" and (character.db.cyberware or []):
+        try:
+            from world.medical.cybersurgery import apply_emp_effect
+            apply_emp_effect(character, damage)
+        except Exception:
+            pass
+        # Arc-specific neural side effects for certain implants.
+        for cw in (character.db.cyberware or []):
+            if getattr(cw.db, "malfunctioning", False):
+                continue
+            cname = type(cw).__name__
+            if cname == "WiredReflexes" and random.random() < 0.10:
+                character.db.combat_skip_next_turn = True
+            if cname == "SynapticAccelerator":
+                until = time.time() + 60
+                if float(getattr(character.db, "synaptic_arc_debuff_until", 0.0) or 0.0) < until:
+                    character.db.synaptic_arc_debuff_until = until
     bleed_mult, fracture_mult, organ_mult = get_trauma_multipliers(damage_type, body_part or "torso")
     organs = get_effective_organs(character, body_part or "torso")
     bones = get_effective_bones(character, body_part or "torso")
@@ -475,6 +542,8 @@ def apply_trauma(character, body_part, damage, is_critical=False, weapon_key="fi
             od = dict(wound.get("organ_damage") or {})
             od[organ] = new_severity
             wound["organ_damage"] = od
+            if new_severity >= 3 and current_sev >= 3:
+                wound["organ_destroyed"] = True
             stabilized = dict(getattr(character.db, "stabilized_organs", None) or {})
             if organ in stabilized:
                 del stabilized[organ]
@@ -486,6 +555,10 @@ def apply_trauma(character, body_part, damage, is_critical=False, weapon_key="fi
     # --- Fracture: blunt favoured; blades/guns less likely ---
     base_fracture = 0.04 + damage / 80 + (0.12 if is_critical else 0)
     fracture_chance = min(0.55, base_fracture * rehit_bonus * fracture_mult)
+    # Bone lacing lowers fracture likelihood.
+    has_bone_lacing = any(type(cw).__name__ == "BoneLacing" and not bool(getattr(cw.db, "malfunctioning", False)) for cw in (character.db.cyberware or []))
+    if has_bone_lacing:
+        fracture_chance *= 0.6
     if bones and damage >= 10 and random.random() < fracture_chance:
         bone = random.choice(bones)
         if wound:
@@ -517,6 +590,9 @@ def apply_trauma(character, body_part, damage, is_critical=False, weapon_key="fi
         rate_map = {"capillary": 1.0, "venous": 2.0, "arterial": 3.0}
         base_rate = rate_map.get(vessel_type, 1.0)
         added = float(delta) * (1.2 if is_critical else 1.0)
+        has_hemo_reg = any(type(cw).__name__ == "HemostaticRegulator" and not bool(getattr(cw.db, "malfunctioning", False)) for cw in (character.db.cyberware or []))
+        if has_hemo_reg:
+            base_rate = max(0.0, base_rate - 1.0)
         wound["bleed_rate"] = max(float(wound.get("bleed_rate", 0.0) or 0.0), base_rate + added)
         wound["vessel_type"] = vessel_type
         wound["bleed_treated"] = False
@@ -636,6 +712,21 @@ def get_brutal_hit_flavor(weapon_key, body_part, trauma_result, defender_name, a
             lines_atk.append(triple[1])
         if len(triple) >= 3 and triple[2]:
             lines_def.append(triple[2])
+    if trauma_result.get("chrome_damage"):
+        cw, dmg, remaining = trauma_result["chrome_damage"]
+        if damage_type == "arc":
+            lines_atk.append(f"|cSparks explode from their {loc}. The chrome screams.|n")
+            lines_def.append(f"|cElectricity arcs through your chrome {loc}. Systems flicker.|n")
+        elif damage_type == "void":
+            lines_atk.append(f"|cThe chrome at their {loc} warps and buckles. Something fundamental shifts.|n")
+            lines_def.append(f"|cYour chrome {loc} feels wrong. Like it's forgetting what shape it should be.|n")
+        else:
+            lines_atk.append(f"|cMetal dents at their {loc}. The chrome took the hit.|n")
+            lines_def.append(f"|cImpact rattles through your chrome {loc}. Damage, but it holds.|n")
+    if trauma_result.get("chrome_destroyed"):
+        cw = trauma_result["chrome_destroyed"]
+        lines_atk.append(f"|R{cw.key} at their {loc} shorts out. The chrome is dead.|n")
+        lines_def.append(f"|R{cw.key} in your {loc} goes dark. Malfunction. The chrome is dead.|n")
     return " ".join(lines_atk), " ".join(lines_def)
 
 

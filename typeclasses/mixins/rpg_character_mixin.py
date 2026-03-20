@@ -2,6 +2,7 @@
 RPG character mixin: stats, skills, grades, and the roll-check (dice) system.
 """
 import random
+import time
 
 
 class RPGCharacterMixin:
@@ -35,10 +36,25 @@ class RPGCharacterMixin:
         base_display = min(max(stored // 2, 0), 150)
         if hasattr(self, "buffs"):
             try:
-                return int(self.buffs.check(base_display, f"{stat_name}_display"))
+                value = int(self.buffs.check(base_display, f"{stat_name}_display"))
             except Exception:
-                return base_display
-        return base_display
+                value = base_display
+        else:
+            value = base_display
+        value += self.get_cyberware_stat_modifier(stat_name)
+        value += self._get_surge_stat_modifier(stat_name)
+        # Olfactory booster overload in harsh smell-heavy environments.
+        if stat_name == "perception" and self._is_olfactory_overload_room():
+            value -= 8
+        # Threat module overload in crowded spaces.
+        if stat_name == "perception" and self._is_threat_overload_room():
+            value -= 3
+        if stat_name == "intelligence":
+            if float(getattr(self.db, "synaptic_arc_debuff_until", 0.0) or 0.0) > time.time():
+                value -= 5
+            if float(getattr(self.db, "memory_core_flashback_until", 0.0) or 0.0) > time.time():
+                value -= 6
+        return int(value)
 
     def get_skill_level(self, skill_key):
         """
@@ -50,10 +66,103 @@ class RPGCharacterMixin:
         base = int(_skill_level(self, skill_key) or 0)
         if hasattr(self, "buffs"):
             try:
-                return int(self.buffs.check(base, f"skill:{skill_key}"))
+                value = int(self.buffs.check(base, f"skill:{skill_key}"))
             except Exception:
-                return base
-        return base
+                value = base
+        else:
+            value = base
+        value += self.get_cyberware_skill_modifier(skill_key)
+        return int(value)
+
+    def get_cyberware_stat_modifier(self, stat_name):
+        """Sum stat_mods from active buffs for this stat."""
+        total = 0
+        if not hasattr(self, "buffs"):
+            return 0
+        buffs_obj = self.buffs
+        all_attr = getattr(buffs_obj, "all", None)
+        if callable(all_attr):
+            buff_iter = all_attr()
+        elif isinstance(all_attr, dict):
+            buff_iter = all_attr.values()
+        elif all_attr is not None:
+            buff_iter = all_attr
+        else:
+            return 0
+        for buff in buff_iter:
+            mods = getattr(buff, "stat_mods", None) or {}
+            total += int(mods.get(stat_name, 0))
+        return total
+
+    def get_cyberware_skill_modifier(self, skill_key):
+        """Sum skill_mods from active buffs for this skill."""
+        total = 0
+        if not hasattr(self, "buffs"):
+            return 0
+        buffs_obj = self.buffs
+        all_attr = getattr(buffs_obj, "all", None)
+        if callable(all_attr):
+            buff_iter = all_attr()
+        elif isinstance(all_attr, dict):
+            buff_iter = all_attr.values()
+        elif all_attr is not None:
+            buff_iter = all_attr
+        else:
+            return 0
+        for buff in buff_iter:
+            if getattr(buff, "key", "") == "retractable_claws":
+                deployed = any(
+                    type(cw).__name__ == "RetractableClaws"
+                    and bool(getattr(cw.db, "claws_deployed", False))
+                    and not bool(getattr(cw.db, "malfunctioning", False))
+                    for cw in (getattr(self.db, "cyberware", None) or [])
+                )
+                if not deployed:
+                    continue
+            mods = getattr(buff, "skill_mods", None) or {}
+            total += int(mods.get(skill_key, 0))
+        return total
+
+    def _get_surge_stat_modifier(self, stat_name):
+        """Apply adrenal pump active/crash stat modifiers and crash stamina hit."""
+        if stat_name not in ("strength", "agility"):
+            return 0
+        now = time.time()
+        for cw in (getattr(self.db, "cyberware", None) or []):
+            if type(cw).__name__ != "AdrenalPump" or bool(getattr(cw.db, "malfunctioning", False)):
+                continue
+            active_until = float(getattr(cw.db, "surge_active_until", 0.0) or 0.0)
+            crash_until = float(getattr(cw.db, "surge_crash_until", 0.0) or 0.0)
+            if active_until > now:
+                return 10
+            if crash_until > now:
+                # One-time crash stamina drop on entering crash phase.
+                if not bool(getattr(cw.db, "surge_crash_applied", False)):
+                    cur = int(getattr(self.db, "current_stamina", 0) or 0)
+                    self.db.current_stamina = max(0, cur - 30)
+                    cw.db.surge_crash_applied = True
+                return -8
+            # Cleanup stale crash marker once cycle has ended.
+            if bool(getattr(cw.db, "surge_crash_applied", False)):
+                cw.db.surge_crash_applied = False
+        return 0
+
+    def _is_olfactory_overload_room(self):
+        room = getattr(self, "location", None)
+        if not room or not hasattr(room, "tags"):
+            return False
+        tags = set(room.tags.all())
+        return bool(tags & {"sewer", "industrial", "toxic", "foundry"})
+
+    def _is_threat_overload_room(self):
+        room = getattr(self, "location", None)
+        if not room or not hasattr(room, "contents_get"):
+            return False
+        try:
+            chars = room.contents_get(content_type="character")
+        except Exception:
+            return False
+        return len(chars) > 6
 
     def get_stat_grade_adjective(self, grade_letter, stat_key):
         """Adjective for this stat at this grade (letter-matched, per-stat)."""

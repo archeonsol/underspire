@@ -507,6 +507,14 @@ def attempt_stabilize_organ(operator, target, organ_key, tool_type=None, tool_ob
     success_level, _ = _medicine_roll(operator, max(0, difficulty - tool_mod), tool_mod)
 
     if success_level == 0:
+        if severity >= 3:
+            for i in (target.db.injuries or []):
+                od = i.get("organ_damage") or {}
+                if organ_key in od:
+                    i["organ_destroyed"] = True
+            target.db.organ_damage[organ_key] = 3
+            rebuild_derived_trauma_views(target)
+            return False, random.choice(_ORGAN_FAIL) + " The organ is beyond repair. Chrome replacement is the only option."
         return False, random.choice(_ORGAN_FAIL)
 
     injuries = getattr(target.db, "injuries", None) or []
@@ -698,6 +706,52 @@ def get_treatment_options(operator, target, tools_by_type):
             if tools_by_type.get(t):
                 options.append(("infection", f"Treat infection ({part})", t, part))
                 break
+
+    # Cybersurgery options (requires surgical context).
+    if tools_by_type.get(TOOL_SURGICAL_KIT):
+        try:
+            from typeclasses.medical_tools import OperatingTable
+            from world.medical.cybersurgery import _check_cyberware_conflicts, find_chrome_replacement_in_inventory, is_organ_destroyed
+            table = None
+            loc = getattr(operator, "location", None)
+            if loc:
+                for obj in loc.contents:
+                    if isinstance(obj, OperatingTable):
+                        table = obj
+                        break
+            if table and table.get_patient() == target:
+                now_ts = time.time()
+                sedated = (
+                    float(getattr(target.db, "sedated_until", 0.0) or 0.0) > now_ts
+                    or (
+                        bool(getattr(target.db, "unconscious", False))
+                        and float(getattr(target.db, "unconscious_until", 0.0) or 0.0) > now_ts
+                    )
+                )
+                if not sedated:
+                    options.append(("sedate_patient", "Sedate patient", TOOL_SURGICAL_KIT, None))
+                cyberware_in_inv = [
+                    obj for obj in operator.contents
+                    if hasattr(obj, "surgery_difficulty") and hasattr(obj, "on_install")
+                ]
+                for cw in cyberware_in_inv:
+                    if (not sedated) and bool(getattr(cw, "surgery_requires_sedation", True)):
+                        continue
+                    conflict = _check_cyberware_conflicts(target, cw)
+                    if not conflict:
+                        options.append(("cyber_install", f"Install {cw.key}", TOOL_SURGICAL_KIT, cw.id))
+                for cw in (target.db.cyberware or []):
+                    options.append(("cyber_remove", f"Remove {cw.key}", TOOL_SURGICAL_KIT, cw.key))
+                    if bool(getattr(cw.db, "malfunctioning", False)):
+                        options.append(("cyber_repair", f"Repair {cw.key}", TOOL_SURGICAL_KIT, cw.key))
+                for organ_key, sev in (target.db.organ_damage or {}).items():
+                    if sev >= 3 and is_organ_destroyed(target, organ_key):
+                        replacement = find_chrome_replacement_in_inventory(operator, organ_key)
+                        if replacement:
+                            organ_name = ORGAN_INFO.get(organ_key, (organ_key,))[0]
+                            options.append(("chrome_replace", f"Chrome replacement: {organ_name}", TOOL_SURGICAL_KIT, (organ_key, replacement.id)))
+        except Exception:
+            pass
 
     return options
 

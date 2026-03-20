@@ -676,7 +676,19 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
         damage = max(1, damage)
         is_critical = result == "CRITICAL"
 
-        damage_type = get_damage_type(weapon_key, wielded_obj)
+        claws_deployed = False
+        if weapon_key == "fists":
+            for cw in (getattr(attacker.db, "cyberware", None) or []):
+                if type(cw).__name__ == "RetractableClaws" and bool(getattr(cw.db, "claws_deployed", False)) and not bool(getattr(cw.db, "malfunctioning", False)):
+                    claws_deployed = True
+                    break
+        damage_type = "slashing" if claws_deployed else get_damage_type(weapon_key, wielded_obj)
+        if claws_deployed:
+            damage += 5
+        if damage_type == "arc":
+            arc_vuln = getattr(effective_defender, "get_arc_vulnerability", lambda: 0.0)()
+            if arc_vuln > 0:
+                damage = int(damage * (1.0 + arc_vuln))
         total_prot, armor_pieces = get_armor_protection_for_location(effective_defender, body_part, damage_type)
         reduction, absorbed_fully = compute_armor_reduction(total_prot, damage)
         damage = max(0, damage - reduction)
@@ -764,7 +776,11 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
                     weapon_obj=wielded_obj,
                 )
                 combat_msg(attacker, f"{main_atk} {flavor_atk}".strip())
-                combat_msg(defender, f"{main_def} {flavor_def}".strip())
+                pain_editor = any(type(cw).__name__ == "PainEditor" and not bool(getattr(cw.db, "malfunctioning", False)) for cw in (getattr(defender.db, "cyberware", None) or []))
+                if pain_editor:
+                    combat_msg(defender, f"|xDamage registered at {body_part}. You feel nothing.|n")
+                else:
+                    combat_msg(defender, f"{main_def} {flavor_def}".strip())
                 loc = getattr(attacker, "location", None) or getattr(defender, "location", None)
                 if loc and hasattr(loc, "contents_get"):
                     for viewer in loc.contents_get(content_type="character"):

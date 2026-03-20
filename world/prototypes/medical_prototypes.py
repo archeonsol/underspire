@@ -128,3 +128,18 @@ MED_DEFIBRILLATOR = {
     "key": "defibrillator",
     "typeclass": "typeclasses.medical_tools.Defibrillator",
 }
+
+MED_SCALPEL = {
+    "prototype_key": "MED_SCALPEL",
+    "prototype_tags": _MED_CONS,
+    "key": "scalpel",
+    "desc": "A thin-handled surgical blade. Clinic-grade steel made for fine, ugly work.",
+    "typeclass": "typeclasses.items.Item",
+    "attrs": [
+        ("is_scalpel", True),
+        ("uses_remaining", 10),
+        ("uses_max", 10),
+        ("item_type", "scalpel"),
+    ],
+    "tags": [("scalpel", "item_type"), ("medical", "item_type")],
+}

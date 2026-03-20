@@ -19,6 +19,7 @@ cyberware that provides passive damage resistance (e.g. subdermal plating).
 Queried by world.combat.armor.get_armor_protection_for_location().
 """
 
+import time
 from evennia import DefaultObject
 from evennia.utils import logger
 
@@ -51,17 +52,34 @@ class CyberwareBase(DefaultObject):
     buff_class = None
     body_mods = {}
     armor_values = {}  # {damage_type: protection_score} for passive resistance
+    vulnerabilities = {}  # {"arc": 0.0, ...}
+    required_implants = []  # class names that must already be installed
+    required_implants_any = []  # at least one of these class names must be installed
+    conflicts_with = []  # class names that cannot coexist
 
     # Surgery defaults: wound recorded when installed/removed via surgery.
     # Override surgery_body_part to target a specific part; otherwise the first
     # locked body_mods part is chosen automatically.
     surgery_wound_hp = 8         # severity 2 wound (needs treatment + time to heal)
     surgery_body_part = None     # auto-detect from body_mods if None
+    surgery_difficulty = 15
+    surgery_duration_steps = 4
+    surgery_blood_loss = "moderate"
+    surgery_rejection_risk = 0.05
+    surgery_narrative_key = None
+    surgery_requires_sedation = True
+    surgery_category = "implant"
+    surgery_prep_tools = []
+    chrome_replacement_for = None
+    chrome_max_hp = 100
 
     def at_object_creation(self):
         super().at_object_creation()
         self.db.installed = False
         self.db.installed_on = None  # dbref of owning character when installed
+        self.db.chrome_max_hp = int(getattr(self, "chrome_max_hp", 100) or 100)
+        self.db.chrome_hp = int(getattr(self.db, "chrome_hp", self.db.chrome_max_hp) or self.db.chrome_max_hp)
+        self.db.malfunctioning = bool(getattr(self.db, "malfunctioning", False))
 
     def on_install(self, character):
         """
@@ -71,6 +89,8 @@ class CyberwareBase(DefaultObject):
         self.db.installed = True
         self.db.installed_on = character.dbref
         self.locks.add("get:false()")
+        # Installed chrome is internal and should no longer exist in inventory.
+        self.location = None
 
         if self.buff_class:
             character.buffs.add(self.buff_class)
@@ -124,7 +144,33 @@ class CyberwareBase(DefaultObject):
         Re-apply this cyberware's buff after a server restart (BuffHandler is
         non-persistent). Called by Character.at_server_start().
         """
+        if getattr(self.db, "malfunctioning", False):
+            return
         if self.buff_class:
+            character.buffs.add(self.buff_class)
+
+    def get_recovery_modifier(self, character):
+        """
+        Return current effectiveness scalar based on surgery recovery phase.
+        """
+        now = time.time()
+        for injury in (character.db.injuries or []):
+            if injury.get("cyberware_dbref") != self.id:
+                continue
+            started = float(injury.get("recovery_started", now) or now)
+            elapsed = now - started
+            if elapsed < 24 * 3600:
+                return 0.5
+            if elapsed < 72 * 3600:
+                return 0.8
+            return 1.0
+        return 1.0
+
+    def set_malfunction(self, character, value=True):
+        self.db.malfunctioning = bool(value)
+        if self.buff_class and value:
+            character.buffs.remove(self.buff_class.key)
+        elif self.buff_class and not value:
             character.buffs.add(self.buff_class)
 
     # ── Surgery hooks ────────────────────────────────────────────────────
@@ -175,3 +221,5 @@ class CyberwareBase(DefaultObject):
         unless skip_surgery=True.
         """
         self._apply_surgery_wound(character)
+
+

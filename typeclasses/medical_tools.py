@@ -81,6 +81,10 @@ class Bioscanner(MedicalTool):
     def use_for_scan(self, operator, target):
         if not hasattr(target, "db"):
             return False, "Target not scannable; no valid biosigns."
+        from world.medical import BIOSCANNER_MIN_MEDICINE
+        med_level = getattr(operator, "get_skill_level", lambda s: 0)("medicine")
+        if med_level < BIOSCANNER_MIN_MEDICINE:
+            return False, "You lack the training to interpret its readout."
         from world.medical.medical_scanner import get_scanner_readout
         hp = getattr(target, "hp", 0)
         mx = getattr(target, "max_hp", 1)
@@ -316,8 +320,9 @@ class OperatingTable(MedicalTool):
             endurance = int(target.get_stat_level("endurance") or 0)
         else:
             endurance = int((getattr(target.db, "stats", None) or {}).get("endurance", 0) or 0)
-        base = 120
-        return max(30, base - int(endurance * 0.6))
+        # Keep OR sedation long enough for multi-phase surgeries.
+        base = 240
+        return max(90, base - int(endurance * 0.4))
 
     def use_for_sedation(self, operator, target):
         if not hasattr(target, "db"):
@@ -325,7 +330,8 @@ class OperatingTable(MedicalTool):
         patient = self.get_patient()
         if patient != target:
             return False, "Anesthesia can only be administered to the patient on the operating table."
-        if bool(getattr(target.db, "unconscious", False)):
+        now_ts = time.time()
+        if bool(getattr(target.db, "unconscious", False)) and float(getattr(target.db, "sedated_until", 0.0) or 0.0) > now_ts:
             return False, "Patient is already unconscious."
         delay_secs = random.randint(5, 6)
         target.msg("|mA mask descends. You inhale |wsevoflurane|m vapor as the room starts to blur...|n")

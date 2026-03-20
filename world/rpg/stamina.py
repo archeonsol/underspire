@@ -91,9 +91,17 @@ def get_regen_rate(character):
         except Exception:
             pass
 
+        cyber = list(getattr(character.db, "cyberware", None) or [])
+        has_cardio = any(type(cw).__name__ == "CardioPulmonaryBooster" and not bool(getattr(cw.db, "malfunctioning", False)) for cw in cyber)
+        has_metabolic = any(type(cw).__name__ == "MetabolicRegulator" and not bool(getattr(cw.db, "malfunctioning", False)) for cw in cyber)
+        if has_cardio:
+            rate += 2
+        if has_metabolic:
+            rate += 1
+
         last_meal = getattr(character.db, "last_nutritious_meal", None)
         last_drink = getattr(character.db, "last_hydrating_drink", None)
-        if last_meal and (time.time() - last_meal) < (NUTRITION_BUFF_MINUTES * 60):
+        if (not has_metabolic) and last_meal and (time.time() - last_meal) < (NUTRITION_BUFF_MINUTES * 60):
             rate = int(rate * NUTRITION_REGEN_MULTIPLIER)
 
         if last_drink and (time.time() - last_drink) < (HYDRATION_BUFF_MINUTES * 60):

@@ -621,6 +621,43 @@ def set_unconscious_for_seconds(character, seconds):
     delay(secs, _wake_unconscious_callback, character.id)
 
 
+def reconcile_unconscious_state(character):
+    """
+    Repair unconscious state after reload/startup.
+
+    - If unconscious timer has expired, clear unconscious flags/cmdset.
+    - If still unconscious, ensure cmdset is present and wake callback is scheduled.
+    """
+    if not character or not getattr(character, "db", None):
+        return
+    is_uncon = bool(getattr(character.db, "unconscious", False))
+    wake_at = float(getattr(character.db, "unconscious_until", 0.0) or 0.0)
+    now = time.time()
+    if not is_uncon:
+        return
+    if wake_at > now:
+        try:
+            character.cmdset.add("commands.default_cmdsets.UnconsciousCmdSet")
+        except Exception:
+            pass
+        delay(max(1.0, wake_at - now), _wake_unconscious_callback, character.id)
+        return
+    # Expired unconscious state: clear stale lock.
+    character.db.unconscious = False
+    character.db.unconscious_until = 0.0
+    prev_pose = getattr(character.db, "_unconscious_prev_room_pose", None)
+    if prev_pose is not None:
+        character.db.room_pose = prev_pose
+        try:
+            character.attributes.remove("_unconscious_prev_room_pose")
+        except Exception:
+            pass
+    try:
+        character.cmdset.remove("UnconsciousCmdSet")
+    except Exception:
+        pass
+
+
 def grapple_strike(grappler, victim):
     """
     Attack the grappled victim: grappler spends stamina, victim loses STAMINA_DRAIN_GRAPPLE_STRIKE.
