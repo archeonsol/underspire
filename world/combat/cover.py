@@ -63,7 +63,7 @@ def _room_cover_default_flavors(quality):
         return ["a fortified position"]
     if quality >= COVER_HEAVY:
         return ["solid cover nearby"]
-    return ["whatever cover you can find"]
+    return ["whatever cover is available"]
 
 
 def _display_name(char, viewer):
@@ -122,7 +122,7 @@ def _pick_cover_flavor(room, quality, degraded=False):
     base = _cover_room_flavors(room)
     if base:
         return random.choice(base)
-    return "the remains of your cover" if degraded else "whatever cover you can find"
+    return "the remains of your cover" if degraded else "whatever cover is available"
 
 
 def _vulnerability_multiplier(room, damage_type):
@@ -278,9 +278,11 @@ def get_cover_defense_bonus(defender, weapon_key, damage_type, current_range):
     if quality <= COVER_EXPOSED:
         return 0
     if damage_type not in RANGED_COVER_DAMAGE_TYPES:
-        if current_range <= 0:
+        # Melee attacks don't gain cover benefit in tight distances.
+        if current_range <= 1:
             return 0
-        if current_range == 1:
+        # Partial cover benefit at extended range.
+        if current_range == 2:
             base = int(COVER_DEFENSE_BONUS[quality] * 0.5)
         else:
             return 0

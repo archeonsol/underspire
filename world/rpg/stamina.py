@@ -22,6 +22,8 @@ STAMINA_REGEN_COMBAT = 1    # reduced but nonzero regen while actively in combat
 # Recent nutritious meal: multiplier for regen (e.g. 1.5 = 50% faster) for N minutes
 NUTRITION_REGEN_MULTIPLIER = 1.5
 NUTRITION_BUFF_MINUTES = 10
+HYDRATION_REGEN_MULTIPLIER = 1.2
+HYDRATION_BUFF_MINUTES = 5
 STAMINA_WINDED_THRESHOLD = 0.2
 
 
@@ -89,9 +91,33 @@ def get_regen_rate(character):
         except Exception:
             pass
 
+        cyber = list(getattr(character.db, "cyberware", None) or [])
+        has_cardio = any(type(cw).__name__ == "CardioPulmonaryBooster" and not bool(getattr(cw.db, "malfunctioning", False)) for cw in cyber)
+        has_metabolic = any(type(cw).__name__ == "MetabolicRegulator" and not bool(getattr(cw.db, "malfunctioning", False)) for cw in cyber)
+        if has_cardio:
+            rate += 2
+        if has_metabolic:
+            rate += 1
+
         last_meal = getattr(character.db, "last_nutritious_meal", None)
-        if last_meal and (time.time() - last_meal) < (NUTRITION_BUFF_MINUTES * 60):
+        last_drink = getattr(character.db, "last_hydrating_drink", None)
+        if (not has_metabolic) and last_meal and (time.time() - last_meal) < (NUTRITION_BUFF_MINUTES * 60):
             rate = int(rate * NUTRITION_REGEN_MULTIPLIER)
+
+        if last_drink and (time.time() - last_drink) < (HYDRATION_BUFF_MINUTES * 60):
+            rate = int(rate * HYDRATION_REGEN_MULTIPLIER)
+
+        # Hunger/thirst directly affect stamina recovery quality.
+        hunger = int(getattr(character.db, "hunger", 100) or 100)
+        thirst = int(getattr(character.db, "thirst", 100) or 100)
+        if hunger <= 25:
+            rate -= 1
+        elif hunger >= 70:
+            rate += 1
+        if thirst <= 25:
+            rate -= 1
+        elif thirst >= 70:
+            rate += 1
     return max(1, rate)
 
 
@@ -171,6 +197,26 @@ def get_stamina_recovery_label(character):
     if getattr(character.db, "lying_on", None) is not None or getattr(character.db, "lying_on_table", None) is not None:
         score += 2
     elif getattr(character.db, "sitting_on", None) is not None:
+        score += 1
+
+    # Nutrition/hydration visibly improve stamina recovery.
+    now = time.time()
+    last_meal = getattr(character.db, "last_nutritious_meal", None)
+    last_drink = getattr(character.db, "last_hydrating_drink", None)
+    if last_meal and (now - last_meal) < (NUTRITION_BUFF_MINUTES * 60):
+        score += 1
+    if last_drink and (now - last_drink) < (HYDRATION_BUFF_MINUTES * 60):
+        score += 1
+
+    hunger = int(getattr(character.db, "hunger", 100) or 100)
+    thirst = int(getattr(character.db, "thirst", 100) or 100)
+    if hunger <= 25:
+        score -= 1
+    elif hunger >= 70:
+        score += 1
+    if thirst <= 25:
+        score -= 1
+    elif thirst >= 70:
         score += 1
 
     score = max(0, min(4, score))

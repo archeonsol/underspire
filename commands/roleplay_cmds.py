@@ -20,7 +20,17 @@ def _resolve_body_part(name):
 def _body_parts_usage_list():
     """Head-to-feet list with short names where available (for usage line)."""
     from world.medical import BODY_PARTS_HEAD_TO_FEET, BODY_PART_ALIASES
-    rev = {v: k for k, v in BODY_PART_ALIASES.items()}
+    rev = {}
+    for alias, full in BODY_PART_ALIASES.items():
+        chosen = rev.get(full)
+        if not chosen:
+            rev[full] = alias
+            continue
+        # Prefer compact aliases without spaces for cleaner usage text.
+        current_score = (len(chosen), 1 if " " in chosen else 0)
+        new_score = (len(alias), 1 if " " in alias else 0)
+        if new_score < current_score:
+            rev[full] = alias
     return [rev.get(p, p) for p in BODY_PARTS_HEAD_TO_FEET]
 
 
@@ -252,8 +262,9 @@ class CmdDescribeBodypart(Command):
       @describe_bodypart head = scarred and crooked
       @descpart lshoulder = $S has an old burn mark on $p shoulder
 
-    Body parts (head to feet): head, face, neck, lshoulder, rshoulder, torso, back,
-    abdomen, larm, rarm, lhand, rhand, groin, lthigh, rthigh, lfoot, rfoot
+    Body parts (head to feet): head, face, leye, reye, lear, rear, neck, lshoulder,
+    rshoulder, torso, back, abdomen, larm, rarm, lhand, rhand, groin, lthigh,
+    rthigh, lfoot, rfoot
     """
     key = "@describe_bodypart"
     aliases = ["@descpart"]

@@ -61,6 +61,7 @@ SKILL_STATS = {
 # Weapon key (combat) -> skill key for attack roll
 WEAPON_KEY_TO_SKILL = {
     "fists": "unarmed",
+    "claws": "unarmed",
     "knife": "short_blades",
     "short_blade": "short_blades",
     "long_blade": "long_blades",

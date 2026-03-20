@@ -5,6 +5,13 @@ from evennia.utils.search import search_object
 _ACTIVE_ATTACKERS = {}
 _ACTIVE_DEFENDERS = {}
 
+# Combat log readability palette:
+# - base line tint distinguishes combat traffic from normal room text
+# - attacker/defender names are role-colored for quick parsing
+COMBAT_BASE_COLOR = "|b"
+COMBAT_ATTACKER_COLOR = "|R"
+COMBAT_DEFENDER_COLOR = "|Y"
+
 
 def combat_display_name(char, viewer):
     if char is None:
@@ -14,6 +21,30 @@ def combat_display_name(char, viewer):
         if out:
             return out
     return getattr(char, "name", None) or getattr(char, "key", None) or "Someone"
+
+
+def combat_role_name(char, viewer, role="neutral"):
+    name = combat_display_name(char, viewer)
+    if role == "attacker":
+        return f"{COMBAT_ATTACKER_COLOR}{name}|n"
+    if role == "defender":
+        return f"{COMBAT_DEFENDER_COLOR}{name}|n"
+    return name
+
+
+def combat_text(line):
+    line = str(line or "")
+    if not line:
+        return line
+    # Re-apply combat tint after any inline reset so mixed-color templates
+    # still keep a consistent combat-channel base color.
+    tinted = line.replace("|n", f"|n{COMBAT_BASE_COLOR}")
+    return f"{COMBAT_BASE_COLOR}{tinted}|n"
+
+
+def combat_msg(viewer, line):
+    if viewer and hasattr(viewer, "msg"):
+        viewer.msg(combat_text(line))
 
 
 def get_object_by_id(dbref):

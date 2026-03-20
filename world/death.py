@@ -398,6 +398,10 @@ def make_permanent_death(character, attacker=None, reason="executed"):
     name = character.name
     # Shard stays on the character (and thus on the corpse after swap); we do not copy to account.
     snapshot = getattr(character.db, "clone_snapshot", None)
+    # Capture installed chrome before conversion so the corpse keeps installed hardware.
+    # We intentionally do not call on_uninstall: the chrome is still in the body.
+    corpse_cyberware = list(getattr(character.db, "cyberware", None) or [])
+    character.db.cyberware = []
     # Send each account straight to Death Lobby by puppeting their Spirit (puppet_object
     # unpuppets the current character and puppets the spirit in one go — no OOC stop).
     account_sessions = {}  # account -> list of sessions
@@ -436,6 +440,9 @@ def make_permanent_death(character, attacker=None, reason="executed"):
         character.db.original_name = name
         character.db.corpse_pronoun = pronoun  # for look: "body of a man/woman/neuter"
         character.db.death_time = time.time()  # when they became a corpse (for logs/future use)
+        if corpse_cyberware:
+            character.db.cyberware = corpse_cyberware
+            character.db.cyberware_source_name = name
         character.key = corpse_key
         # Remove the dead character's aliases (e.g. "Cairn") so the corpse is only findable as "corpse" / "neuter corpse" etc.
         try:

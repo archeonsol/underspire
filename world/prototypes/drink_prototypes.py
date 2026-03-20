@@ -6,6 +6,7 @@ DRINK_WATER_FLASK = {
     "attrs": [
         ("drinkable", True),
         ("thirst_restore", 30),
+        ("taste_msg", "Cool, clean water washes the dust from your mouth."),
         (
             "desc",
             "A beaten metal flask sloshing with clean water. The sides are cold with condensation.",
@@ -21,6 +22,7 @@ DRINK_RECYCLED_WATER = {
     "attrs": [
         ("drinkable", True),
         ("thirst_restore", 20),
+        ("taste_msg", "A metallic tang and faint bleach bite linger on your tongue."),
         (
             "desc",
             "A soft plastic pouch stamped with filtration warnings. The water inside tastes faintly of metal and bleach.",
@@ -36,6 +38,7 @@ DRINK_ELECTROLYTE = {
     "attrs": [
         ("drinkable", True),
         ("thirst_restore", 25),
+        ("taste_msg", "Artificial citrus and salt hit hard, then fade to chalky sweetness."),
         (
             "desc",
             "A bright-colored electrolyte drink that smells of artificial citrus and salt.",
@@ -51,6 +54,7 @@ DRINK_HERBAL_TEA = {
     "attrs": [
         ("drinkable", True),
         ("thirst_restore", 22),
+        ("taste_msg", "Bitter herbs bloom across your tongue with a warming finish."),
         (
             "desc",
             "A steaming cup of bitter herbal tea, the surface sheened with oils from crushed leaves.",
@@ -68,6 +72,7 @@ DRINK_SOUP_BROTH = {
         ("thirst_restore", 18),
         ("edible", True),
         ("hunger_restore", 8),
+        ("taste_msg", "Salty broth and rendered fat leave a comforting film in your mouth."),
         (
             "desc",
             "A thin, salty broth in a chipped mug. It warms your hands and puts a little weight in your gut.",

@@ -109,6 +109,233 @@ WEAPON_MESSAGE_PROFILES = {
             "room": "{defender} pulls {effective_defender} into the line of fire. {attacker}'s blow hits {effective_defender}'s {loc}, but their armor |csoaks the impact.|n",
         },
     },
+    "claws": {
+        "MISS": {
+            "attacker": "You rake forward, but |r{defender}|n slips outside your talons. Empty air.",
+            "defender": "{attacker}'s claws flash for you. You shift off-line and they |rmiss.|n",
+            "room": "{attacker} slashes at {defender} with chrome claws, but |rmisses.|n",
+        },
+        "PARRIED": {
+            "attacker": "Your claws carve in. |c{defender}|n catches your line and turns it. |cParried.|n",
+            "defender": "{attacker}'s talons come in fast. You redirect the strike. |cParried.|n",
+            "room": "{attacker}'s claws streak toward {defender}, but {defender} |cparries the slash.|n",
+        },
+        "DODGED": {
+            "attacker": "You commit to the slash. |y{defender} evades cleanly.|n Your claws cut nothing.",
+            "defender": "Chrome talons dart for you. You |ydodge|n and the slash skims past.",
+            "room": "{attacker} snaps a claw strike at {defender}, but {defender} |ydodges aside.|n",
+        },
+        "HIT": {
+            "normal": [
+                (
+                    "Your claws rake across {defender}'s {loc}, opening bright lines of blood.",
+                    "|R{attacker}|n's claws tear across your {loc}. Fire follows the cut.",
+                ),
+                (
+                    "You hook in with your talons and rip through {defender}'s {loc}.",
+                    "|R{attacker}|n's talons catch your {loc} and yank free. You stagger.",
+                ),
+            ],
+            "critical": [
+                (
+                    "|yCRITICAL.|n You drive your claws deep into {defender}'s {loc} and rip outward.",
+                    "|yCRITICAL.|n |R{attacker}|n buries chrome talons in your {loc} and tears them free.",
+                ),
+                (
+                    "|yCRITICAL.|n Your talons find {defender}'s {loc} and shred through in one savage pull.",
+                    "|yCRITICAL.|n |R{attacker}|n's claws rake through your {loc}. You nearly fold.",
+                ),
+            ],
+        },
+        "moves": {
+            "rake": {
+                "MISS": {
+                    "attacker": "You whip a rake at |r{defender}|n, but they slip back and your talons comb empty air.",
+                    "defender": "{attacker} snaps a quick rake toward your face. You lean away and they |rmiss.|n",
+                    "room": "{attacker} lashes out with a rake at {defender}, but |rmisses.|n",
+                },
+                "PARRIED": {
+                    "attacker": "Your rake flashes in, but |c{defender}|n catches your wrist line and turns it aside. |cParried.|n",
+                    "defender": "{attacker}'s rake comes fast. You intercept and redirect the claw line. |cParried.|n",
+                    "room": "{attacker}'s rake streaks for {defender}, but {defender} |cparries the strike.|n",
+                },
+                "DODGED": {
+                    "attacker": "You commit to the rake and |y{defender} slips outside the angle.|n Nothing but air.",
+                    "defender": "{attacker} rakes in at you. You |ydodge off-line|n and the claws skim past.",
+                    "room": "{attacker} throws a rake at {defender}, but {defender} |ydodges clear.|n",
+                },
+                "HIT": {
+                    "normal": [
+                        (
+                            "You rake your talons across {defender}'s {loc} in a fast, tearing line.",
+                            "|R{attacker}|n rakes claws across your {loc}, opening thin, vicious cuts.",
+                        ),
+                    ],
+                    "critical": [
+                        (
+                            "|yCRITICAL.|n Your rake catches {defender}'s {loc} deep and peels through on the follow-through.",
+                            "|yCRITICAL.|n |R{attacker}|n's rake tears deep into your {loc} and rips free.",
+                        ),
+                    ],
+                },
+            },
+            "talon_slash": {
+                "MISS": {
+                    "attacker": "You carve a talon slash at |r{defender}|n, but they pull out of range. |rMiss.|n",
+                    "defender": "{attacker}'s talon slash whistles past your chest. You moved first. They |rmiss.|n",
+                    "room": "{attacker} carves a talon slash at {defender}, but |rmisses.|n",
+                },
+                "PARRIED": {
+                    "attacker": "Your talon slash bites in, but |c{defender}|n meets your forearm and knocks it wide. |cParried.|n",
+                    "defender": "{attacker} slashes with chrome talons. You catch the motion and shove it off-line. |cParried.|n",
+                    "room": "{attacker}'s talon slash streaks in, but {defender} |cparries it aside.|n",
+                },
+                "DODGED": {
+                    "attacker": "You throw the talon slash hard and |y{defender} slips past the arc.|n",
+                    "defender": "The talon slash comes fast; you |ydodge|n and it cuts only air.",
+                    "room": "{attacker} snaps a talon slash at {defender}, but {defender} |ydodges away.|n",
+                },
+                "HIT": {
+                    "normal": [
+                        (
+                            "You whip a talon slash into {defender}'s {loc}, the chrome edge biting hard.",
+                            "|R{attacker}|n's talon slash bites into your {loc} with a hot, sharp sting.",
+                        ),
+                    ],
+                    "critical": [
+                        (
+                            "|yCRITICAL.|n Your talon slash carves through {defender}'s {loc} in one savage stroke.",
+                            "|yCRITICAL.|n |R{attacker}|n's talon slash carves through your {loc}, nearly dropping you.",
+                        ),
+                    ],
+                },
+            },
+            "hooked_rip": {
+                "MISS": {
+                    "attacker": "You reach for a hooked rip, but |r{defender}|n twists free before your claws can set.",
+                    "defender": "{attacker} tries to set a hooked rip on you. You turn with it and they |rmiss.|n",
+                    "room": "{attacker} reaches in for a hooked rip on {defender}, but |rmisses.|n",
+                },
+                "PARRIED": {
+                    "attacker": "You hook in, but |c{defender}|n jams your arm at the elbow and kills the rip. |cParried.|n",
+                    "defender": "{attacker} hooks claws in for a rip. You smother the arm and stop the pull. |cParried.|n",
+                    "room": "{attacker} tries to hook and rip into {defender}, but {defender} |cparries in close.|n",
+                },
+                "DODGED": {
+                    "attacker": "You shoot for the hooked rip; |y{defender} pivots out|n before you can latch on.",
+                    "defender": "{attacker}'s hooked rip comes in tight. You |ydodge by rotating out|n at the last beat.",
+                    "room": "{attacker} commits to a hooked rip at {defender}, but {defender} |ydodges out of the bind.|n",
+                },
+                "HIT": {
+                    "normal": [
+                        (
+                            "You sink hooked talons into {defender}'s {loc} and rip backward.",
+                            "|R{attacker}|n hooks claws into your {loc} and rips out, staggering you.",
+                        ),
+                    ],
+                    "critical": [
+                        (
+                            "|yCRITICAL.|n Your hooked rip buries into {defender}'s {loc} and tears a brutal channel free.",
+                            "|yCRITICAL.|n |R{attacker}|n's hooked rip tears through your {loc} with brutal force.",
+                        ),
+                    ],
+                },
+            },
+            "eviscerating_arc": {
+                "MISS": {
+                    "attacker": "You swing a wide eviscerating arc, but |r{defender}|n drops under it. |rMiss.|n",
+                    "defender": "{attacker}'s eviscerating arc scythes across where your torso was. You duck and they |rmiss.|n",
+                    "room": "{attacker} whips an eviscerating arc at {defender}, but the broad slash |rmisses.|n",
+                },
+                "PARRIED": {
+                    "attacker": "Your eviscerating arc surges in, but |c{defender}|n catches your arm line and deadens the sweep. |cParried.|n",
+                    "defender": "{attacker} throws a huge eviscerating arc. You meet the limb and blunt the stroke. |cParried.|n",
+                    "room": "{attacker}'s eviscerating arc tears in, but {defender} |cparries and spoils the swing.|n",
+                },
+                "DODGED": {
+                    "attacker": "You commit fully to the arc and |y{defender} slips outside it.|n Your claws cut nothing.",
+                    "defender": "The eviscerating arc comes in broad and fast. You |ydodge clear|n before it can catch you.",
+                    "room": "{attacker} unleashes an eviscerating arc at {defender}, but {defender} |ydodges outside the sweep.|n",
+                },
+                "HIT": {
+                    "normal": [
+                        (
+                            "You draw a wide eviscerating arc through {defender}'s {loc}, talons hissing through cloth and skin.",
+                            "|R{attacker}|n's eviscerating arc rips across your {loc} in a broad, savage cut.",
+                        ),
+                    ],
+                    "critical": [
+                        (
+                            "|yCRITICAL.|n Your eviscerating arc catches {defender}'s {loc} full-on and shreds through.",
+                            "|yCRITICAL.|n |R{attacker}|n's eviscerating arc shreds your {loc} in a brutal sweep.",
+                        ),
+                    ],
+                },
+            },
+            "fingertip_feint": {
+                "MISS": {
+                    "attacker": "You sell the feint, then stab in - but |r{defender}|n doesn't bite and your follow-up misses.",
+                    "defender": "{attacker} feints and flicks claws in, but you read it and they |rmiss.|n",
+                    "room": "{attacker} tries a fingertip feint on {defender}, but the follow-up |rmisses.|n",
+                },
+                "PARRIED": {
+                    "attacker": "The feint works, but |c{defender}|n still catches your real line and turns it. |cParried.|n",
+                    "defender": "{attacker}'s feint sells hard, but you recover in time to redirect the true strike. |cParried.|n",
+                    "room": "{attacker}'s fingertip feint almost lands, but {defender} |cparries the real attack.|n",
+                },
+                "DODGED": {
+                    "attacker": "You bite on the opening and flick in, but |y{defender} slips out|n before the claws arrive.",
+                    "defender": "{attacker} feints high and snaps low; you |ydodge off-line|n and avoid the claws.",
+                    "room": "{attacker} feints and strikes at {defender}, but {defender} |ydodges the setup.|n",
+                },
+                "HIT": {
+                    "normal": [
+                        (
+                            "You feint high, then flick your claws into {defender}'s {loc} before they can reset.",
+                            "|R{attacker}|n feints, then flicks claws into your {loc} with surgical precision.",
+                        ),
+                    ],
+                    "critical": [
+                        (
+                            "|yCRITICAL.|n Your fingertip feint sells the fake perfectly, then rips into {defender}'s {loc}.",
+                            "|yCRITICAL.|n |R{attacker}|n feints and then drives claws deep into your {loc}.",
+                        ),
+                    ],
+                },
+            },
+            "tendon_shear": {
+                "MISS": {
+                    "attacker": "You angle for tendon and slice at |r{defender}|n, but they retract the limb in time.",
+                    "defender": "{attacker} goes for a tendon shear. You pull back and they |rmiss.|n",
+                    "room": "{attacker} darts in for a tendon shear on {defender}, but |rmisses.|n",
+                },
+                "PARRIED": {
+                    "attacker": "You cut for tendon, but |c{defender}|n knocks your forearm away before the edge can bite. |cParried.|n",
+                    "defender": "{attacker} slices for your tendons. You jam their arm and redirect it. |cParried.|n",
+                    "room": "{attacker}'s tendon shear streaks toward {defender}, but {defender} |cparries the cut.|n",
+                },
+                "DODGED": {
+                    "attacker": "You line up the tendon shear and |y{defender} hops out of range.|n No purchase.",
+                    "defender": "{attacker} aims for your tendons; you |ydodge back|n and the claws miss by inches.",
+                    "room": "{attacker} commits to a tendon shear, but {defender} |ydodges clear.|n",
+                },
+                "HIT": {
+                    "normal": [
+                        (
+                            "You angle your claws for a tendon shear and slash through {defender}'s {loc}.",
+                            "|R{attacker}|n's tendon shear slices into your {loc}, threatening your balance.",
+                        ),
+                    ],
+                    "critical": [
+                        (
+                            "|yCRITICAL.|n Your tendon shear lands clean on {defender}'s {loc}, tearing through critical tissue.",
+                            "|yCRITICAL.|n |R{attacker}|n's tendon shear tears through your {loc}; your limb almost gives out.",
+                        ),
+                    ],
+                },
+            },
+        },
+    },
     "knife": {
         "MISS": {
             "attacker": "You lunge. |r{defender}|n is gone. The blade cuts air. You're open.",
@@ -643,7 +870,7 @@ def hit_message(
                     "The punch catches your {loc}. You taste blood. Still up.",
                 ),
                 (
-                    "You hit them in the {loc}. They reel but keep their feet.",
+                    "You hit {defender} in the {loc}. They reel but keep their feet.",
                     "|R{attacker}|n's blow finds your {loc}. You blink and stay in it.",
                 ),
             ]

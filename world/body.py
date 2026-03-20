@@ -43,7 +43,7 @@ __all__ = [
 ]
 
 # ── Display groupings (canonical, defined once) ──────────────────────────
-HEAD_FACE = ("head", "face", "left eye", "right eye", "neck")
+HEAD_FACE = ("head", "face", "left eye", "right eye", "left ear", "right ear", "neck")
 UPPER_BODY = (
     "left shoulder",
     "right shoulder",

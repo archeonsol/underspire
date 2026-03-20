@@ -58,7 +58,11 @@ def get_medical_summary(character):
             if severity <= 0:
                 continue
             names = ORGAN_INFO.get(organ_key, (organ_key,) * 4)
-            desc = names[min(severity, 3)]
+            destroyed = any(
+                organ_key in (i.get("organ_damage") or {}) and i.get("organ_destroyed")
+                for i in (character.db.injuries or [])
+            )
+            desc = "|RDESTROYED - chrome replacement required|n" if destroyed else names[min(severity, 3)]
             stab = " [recent surgery]" if (character.db.stabilized_organs or {}).get(organ_key) else ""
             parts.append(f"{names[0]} ({desc}){stab}")
         if parts:
@@ -174,7 +178,14 @@ def get_medical_detail(character):
         for organ_key, severity in sorted(organ_damage.items()):
             if severity > 0:
                 names = ORGAN_INFO.get(organ_key, (organ_key,) * 4)
-                out.append(f"  {names[0].title()}: {names[min(severity, 3)]}")
+                destroyed = any(
+                    organ_key in (i.get("organ_damage") or {}) and i.get("organ_destroyed")
+                    for i in (character.db.injuries or [])
+                )
+                if destroyed:
+                    out.append(f"  {names[0].title()}: |RDESTROYED - chrome replacement required|n")
+                else:
+                    out.append(f"  {names[0].title()}: {names[min(severity, 3)]}")
     else:
         out.append("|wInternal / organ trauma:|n  None noted.")
     fractures = character.db.fractures or []

@@ -1,10 +1,52 @@
 """
-Medical commands: CmdHt, CmdUse, CmdApply, CmdStabilize, CmdSedate, CmdSurgery, CmdDefib.
+Medical commands: CmdHt, CmdPatient, CmdUse, CmdApply, CmdStabilize, CmdSedate, CmdSurgery, CmdDefib.
 """
 
 from commands.base_cmds import Command
 from commands.inventory_cmds import _obj_in_hands
 from evennia.utils import logger
+from evennia.utils.ansi import strip_ansi
+
+
+def _norm_name(text):
+    return " ".join((strip_ansi(text or "")).strip().lower().split())
+
+
+def _resolve_medical_target(caller, query, location=None):
+    """
+    Resolve a character target using what the caller sees (recog/sdesc/display name)
+    before falling back to Evennia's default search behavior.
+    """
+    q = (query or "").strip()
+    if not q:
+        return None
+    if q.lower() in ("me", "self", "myself"):
+        return caller
+    loc = location or getattr(caller, "location", None)
+    qn = _norm_name(q)
+    chars = []
+    if loc and hasattr(loc, "contents_get"):
+        chars = list(loc.contents_get(content_type="character") or [])
+    elif loc and hasattr(loc, "contents"):
+        chars = [obj for obj in loc.contents if hasattr(obj, "db")]
+    # Exact display-name / key match first
+    exact = []
+    for ch in chars:
+        disp = ch.get_display_name(caller) if hasattr(ch, "get_display_name") else getattr(ch, "key", "")
+        if _norm_name(disp) == qn or _norm_name(getattr(ch, "key", "")) == qn:
+            exact.append(ch)
+    if len(exact) == 1:
+        return exact[0]
+    # Prefix match on display names
+    pref = []
+    for ch in chars:
+        disp = ch.get_display_name(caller) if hasattr(ch, "get_display_name") else getattr(ch, "key", "")
+        if _norm_name(disp).startswith(qn):
+            pref.append(ch)
+    if len(pref) == 1:
+        return pref[0]
+    # Fallback to engine search for aliases/dbrefs, etc.
+    return caller.search(q, location=loc)
 
 
 class CmdHt(Command):
@@ -28,7 +70,7 @@ class CmdHt(Command):
         if not self.args:
             target = caller
         else:
-            target = caller.search(self.args)
+            target = _resolve_medical_target(caller, self.args, location=caller.location)
         if not target:
             return
         if not hasattr(target, "db") or not hasattr(target, "max_hp"):
@@ -42,6 +84,33 @@ class CmdHt(Command):
         if extra:
             status = status + "\n\n" + extra
         caller.msg(status)
+
+
+class CmdPatient(Command):
+    """
+    Open the medical treatment menu for a nearby patient.
+
+    Usage:
+      patient <target>
+    """
+    key = "patient"
+    locks = "cmd:all()"
+    help_category = "General"
+
+    def func(self):
+        caller = self.caller
+        args = (self.args or "").strip()
+        if not args:
+            caller.msg("Usage: patient <target>")
+            return
+        target = _resolve_medical_target(caller, args, location=caller.location)
+        if not target:
+            return
+        if not hasattr(target, "db"):
+            caller.msg("You cannot assess that.")
+            return
+        from world.medical.medical_menu import start_medical_menu
+        start_medical_menu(caller, target)
 
 
 class CmdUse(Command):
@@ -75,7 +144,7 @@ class CmdUse(Command):
         tool_name = parts[0]
         target = caller
         if len(parts) >= 3 and parts[1].lower() == "on":
-            target = caller.search(parts[2])
+            target = _resolve_medical_target(caller, parts[2], location=caller.location)
             if not target:
                 return
             if not hasattr(target, "db"):
@@ -117,11 +186,6 @@ class CmdUse(Command):
             return
 
         if isinstance(tool, Bioscanner):
-            from world.medical import BIOSCANNER_MIN_MEDICINE
-            med_level = getattr(caller, "get_skill_level", lambda s: 0)("medicine")
-            if med_level < BIOSCANNER_MIN_MEDICINE:
-                caller.msg("You need at least %d medicine skill to operate the bioscanner. You lack the training to interpret its readout." % BIOSCANNER_MIN_MEDICINE)
-                return
             success, out = tool.use_for_scan(caller, target)
             if not success:
                 caller.msg(out if isinstance(out, str) else "Scan failed.")
@@ -162,7 +226,7 @@ class CmdSedate(Command):
         if not args:
             caller.msg("Sedate whom? Usage: sedate <target>")
             return
-        target = caller.search(args, location=caller.location)
+        target = _resolve_medical_target(caller, args, location=caller.location)
         if not target:
             return
         if not hasattr(target, "db"):
@@ -186,6 +250,50 @@ class CmdSedate(Command):
             caller.msg("|g" + msg + "|n")
         else:
             caller.msg("|r" + (msg or "Sedation failed.") + "|n")
+
+
+class CmdWakePatient(Command):
+    """
+    Wake an anesthetized patient currently lying on an operating table.
+
+    Usage:
+      wake <target>
+    """
+    key = "wake"
+    aliases = ["rouse", "awaken", "wake patient"]
+    locks = "cmd:all()"
+    help_category = "General"
+
+    def func(self):
+        caller = self.caller
+        args = (self.args or "").strip()
+        if not args:
+            caller.msg("Wake whom? Usage: wake <target>")
+            return
+        target = _resolve_medical_target(caller, args, location=caller.location)
+        if not target:
+            return
+        if not hasattr(target, "db"):
+            caller.msg("You cannot wake that.")
+            return
+
+        from typeclasses.medical_tools import OperatingTable
+        table = None
+        for obj in caller.location.contents:
+            if isinstance(obj, OperatingTable):
+                table = obj
+                break
+        if not table:
+            caller.msg("There is no operating table here.")
+            return
+        if table.get_patient() != target:
+            caller.msg("They must be the patient lying on the operating table first.")
+            return
+        success, msg = table.wake_patient(caller, target)
+        if success:
+            caller.msg("|g" + msg + "|n")
+        else:
+            caller.msg("|r" + (msg or "Wake attempt failed.") + "|n")
 
 
 class CmdStabilize(Command):
@@ -228,7 +336,7 @@ class CmdStabilize(Command):
             caller.msg("That tool isn't meant for bleeding control. Use bandages, a medkit, suture kit, hemostatic agent, tourniquet, or surgical kit.")
             return
 
-        target = caller.search(args)
+        target = _resolve_medical_target(caller, args, location=caller.location)
         if not target:
             return
         if not hasattr(target, "db"):
@@ -326,7 +434,7 @@ class CmdApply(Command):
             caller.msg("Your supplies are spent. You need a fresh pack or another tool before you can treat anyone.")
             return
 
-        target = caller.search(target_name)
+        target = _resolve_medical_target(caller, target_name, location=caller.location)
         if not target:
             return
         if not hasattr(target, "db"):
@@ -399,12 +507,31 @@ class CmdApply(Command):
 
 class CmdSurgery(Command):
     """
-    Perform organ or bone surgery on a patient lying on the operating table.
-    Long narrative sequence with skill check; severe organ damage only.
-    Usage: surgery <organ|bone>
+    Perform surgical procedures on a patient on an operating table.
+
+    This command covers standard trauma surgery and cyberware procedures.
+    Place the patient on the operating table first, then use one of the
+    forms below.
+
+    Usage:
+      surgery <organ|bone>
+      surgery install <cyberware> on <patient>
+      surgery remove <cyberware> from <patient>
+      surgery replace <organ> on <patient>
+      surgery repair <cyberware> on <patient>
+      surgery list <patient>
+
+    Examples:
+      surgery heart
+      surgery femur
+      surgery install chrome arm on Vex
+      surgery remove chrome arm from Vex
+      surgery replace heart on Vex
+      surgery repair chrome arm on Vex
+      surgery list Vex
     """
     key = "surgery"
-    aliases = ["operate"]
+    aliases = []
     locks = "cmd:all()"
     help_category = "General"
 
@@ -412,14 +539,11 @@ class CmdSurgery(Command):
         caller = self.caller
         args = (self.args or "").strip()
         if not args:
-            caller.msg("Surgery on what target? Usage: surgery <organ|bone> (e.g. surgery heart, surgery femur)")
+            caller.msg("Usage: surgery <organ|bone> OR surgery install/remove/replace/repair/list ...")
             return
+        parts = args.split()
+        verb = parts[0].lower()
         from world.medical.medical_treatment import ORGAN_ALIASES, BONE_ALIASES
-        organ_arg = args.strip().lower()
-        normalized = organ_arg.replace(" ", "_")
-        organ_key = ORGAN_ALIASES.get(organ_arg, ORGAN_ALIASES.get(normalized, normalized))
-        bone_key = BONE_ALIASES.get(organ_arg, BONE_ALIASES.get(normalized, normalized))
-        target_key = organ_key if organ_key in ORGAN_ALIASES.values() else bone_key
         from typeclasses.medical_tools import OperatingTable
         table = None
         for obj in caller.location.contents:
@@ -433,6 +557,127 @@ class CmdSurgery(Command):
         if not patient:
             caller.msg("No one is on the operating table. They must use 'lie on operating table' first.")
             return
+        if verb in ("install", "remove", "replace", "repair", "list"):
+            from world.medical.cybersurgery import (
+                start_cybersurgery_install,
+                start_cybersurgery_remove,
+                start_cybersurgery_replace,
+                start_cybersurgery_repair,
+            )
+            if verb == "list":
+                target_name = " ".join(parts[1:]).strip() if len(parts) > 1 else patient.key
+                target = patient
+                if target_name:
+                    looked = _resolve_medical_target(caller, target_name, location=caller.location)
+                    if looked:
+                        target = looked
+                cyber = list(target.get_cyberware() if hasattr(target, "get_cyberware") else (target.db.cyberware or []))
+                # If search resolved to a different object with no cyberware, fall back to the table patient.
+                if not cyber and target != patient:
+                    cyber = list(patient.get_cyberware() if hasattr(patient, "get_cyberware") else (patient.db.cyberware or []))
+                    if cyber:
+                        target = patient
+                if not cyber:
+                    caller.msg("No installed cyberware.")
+                else:
+                    target_label = target.get_display_name(caller) if hasattr(target, "get_display_name") else target.key
+                    caller.msg("\n".join([f"Installed on {target_label}:"] + [f"  {c.key} (#{c.id})" for c in cyber]))
+                return
+            if verb == "install":
+                # surgery install <cyberware> on <patient>
+                if " on " not in args.lower():
+                    caller.msg("Usage: surgery install <cyberware> on <patient>")
+                    return
+                left, right = args[8:].split(" on ", 1)
+                cw = caller.search(left.strip(), location=caller)
+                right = right.strip()
+                coverage_words = []
+                if " coverage " in right.lower():
+                    patient_part, _, coverage_part = right.partition(" coverage ")
+                    right = patient_part.strip()
+                    coverage_words = [w.strip().lower() for w in coverage_part.split() if w.strip()]
+                target = _resolve_medical_target(caller, right.strip(), location=caller.location)
+                if not cw or not target:
+                    return
+                if table.get_patient() != target:
+                    caller.msg("That patient is not on the operating table.")
+                    return
+                if type(cw).__name__ == "SkinWeave":
+                    try:
+                        from typeclasses.cyberware_catalog import SKINWEAVE_EXTENDED_COVERAGE
+                        parts = {"torso", "face"}
+                        diff_bonus = 0
+                        for token in coverage_words:
+                            if token in ("torso", "face", "left arm", "right arm", "neck", "left thigh", "right thigh", "left hand", "right hand"):
+                                parts.add(token)
+                            elif token in SKINWEAVE_EXTENDED_COVERAGE:
+                                add_parts, add_diff = SKINWEAVE_EXTENDED_COVERAGE[token]
+                                parts.update(add_parts)
+                                diff_bonus += int(add_diff)
+                        cw.db.weave_parts = sorted(parts)
+                        cw.db.weave_descriptions = {p: cw.db.weave_descriptions.get(p) if (cw.db.weave_descriptions or {}).get(p) else __import__("typeclasses.cyberware_catalog", fromlist=["SKINWEAVE_DEFAULTS"]).SKINWEAVE_DEFAULTS.get(p, "The skin here is synthetic.") for p in cw.db.weave_parts}
+                        cw.db.surgery_difficulty = int(getattr(cw, "surgery_difficulty", 12) or 12) + diff_bonus
+                    except Exception:
+                        pass
+                now_ts = __import__("time").time()
+                sedated = (
+                    float(getattr(target.db, "sedated_until", 0.0) or 0.0) > now_ts
+                    or (
+                        bool(getattr(target.db, "medical_unconscious", False))
+                        and float(getattr(target.db, "medical_unconscious_until", 0.0) or 0.0) > now_ts
+                    )
+                )
+                if getattr(cw, "surgery_requires_sedation", True) and not sedated:
+                    caller.msg("|yPatient is not sedated. Surgery difficulty will be significantly higher.|n")
+                started, err = start_cybersurgery_install(caller, target, table, cw)
+                if not started:
+                    caller.msg(err or "You cannot perform that surgery now.")
+                return
+            if verb == "remove":
+                if " from " not in args.lower():
+                    caller.msg("Usage: surgery remove <cyberware> from <patient>")
+                    return
+                left, right = args[7:].split(" from ", 1)
+                target = _resolve_medical_target(caller, right.strip(), location=caller.location)
+                if not target:
+                    return
+                started, err = start_cybersurgery_remove(caller, target, table, left.strip())
+                if not started:
+                    caller.msg(err or "You cannot perform that surgery now.")
+                return
+            if verb == "replace":
+                if " on " not in args.lower():
+                    caller.msg("Usage: surgery replace <organ> on <patient>")
+                    return
+                left, right = args[8:].split(" on ", 1)
+                target = _resolve_medical_target(caller, right.strip(), location=caller.location)
+                if not target:
+                    return
+                organ_arg = left.strip().lower()
+                normalized = organ_arg.replace(" ", "_")
+                organ_key = ORGAN_ALIASES.get(organ_arg, ORGAN_ALIASES.get(normalized, normalized))
+                started, err = start_cybersurgery_replace(caller, target, table, organ_key)
+                if not started:
+                    caller.msg(err or "You cannot perform that surgery now.")
+                return
+            if verb == "repair":
+                if " on " not in args.lower():
+                    caller.msg("Usage: surgery repair <cyberware> on <patient>")
+                    return
+                left, right = args[7:].split(" on ", 1)
+                target = _resolve_medical_target(caller, right.strip(), location=caller.location)
+                if not target:
+                    return
+                started, err = start_cybersurgery_repair(caller, target, table, left.strip())
+                if not started:
+                    caller.msg(err or "You cannot perform that surgery now.")
+                return
+
+        organ_arg = args.strip().lower()
+        normalized = organ_arg.replace(" ", "_")
+        organ_key = ORGAN_ALIASES.get(organ_arg, ORGAN_ALIASES.get(normalized, normalized))
+        bone_key = BONE_ALIASES.get(organ_arg, BONE_ALIASES.get(normalized, normalized))
+        target_key = organ_key if organ_key in ORGAN_ALIASES.values() else bone_key
         from world.medical.medical_surgery import start_surgery_sequence
         from world.medical import ORGAN_INFO, BONE_INFO
         if target_key not in ORGAN_INFO and target_key not in BONE_INFO:
@@ -460,7 +705,7 @@ class CmdDefib(Command):
         if not args:
             caller.msg("Defib who? Usage: defib <target>")
             return
-        target = caller.search(args, location=caller.location)
+        target = _resolve_medical_target(caller, args, location=caller.location)
         if not target:
             return
         defib = None

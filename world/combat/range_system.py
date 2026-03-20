@@ -14,52 +14,194 @@ from world.combat.cover import (
 )
 
 RANGE_CLINCH = -1
-RANGE_CLOSE = 0
-RANGE_EXTENDED = 1
-RANGE_RANGED = 2
+RANGE_VERY_CLOSE = 0
+RANGE_CLOSE = 1
+RANGE_EXTENDED = 2
+RANGE_RANGED = 3
+RANGE_LONG = 4
+RANGE_EXTREME = 5
 
 RANGE_MIN = RANGE_CLINCH
-RANGE_MAX = RANGE_RANGED
+RANGE_MAX = RANGE_EXTREME
 DEFAULT_STARTING_RANGE = RANGE_EXTENDED
 
 RANGE_LABELS = {
     RANGE_CLINCH: "clinch",
+    RANGE_VERY_CLOSE: "very close",
     RANGE_CLOSE: "close",
     RANGE_EXTENDED: "extended",
     RANGE_RANGED: "ranged",
+    RANGE_LONG: "long",
+    RANGE_EXTREME: "extreme",
 }
 
 RANGE_DESCRIPTIONS = {
-    RANGE_CLINCH: "locked together at grapple distance",
+    RANGE_CLINCH: "grapple-locked",
+    RANGE_VERY_CLOSE: "chest-to-chest pressure",
     RANGE_CLOSE: "within arm's reach",
-    RANGE_EXTENDED: "just outside arm's reach",
-    RANGE_RANGED: "at distance",
+    RANGE_EXTENDED: "a step outside immediate reach",
+    RANGE_RANGED: "at practical firearm distance",
+    RANGE_LONG: "at long distance",
+    RANGE_EXTREME: "at extreme distance",
 }
 
 WEAPON_RANGE_PENALTY = {
-    "fists": {RANGE_CLINCH: 0, RANGE_CLOSE: 0, RANGE_EXTENDED: -15, RANGE_RANGED: None},
-    "knife": {RANGE_CLINCH: -5, RANGE_CLOSE: 0, RANGE_EXTENDED: -12, RANGE_RANGED: None},
-    "long_blade": {RANGE_CLINCH: None, RANGE_CLOSE: -8, RANGE_EXTENDED: 0, RANGE_RANGED: None},
-    "blunt": {RANGE_CLINCH: -12, RANGE_CLOSE: 0, RANGE_EXTENDED: 0, RANGE_RANGED: None},
-    "sidearm": {RANGE_CLINCH: -15, RANGE_CLOSE: -8, RANGE_EXTENDED: 0, RANGE_RANGED: 0},
-    "longarm": {RANGE_CLINCH: None, RANGE_CLOSE: None, RANGE_EXTENDED: -10, RANGE_RANGED: 0},
-    "automatic": {RANGE_CLINCH: None, RANGE_CLOSE: None, RANGE_EXTENDED: -8, RANGE_RANGED: 0},
-    "claws": {RANGE_CLINCH: 0, RANGE_CLOSE: 0, RANGE_EXTENDED: -10, RANGE_RANGED: None},
-    "bite": {RANGE_CLINCH: 0, RANGE_CLOSE: -5, RANGE_EXTENDED: None, RANGE_RANGED: None},
-    "saw": {RANGE_CLINCH: 0, RANGE_CLOSE: 0, RANGE_EXTENDED: -8, RANGE_RANGED: None},
-    "gouge": {RANGE_CLINCH: 0, RANGE_CLOSE: 0, RANGE_EXTENDED: -12, RANGE_RANGED: None},
-    "acid_spit": {RANGE_CLINCH: -15, RANGE_CLOSE: -8, RANGE_EXTENDED: 0, RANGE_RANGED: 0},
-    "frost_breath": {RANGE_CLINCH: -10, RANGE_CLOSE: 0, RANGE_EXTENDED: 0, RANGE_RANGED: -8},
-    "shock_lash": {RANGE_CLINCH: -5, RANGE_CLOSE: 0, RANGE_EXTENDED: 0, RANGE_RANGED: None},
-    "void_rend": {RANGE_CLINCH: 0, RANGE_CLOSE: 0, RANGE_EXTENDED: -5, RANGE_RANGED: None},
-    "void_pulse": {RANGE_CLINCH: -10, RANGE_CLOSE: -5, RANGE_EXTENDED: 0, RANGE_RANGED: 0},
+    # Pattern per class: one optimal (0), one-step neighbors debuffed, two-step neighbors unusable.
+    # Clinch is reserved for grapple state and is unusable for normal attacks.
+    "fists": {
+        RANGE_CLINCH: None,
+        RANGE_VERY_CLOSE: 0,
+        RANGE_CLOSE: -5,
+        RANGE_EXTENDED: None,
+        RANGE_RANGED: None,
+        RANGE_LONG: None,
+        RANGE_EXTREME: None,
+    },
+    "knife": {
+        RANGE_CLINCH: None,
+        RANGE_VERY_CLOSE: -4,
+        RANGE_CLOSE: 0,
+        RANGE_EXTENDED: -10,
+        RANGE_RANGED: None,
+        RANGE_LONG: None,
+        RANGE_EXTREME: None,
+    },
+    "long_blade": {
+        RANGE_CLINCH: None,
+        RANGE_VERY_CLOSE: None,
+        RANGE_CLOSE: -8,
+        RANGE_EXTENDED: 0,
+        RANGE_RANGED: -8,
+        RANGE_LONG: None,
+        RANGE_EXTREME: None,
+    },
+    "blunt": {
+        RANGE_CLINCH: None,
+        RANGE_VERY_CLOSE: None,
+        RANGE_CLOSE: -6,
+        RANGE_EXTENDED: 0,
+        RANGE_RANGED: -10,
+        RANGE_LONG: None,
+        RANGE_EXTREME: None,
+    },
+    "sidearm": {
+        RANGE_CLINCH: None,
+        RANGE_VERY_CLOSE: None,
+        RANGE_CLOSE: None,
+        RANGE_EXTENDED: -8,
+        RANGE_RANGED: 0,
+        RANGE_LONG: -8,
+        RANGE_EXTREME: None,
+    },
+    "longarm": {
+        RANGE_CLINCH: None,
+        RANGE_VERY_CLOSE: None,
+        RANGE_CLOSE: None,
+        RANGE_EXTENDED: None,
+        RANGE_RANGED: -5,
+        RANGE_LONG: 0,
+        RANGE_EXTREME: -5,
+    },
+    "automatic": {
+        RANGE_CLINCH: None,
+        RANGE_VERY_CLOSE: None,
+        RANGE_CLOSE: None,
+        RANGE_EXTENDED: -8,
+        RANGE_RANGED: 0,
+        RANGE_LONG: -6,
+        RANGE_EXTREME: None,
+    },
+    "claws": {
+        RANGE_CLINCH: None,
+        RANGE_VERY_CLOSE: -4,
+        RANGE_CLOSE: 0,
+        RANGE_EXTENDED: -10,
+        RANGE_RANGED: None,
+        RANGE_LONG: None,
+        RANGE_EXTREME: None,
+    },
+    "bite": {
+        RANGE_CLINCH: None,
+        RANGE_VERY_CLOSE: -6,
+        RANGE_CLOSE: 0,
+        RANGE_EXTENDED: -12,
+        RANGE_RANGED: None,
+        RANGE_LONG: None,
+        RANGE_EXTREME: None,
+    },
+    "saw": {
+        RANGE_CLINCH: None,
+        RANGE_VERY_CLOSE: -4,
+        RANGE_CLOSE: 0,
+        RANGE_EXTENDED: -8,
+        RANGE_RANGED: None,
+        RANGE_LONG: None,
+        RANGE_EXTREME: None,
+    },
+    "gouge": {
+        RANGE_CLINCH: None,
+        RANGE_VERY_CLOSE: -4,
+        RANGE_CLOSE: 0,
+        RANGE_EXTENDED: -10,
+        RANGE_RANGED: None,
+        RANGE_LONG: None,
+        RANGE_EXTREME: None,
+    },
+    "acid_spit": {
+        RANGE_CLINCH: None,
+        RANGE_VERY_CLOSE: None,
+        RANGE_CLOSE: None,
+        RANGE_EXTENDED: -6,
+        RANGE_RANGED: 0,
+        RANGE_LONG: -8,
+        RANGE_EXTREME: None,
+    },
+    "frost_breath": {
+        RANGE_CLINCH: None,
+        RANGE_VERY_CLOSE: None,
+        RANGE_CLOSE: -6,
+        RANGE_EXTENDED: 0,
+        RANGE_RANGED: -8,
+        RANGE_LONG: None,
+        RANGE_EXTREME: None,
+    },
+    "shock_lash": {
+        RANGE_CLINCH: None,
+        RANGE_VERY_CLOSE: None,
+        RANGE_CLOSE: -4,
+        RANGE_EXTENDED: 0,
+        RANGE_RANGED: -8,
+        RANGE_LONG: None,
+        RANGE_EXTREME: None,
+    },
+    "void_rend": {
+        RANGE_CLINCH: None,
+        RANGE_VERY_CLOSE: None,
+        RANGE_CLOSE: -4,
+        RANGE_EXTENDED: 0,
+        RANGE_RANGED: -6,
+        RANGE_LONG: None,
+        RANGE_EXTREME: None,
+    },
+    "void_pulse": {
+        RANGE_CLINCH: None,
+        RANGE_VERY_CLOSE: None,
+        RANGE_CLOSE: None,
+        RANGE_EXTENDED: -6,
+        RANGE_RANGED: 0,
+        RANGE_LONG: -8,
+        RANGE_EXTREME: None,
+    },
 }
 
 _DEFAULT_RANGE_PENALTY = {
-    RANGE_CLINCH: -10,
-    RANGE_CLOSE: 0,
+    RANGE_CLINCH: None,
+    RANGE_VERY_CLOSE: None,
+    RANGE_CLOSE: -8,
     RANGE_EXTENDED: 0,
-    RANGE_RANGED: -10,
+    RANGE_RANGED: -8,
+    RANGE_LONG: None,
+    RANGE_EXTREME: None,
 }
 
 STAMINA_COST_ADVANCE = 6
@@ -152,13 +294,30 @@ def clear_combat_range(a, b):
 
 def get_initial_range(attacker_weapon_key):
     profile = WEAPON_RANGE_PENALTY.get(attacker_weapon_key, _DEFAULT_RANGE_PENALTY)
-    best = RANGE_EXTENDED
-    for r in (RANGE_RANGED, RANGE_EXTENDED, RANGE_CLOSE, RANGE_CLINCH):
+    # Opening range favors the initial attacker: choose the best (lowest penalty)
+    # legal range for the weapon they're currently using. On ties, keep distance
+    # (extreme > long > ranged > extended > close > very_close > clinch)
+    # as the opener's advantage on tied penalties.
+    order = (
+        RANGE_EXTREME,
+        RANGE_LONG,
+        RANGE_RANGED,
+        RANGE_EXTENDED,
+        RANGE_CLOSE,
+        RANGE_VERY_CLOSE,
+        RANGE_CLINCH,
+    )
+    best_range = DEFAULT_STARTING_RANGE
+    best_penalty = None
+    for r in order:
         pen = profile.get(r)
-        if pen is not None and pen == 0:
-            best = r
-            break
-    return max(RANGE_CLOSE, best)
+        if pen is None:
+            continue
+        pen_i = int(pen)
+        if best_penalty is None or pen_i > best_penalty:
+            best_penalty = pen_i
+            best_range = r
+    return best_range
 
 
 def get_weapon_range_penalty(weapon_key, current_range):
@@ -203,6 +362,11 @@ def _get_character_weapon_key(character):
     wielded_obj = getattr(character.db, "wielded_obj", None)
     if wielded_obj and getattr(wielded_obj, "location", None) == character:
         return getattr(character.db, "wielded", "fists") or "fists"
+    for cw in (getattr(character.db, "cyberware", None) or []):
+        if type(cw).__name__ == "RetractableClaws" and bool(getattr(cw.db, "claws_deployed", False)) and not bool(
+            getattr(cw.db, "malfunctioning", False)
+        ):
+            return "claws"
     return "fists"
 
 
@@ -212,8 +376,8 @@ def attempt_advance(mover, opponent):
     current = get_combat_range(mover, opponent)
     if is_pinned_by_suppression(mover):
         return False, current, "|rYou're pinned by suppressing fire. You can't move.|n", "", None
-    if current <= RANGE_MIN:
-        return False, current, "You're already as close as you can get.", "", None
+    if current <= RANGE_VERY_CLOSE:
+        return False, current, "You can't close any further without committing to a grapple.", "", None
     try:
         from world.rpg.stamina import is_exhausted, spend_stamina
         if is_exhausted(mover):
@@ -282,7 +446,7 @@ def attempt_retreat(mover, opponent):
 
 def validate_grapple_range(grappler, target):
     current = get_combat_range(grappler, target)
-    if current <= RANGE_CLOSE:
+    if current in (RANGE_CLINCH, RANGE_CLOSE):
         return True, None
     label = RANGE_LABELS.get(current, "this distance")
     return False, f"You're too far away to grapple. You need to advance to close range first. (Currently at {label} range.)"

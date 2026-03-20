@@ -63,6 +63,13 @@ def apply_move_hunger_thirst(character, from_room, to_room):
     h_cost = max(0, int(round(HUNGER_MOVE_COST * scale)))
     t_cost = max(0, int(round(THIRST_MOVE_COST * scale)))
 
+    cyber = list(getattr(character.db, "cyberware", None) or [])
+    has_metabolic = any(type(cw).__name__ == "MetabolicRegulator" and not bool(getattr(cw.db, "malfunctioning", False)) for cw in cyber)
+    has_chrome_stomach = any(type(cw).__name__ == "ChromeStomach" and not bool(getattr(cw.db, "malfunctioning", False)) for cw in cyber)
+    if has_metabolic or has_chrome_stomach:
+        h_cost = max(0, int(round(h_cost * 0.5)))
+    if has_metabolic:
+        t_cost = max(0, int(round(t_cost * 0.5)))
     hunger = _clamp(hunger - h_cost, 0, HUNGER_MAX)
     thirst = _clamp(thirst - t_cost, 0, THIRST_MAX)
     character.db.hunger = hunger
@@ -106,6 +113,8 @@ def apply_drink_effects(character, drink_obj):
     if alcohol_strength <= 0.0:
         thirst = int(getattr(character.db, "thirst", THIRST_MAX) or THIRST_MAX)
         character.db.thirst = _clamp(thirst + thirst_restore, 0, THIRST_MAX)
+        # Mark a recent hydration event for short-term stamina recovery bonuses.
+        character.db.last_hydrating_drink = time.time()
     # Alcohol: no thirst benefit, adjust intoxication
     update_intoxication(character, alcohol_strength)
 

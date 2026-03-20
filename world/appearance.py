@@ -40,7 +40,7 @@ def _bandaged_desc(part, poss):
         return f"{poss.capitalize()} back is bound with bandages."
     if part == "abdomen":
         return f"{poss.capitalize()} abdomen is wrapped and bound."
-    if part in ("head", "face", "neck", "left eye", "right eye"):
+    if part in ("head", "face", "neck", "left eye", "right eye", "left ear", "right ear"):
         return f"{poss.capitalize()} {part} is bandaged."
     if part == "groin":
         return f"{poss.capitalize()} groin is bandaged."
@@ -78,8 +78,8 @@ def _stabilized_organ_desc(part, poss):
         return f"{poss.capitalize()} abdomen shows signs of recent surgery."
     if part == "head":
         return f"{poss.capitalize()} head shows signs of recent surgery."
-    if part in ("face", "left eye", "right eye"):
-        return f"{poss.capitalize()} face or eyes show stitches and signs of recent surgery."
+    if part in ("face", "left eye", "right eye", "left ear", "right ear"):
+        return f"{poss.capitalize()} face and sensory areas show stitches and signs of recent surgery."
     if part == "neck":
         return f"{poss.capitalize()} neck shows stitches and signs of recent surgery."
     if part == "groin":

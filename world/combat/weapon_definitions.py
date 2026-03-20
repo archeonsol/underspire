@@ -10,6 +10,7 @@ from __future__ import annotations
 # Hands required per weapon: 1 = one-handed, 2 = two-handed. Used for wield/unwield.
 WEAPON_HANDS = {
     "fists": 1,
+    "claws": 1,
     "knife": 1,
     "long_blade": 2,
     "blunt": 2,
@@ -24,6 +25,7 @@ WEAPON_HANDS = {
 # defender's name.
 COMBAT_READY_ATTACKER_MSG = {
     "fists": "|rYou raise your fists, eyeing {target}.|n",
+    "claws": "|rYou spread your hands, chrome claws poised, eyeing {target}.|n",
     "knife": "|rYou ready your blade, eyeing {target}.|n",
     "long_blade": "|rYou ready your blade, eyeing {target}.|n",
     "blunt": "|rYou heft your weapon, eyeing {target}.|n",
@@ -42,6 +44,14 @@ WEAPON_DATA = {
         4: {"name": "Uppercut", "damage": 15},
         5: {"name": "Kidney Punch", "damage": 10},
         6: {"name": "Headbutt", "damage": 20},
+    },
+    "claws": {
+        1: {"name": "Rake", "damage": 9},
+        2: {"name": "Talon Slash", "damage": 13},
+        3: {"name": "Hooked Rip", "damage": 17},
+        4: {"name": "Eviscerating Arc", "damage": 22},
+        5: {"name": "Fingertip Feint", "damage": 11},
+        6: {"name": "Tendon Shear", "damage": 19},
     },
     "knife": {
         1: {"name": "Slash", "damage": 12},

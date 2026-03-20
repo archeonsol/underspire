@@ -131,7 +131,8 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         from commands.range_cmds import CmdAdvance, CmdRetreat, CmdRange
         from commands.cover_commands import CmdCover, CmdLeaveCover, CmdPeek, CmdSuppress
         from commands.scavenge_cmds import CmdScavenge, CmdSkin, CmdButcher, CmdSever, CmdLoot
-        from commands.medical_cmds import CmdHt, CmdUse, CmdApply, CmdStabilize, CmdSedate, CmdSurgery, CmdDefib
+        from commands.salvage_cmds import CmdSalvage
+        from commands.medical_cmds import CmdHt, CmdPatient, CmdUse, CmdApply, CmdStabilize, CmdSedate, CmdWakePatient, CmdSurgery, CmdDefib
         from commands.survival_cmds import CmdEat, CmdDrink
         from commands.inventory_cmds import CmdWield, CmdUnwield, CmdFreehands, CmdInventory, CmdReload, CmdUnload, CmdCheckAmmo, CmdWear, CmdRemove, CmdStrip, CmdFrisk
         from commands.crafting_cmds import CmdSurvey, CmdRepairArmor, CmdTailor
@@ -145,7 +146,7 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         from commands.matrix_cmds import CmdJackIn, CmdJackOut, CmdRoute
         from commands.network_cmds import CmdNetworkWho, CmdNetworkSend, CmdNetworkNtag
         from commands.handset_cmds import CmdHandset
-        from commands.cyberware_cmds import CmdCyberware
+        from commands.cyberware_cmds import CmdCyberware, CmdSkinWeave, CmdSurge, CmdClaws
         from commands.staff_cmds import (
             CmdGiveXp, CmdStaffSheet, CmdStaffSetStat, CmdStaffSetSkill,
             CmdCreateItem, CmdTypeclasses, CmdSpawnItem, CmdSpawnArmor, CmdSpawnVehicle, CmdSpawnMedical, CmdSpawnOR,
@@ -190,6 +191,7 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdExecute())
         self.add(CmdStance())
         self.add(CmdHt())
+        self.add(CmdPatient())
         self.add(CmdUse())
         self.add(CmdApply())
         self.add(CmdStabilize())
@@ -207,6 +209,7 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdLieOnTable())
         self.add(CmdGetOffTable())
         self.add(CmdSedate())
+        self.add(CmdWakePatient())
         self.add(CmdSurgery())
         self.add(CmdEat())
         self.add(CmdDrink())
@@ -224,6 +227,7 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdSurvey())
         self.add(CmdRepairArmor())
         self.add(CmdLoot())
+        self.add(CmdSalvage())
         self.add(CmdFrisk())
         if DefaultCmdGet is not None:
             self.remove(DefaultCmdGet)
@@ -295,6 +299,9 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdNetworkSend())
         self.add(CmdNetworkNtag())
         self.add(CmdRoute())
+        self.add(CmdSkinWeave())
+        self.add(CmdSurge())
+        self.add(CmdClaws())
         self.add(CmdAddNote())
         self.add(CmdNotes())
         self.add(CmdNoteSearch())

@@ -57,6 +57,8 @@ class CmdEat(Command):
             return
         name = obj.get_display_name(caller) if hasattr(obj, "get_display_name") else obj.name
         caller.msg("You eat |w%s|n." % name)
+        taste_msg = getattr(getattr(obj, "db", None), "taste_msg", None)
+        caller.msg(taste_msg or "You taste it, but nothing stands out.")
         if hasattr(caller.location, "contents_get"):
             for v in caller.location.contents_get(content_type="character"):
                 if v == caller:
@@ -116,6 +118,8 @@ class CmdDrink(Command):
             return
         name = obj.get_display_name(caller) if hasattr(obj, "get_display_name") else obj.name
         caller.msg("You drink |w%s|n." % name)
+        taste_msg = getattr(getattr(obj, "db", None), "taste_msg", None)
+        caller.msg(taste_msg or "You taste it, but nothing stands out.")
         if hasattr(caller.location, "contents_get"):
             for v in caller.location.contents_get(content_type="character"):
                 if v == caller:

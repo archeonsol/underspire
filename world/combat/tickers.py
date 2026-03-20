@@ -11,6 +11,8 @@ from .utils import (
     get_combat_target,
     set_combat_target,
     combat_display_name,
+    combat_role_name,
+    combat_msg,
     has_reciprocal_combat,
     clear_engagement_index,
     unregister_as_attacker,
@@ -43,6 +45,8 @@ def _clear_combat_round_flags(character):
         return
     if getattr(character.db, "combat_flee_attempted", False):
         character.attributes.remove("combat_flee_attempted")
+    if getattr(character.db, "combat_positioning_attempted", False):
+        character.attributes.remove("combat_positioning_attempted")
     if getattr(character.db, "combat_skip_next_turn", False):
         character.attributes.remove("combat_skip_next_turn")
 
@@ -130,6 +134,11 @@ def _get_attacker_weapon_key(attacker):
     wielded_obj = getattr(attacker.db, "wielded_obj", None)
     if wielded_obj and getattr(wielded_obj, "location", None) == attacker:
         return getattr(attacker.db, "wielded", "fists") or "fists"
+    for cw in (getattr(attacker.db, "cyberware", None) or []):
+        if type(cw).__name__ == "RetractableClaws" and bool(getattr(cw.db, "claws_deployed", False)) and not bool(
+            getattr(cw.db, "malfunctioning", False)
+        ):
+            return "claws"
     return "fists"
 
 
@@ -151,7 +160,7 @@ def defender_first_attack(defender_id, attacker_id):
     except Exception as e:
         tb = traceback.format_exc()
         if hasattr(defender, "msg"):
-            defender.msg(f"|rCombat error: {e}|n")
+            combat_msg(defender, f"|rCombat error: {e}|n")
         try:
             from evennia import logger
 
@@ -172,7 +181,7 @@ def defender_first_attack(defender_id, attacker_id):
             )
         except Exception as e:
             if hasattr(defender, "msg"):
-                defender.msg(f"|rTicker add failed: {e}|n")
+                combat_msg(defender, f"|rTicker add failed: {e}|n")
 
 
 def _start_first_round(attacker_id, target_id):
@@ -194,7 +203,7 @@ def _start_first_round(attacker_id, target_id):
         execute_combat_turn(attacker, target)
     except Exception as e:
         tb = traceback.format_exc()
-        attacker.msg(f"|rCombat error: {e}|n")
+        combat_msg(attacker, f"|rCombat error: {e}|n")
         try:
             from evennia import logger
 
@@ -217,7 +226,7 @@ def _start_first_round(attacker_id, target_id):
             )
         except Exception as e:
             if hasattr(attacker, "msg"):
-                attacker.msg(f"|rTicker add failed: {e}|n")
+                combat_msg(attacker, f"|rTicker add failed: {e}|n")
     delay(COMBAT_STAGGER, defender_first_attack, target.id, attacker.id)
 
 
@@ -235,8 +244,8 @@ def start_combat_ticker(attacker, target):
             conn = rig.db.active_connection
             if conn and conn.get('character') == target:
                 # Emergency disconnect - rig safety systems detect combat stress
-                target.msg("|y*** EMERGENCY DISCONNECT ***|n")
-                target.msg("|yRig safety protocols detect physical distress - forcing jack-out!|n")
+                combat_msg(target, "|y*** EMERGENCY DISCONNECT ***|n")
+                combat_msg(target, "|yRig safety protocols detect physical distress - forcing jack-out!|n")
                 from typeclasses.matrix.avatars import JACKOUT_EMERGENCY
                 rig.disconnect(target, severity=JACKOUT_EMERGENCY, reason="Combat initiated")
 
@@ -256,26 +265,29 @@ def start_combat_ticker(attacker, target):
     weapon_key = _get_attacker_weapon_key(attacker)
     on_combat_start(attacker, target, weapon_key)
     ready_attacker = COMBAT_READY_ATTACKER_MSG.get(weapon_key, COMBAT_READY_ATTACKER_MSG["fists"])
-    attacker.msg(ready_attacker.format(target=combat_display_name(target, attacker)))
-    target.msg(COMBAT_READY_DEFENDER_MSG)
+    attacker_target = combat_role_name(target, attacker, role="defender")
+    combat_msg(attacker, ready_attacker.format(target=attacker_target))
+    combat_msg(target, COMBAT_READY_DEFENDER_MSG)
     if target.location:
         loc = target.location
         viewers_def = [c for c in loc.contents_get(content_type="character") if c != target]
         for v in viewers_def:
-            v.msg(COMBAT_READY_ROOM_MSG.format(defender=combat_display_name(target, v)))
+            combat_msg(v, COMBAT_READY_ROOM_MSG.format(defender=combat_role_name(target, v, role="defender")))
         viewers_atk = [c for c in loc.contents_get(content_type="character") if c != attacker]
         for v in viewers_atk:
             if v is target:
-                v.msg(
+                combat_msg(
+                    v,
                     "|r{attacker} gets ready to fight you.|n".format(
-                        attacker=combat_display_name(attacker, v)
+                        attacker=combat_role_name(attacker, v, role="attacker")
                     )
                 )
             else:
-                v.msg(
+                combat_msg(
+                    v,
                     COMBAT_READY_ATTACKER_ROOM_MSG.format(
-                        attacker=combat_display_name(attacker, v),
-                        target=combat_display_name(target, v),
+                        attacker=combat_role_name(attacker, v, role="attacker"),
+                        target=combat_role_name(target, v, role="defender"),
                     )
                 )
 
@@ -310,10 +322,10 @@ def stop_combat_ticker(attacker, target):
     if not attacker or not target:
         return
     if get_combat_target(attacker) != target:
-        attacker.msg("|yYou're not attacking them.|n")
+        combat_msg(attacker, "|yYou're not attacking them.|n")
         return
     if not is_attacking_target(attacker, target):
-        attacker.msg("|yYou're not pressing an attack right now.|n")
+        combat_msg(attacker, "|yYou're not pressing an attack right now.|n")
         return
     id_at = ticker_id(attacker, target)
     if id_at:
@@ -327,9 +339,11 @@ def stop_combat_ticker(attacker, target):
     other_still_attacking = is_attacking_target(target, attacker)
     if reciprocal and not other_still_attacking:
         remove_both_combat_tickers(attacker, target)
-        attacker.msg("|yNeither of you press the attack and you disengage completely.|n")
-        target.msg("|yNeither of you press the attack and you disengage completely.|n")
+        combat_msg(attacker, "|yNeither of you press the attack and you disengage completely.|n")
+        combat_msg(target, "|yNeither of you press the attack and you disengage completely.|n")
         return
-    attacker.msg(f"|yYou stop attacking at {combat_display_name(target, attacker)}.|n")
+    target_name = combat_role_name(target, attacker, role="defender")
+    combat_msg(attacker, f"|yYou stop attacking at {target_name}.|n")
     if hasattr(target, "msg"):
-        target.msg(f"|y{combat_display_name(attacker, target)} stops attacking you.|n")
+        attacker_name = combat_role_name(attacker, target, role="attacker")
+        combat_msg(target, f"|y{attacker_name} stops attacking you.|n")

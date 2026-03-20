@@ -1021,9 +1021,14 @@ class CmdSpawnMedical(Command):
             ("typeclasses.medical_tools.HemostaticAgent", "hemostatic agent"),
             ("typeclasses.medical_tools.Tourniquet", "tourniquet"),
             ("typeclasses.medical_tools.Defibrillator", "defibrillator"),
+            ("typeclasses.items.Item", "scalpel"),
         ]:
             try:
                 obj = create_object(typeclass, key=key, location=caller)
+                if key == "scalpel":
+                    obj.db.is_scalpel = True
+                    obj.db.item_type = "scalpel"
+                    obj.db.uses_remaining = 10
                 created.append(obj.key)
             except Exception as e:
                 logger.log_trace("staff_cmds.CmdSpawnMedical create %s: %s" % (key, e))

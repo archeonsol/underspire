@@ -25,6 +25,7 @@ from world.armor import (
     get_armor_protection_for_location,
     compute_armor_reduction,
     degrade_armor,
+    degrade_cyberware_armor,
 )
 
 try:
@@ -49,12 +50,18 @@ except ImportError:
     SKILL_LEVEL_TIER_1 = 60
     SKILL_LEVEL_FOR_C = 123
 
-from .utils import combat_display_name, resolve_combat_objects, get_combat_target
+from .utils import (
+    combat_display_name,
+    combat_role_name,
+    combat_msg,
+    resolve_combat_objects,
+    get_combat_target,
+)
 from .instance import get_instance_for, try_auto_switch_target
 
 ROLL_MIN, ROLL_MAX = 1, 100
 
-MELEE_WEAPON_KEYS = ("fists", "knife", "long_blade", "blunt")
+MELEE_WEAPON_KEYS = ("fists", "claws", "knife", "long_blade", "blunt")
 PARRY_PENALTY = 8
 
 _ATTACK_INDICES_DEFAULT = (1, 2, 3)
@@ -70,6 +77,15 @@ def _allowed_attack_indices(skill_level):
     if skill_level >= SKILL_LEVEL_TIER_1:
         return _ATTACK_INDICES_TIER_1
     return _ATTACK_INDICES_DEFAULT
+
+
+def _has_deployed_claws(character):
+    for cw in (getattr(character.db, "cyberware", None) or []):
+        if type(cw).__name__ == "RetractableClaws" and bool(getattr(cw.db, "claws_deployed", False)) and not bool(
+            getattr(cw.db, "malfunctioning", False)
+        ):
+            return True
+    return False
 
 
 def _weapon_attack_table(weapon_key, weapon_obj, skill_level):
@@ -258,6 +274,7 @@ def resolve_attack(attacker, defender, weapon_key="fists"):
     best_kind = "dodge"
     best_rating = dodge_rating
     best_bias = -cfg.dodge_bias
+    parry_rating = None
 
     if weapon_key in MELEE_WEAPON_KEYS:
         parry_skill = _defender_parry_skill(defender)
@@ -421,43 +438,47 @@ def can_attack(attacker, defender, weapon_key, wielded_obj):
     """Single gatekeeper for combat pre-flight checks."""
     if getattr(attacker.db, "grappled_by", None):
         msg = "You're locked in their grasp; you can't strike back."
-        attacker.msg(msg)
-        defender.msg(f"{combat_display_name(attacker, defender)} is too restrained to strike.")
+        combat_msg(attacker, msg)
+        defender_name = combat_role_name(attacker, defender, role="attacker")
+        combat_msg(defender, f"{defender_name} is too restrained to strike.")
         loc = getattr(attacker, "location", None) or getattr(defender, "location", None)
         if loc and hasattr(loc, "contents_get"):
             for viewer in loc.contents_get(content_type="character"):
                 if viewer in (attacker, defender):
                     continue
-                atk_v = combat_display_name(attacker, viewer)
-                viewer.msg(f"{atk_v} struggles against a hold and can't strike back.")
+                atk_v = combat_role_name(attacker, viewer, role="attacker")
+                combat_msg(viewer, f"{atk_v} struggles against a hold and can't strike back.")
         return False
     if getattr(attacker.db, "grappling", None):
         held = getattr(attacker.db, "grappling", None)
-        attacker.msg(f"You're busy maintaining a grapple on {combat_display_name(held, attacker)} and cannot make normal attacks.")
+        held_name = combat_role_name(held, attacker, role="defender")
+        combat_msg(attacker, f"You're busy maintaining a grapple on {held_name} and cannot make normal attacks.")
         return False
 
     if not can_fight(attacker):
-        attacker.msg("You're too exhausted to strike.")
-        defender.msg(f"{combat_display_name(attacker, defender)} is too exhausted to strike.")
+        combat_msg(attacker, "You're too exhausted to strike.")
+        atk_name = combat_role_name(attacker, defender, role="attacker")
+        combat_msg(defender, f"{atk_name} is too exhausted to strike.")
         loc = getattr(attacker, "location", None) or getattr(defender, "location", None)
         if loc and hasattr(loc, "contents_get"):
             for viewer in loc.contents_get(content_type="character"):
                 if viewer in (attacker, defender):
                     continue
-                atk_v = combat_display_name(attacker, viewer)
-                viewer.msg(f"{atk_v} looks too exhausted to strike.")
+                atk_v = combat_role_name(attacker, viewer, role="attacker")
+                combat_msg(viewer, f"{atk_v} looks too exhausted to strike.")
         return False
 
     if is_ranged_weapon(weapon_key) and wielded_obj and (not getattr(wielded_obj, "has_ammo", lambda: True)()):
-        attacker.msg("Click. |rempty.|n The mag is dry. |wReload|n or you're dead.")
-        defender.msg(f"{combat_display_name(attacker, defender)} pulls the trigger. Click. Empty. Your turn.")
+        combat_msg(attacker, "Click. |rempty.|n The mag is dry. |wReload|n or you're dead.")
+        atk_name = combat_role_name(attacker, defender, role="attacker")
+        combat_msg(defender, f"{atk_name} pulls the trigger. Click. Empty. Your turn.")
         loc = getattr(attacker, "location", None) or getattr(defender, "location", None)
         if loc and hasattr(loc, "contents_get"):
             for viewer in loc.contents_get(content_type="character"):
                 if viewer in (attacker, defender):
                     continue
-                atk_v = combat_display_name(attacker, viewer)
-                viewer.msg(f"{atk_v} pulls the trigger. Click. |rempty.|n")
+                atk_v = combat_role_name(attacker, viewer, role="attacker")
+                combat_msg(viewer, f"{atk_v} pulls the trigger. Click. |rempty.|n")
         return False
 
     return True
@@ -479,8 +500,8 @@ def _preflight_checks(attacker, defender):
 
 def _emit_result_messages(attacker, defender, result, weapon_key, wielded_obj, move_name):
     templates = get_result_messages(result, weapon_key, wielded_obj, move_name=move_name)
-    def_name = combat_display_name(defender, attacker)
-    atk_name = combat_display_name(attacker, defender)
+    def_name = combat_role_name(defender, attacker, role="defender")
+    atk_name = combat_role_name(attacker, defender, role="attacker")
     defaults = {
         "MISS": (
             "You attack {defender} but |rmiss.|n",
@@ -499,8 +520,8 @@ def _emit_result_messages(attacker, defender, result, weapon_key, wielded_obj, m
         ),
     }
     atk_default, def_default, room_default = defaults[result]
-    attacker.msg((templates.get("attacker") or atk_default).format(attacker=atk_name, defender=def_name))
-    defender.msg((templates.get("defender") or def_default).format(attacker=atk_name, defender=def_name))
+    combat_msg(attacker, (templates.get("attacker") or atk_default).format(attacker=atk_name, defender=def_name))
+    combat_msg(defender, (templates.get("defender") or def_default).format(attacker=atk_name, defender=def_name))
     loc = getattr(attacker, "location", None) or getattr(defender, "location", None)
     if not loc or not hasattr(loc, "contents_get"):
         return
@@ -508,29 +529,29 @@ def _emit_result_messages(attacker, defender, result, weapon_key, wielded_obj, m
     for viewer in loc.contents_get(content_type="character"):
         if viewer in (attacker, defender):
             continue
-        atk_v = combat_display_name(attacker, viewer)
-        def_v = combat_display_name(defender, viewer)
-        viewer.msg(room_tpl.format(attacker=atk_v, defender=def_v))
+        atk_v = combat_role_name(attacker, viewer, role="attacker")
+        def_v = combat_role_name(defender, viewer, role="defender")
+        combat_msg(viewer, room_tpl.format(attacker=atk_v, defender=def_v))
 
 
 def _emit_soak(attacker, defender, effective_defender, body_part, weapon_key, wielded_obj, move_name, hit_shield):
     soak_templates = get_soak_messages(weapon_key, wielded_obj, move_name=move_name, shielded=bool(hit_shield))
     names = {
-        "atk_for_def": combat_display_name(attacker, defender),
-        "def_for_atk": combat_display_name(defender, attacker),
-        "eff_for_atk": combat_display_name(effective_defender, attacker),
-        "eff_for_def": combat_display_name(effective_defender, defender),
-        "atk_for_eff": combat_display_name(attacker, effective_defender),
-        "def_for_eff": combat_display_name(defender, effective_defender),
-        "eff_for_eff": combat_display_name(effective_defender, effective_defender),
+        "atk_for_def": combat_role_name(attacker, defender, role="attacker"),
+        "def_for_atk": combat_role_name(defender, attacker, role="defender"),
+        "eff_for_atk": combat_role_name(effective_defender, attacker, role="defender"),
+        "eff_for_def": combat_role_name(effective_defender, defender, role="defender"),
+        "atk_for_eff": combat_role_name(attacker, effective_defender, role="attacker"),
+        "def_for_eff": combat_role_name(defender, effective_defender, role="attacker"),
+        "eff_for_eff": combat_role_name(effective_defender, effective_defender, role="defender"),
     }
     if hit_shield:
-        attacker.msg((soak_templates.get("attacker") or "|cYour blow lands on {effective_defender}'s {loc} — {defender} pulled them in the way — but their armor absorbs it.|n").format(attacker=names["atk_for_def"], defender=names["def_for_atk"], effective_defender=names["eff_for_atk"], loc=body_part))
-        defender.msg((soak_templates.get("defender") or "|cYou pull {effective_defender} in the way. {attacker}'s strike hits them but armor takes it.|n").format(attacker=names["atk_for_def"], defender=names["def_for_atk"], effective_defender=names["eff_for_def"], loc=body_part))
-        effective_defender.msg((soak_templates.get("effective_defender") or "|c{defender} uses you as a shield. {attacker}'s blow hits your {loc}; your armor takes it.|n").format(attacker=names["atk_for_eff"], defender=names["def_for_eff"], effective_defender=names["eff_for_eff"], loc=body_part))
+        combat_msg(attacker, (soak_templates.get("attacker") or "|cYour blow lands on {effective_defender}'s {loc} — {defender} pulled them in the way — but their armor absorbs it.|n").format(attacker=names["atk_for_def"], defender=names["def_for_atk"], effective_defender=names["eff_for_atk"], loc=body_part))
+        combat_msg(defender, (soak_templates.get("defender") or "|cYou pull {effective_defender} in the way. {attacker}'s strike hits them but armor takes it.|n").format(attacker=names["atk_for_def"], defender=names["def_for_atk"], effective_defender=names["eff_for_def"], loc=body_part))
+        combat_msg(effective_defender, (soak_templates.get("effective_defender") or "|c{defender} uses you as a shield. {attacker}'s blow hits your {loc}; your armor takes it.|n").format(attacker=names["atk_for_eff"], defender=names["def_for_eff"], effective_defender=names["eff_for_eff"], loc=body_part))
     else:
-        attacker.msg((soak_templates.get("attacker") or "|cYour blow lands on {defender}'s {loc}, but their armor absorbs it.|n").format(attacker=names["atk_for_def"], defender=names["def_for_atk"], effective_defender=names["def_for_atk"], loc=body_part))
-        defender.msg((soak_templates.get("defender") or "|c{attacker}'s strike hits your {loc}; your armor takes it.|n").format(attacker=names["atk_for_def"], defender=names["def_for_atk"], effective_defender=names["def_for_atk"], loc=body_part))
+        combat_msg(attacker, (soak_templates.get("attacker") or "|cYour blow lands on {defender}'s {loc}, but their armor absorbs it.|n").format(attacker=names["atk_for_def"], defender=names["def_for_atk"], effective_defender=names["def_for_atk"], loc=body_part))
+        combat_msg(defender, (soak_templates.get("defender") or "|c{attacker}'s strike hits your {loc}; your armor takes it.|n").format(attacker=names["atk_for_def"], defender=names["def_for_atk"], effective_defender=names["def_for_atk"], loc=body_part))
     loc = getattr(attacker, "location", None) or getattr(defender, "location", None)
     if not loc or not hasattr(loc, "contents_get"):
         return
@@ -538,11 +559,12 @@ def _emit_soak(attacker, defender, effective_defender, body_part, weapon_key, wi
     for viewer in loc.contents_get(content_type="character"):
         if viewer in (attacker, defender) or (hit_shield and viewer == effective_defender):
             continue
-        viewer.msg(
+        combat_msg(
+            viewer,
             room_tpl.format(
-                attacker=combat_display_name(attacker, viewer),
-                defender=combat_display_name(defender, viewer),
-                effective_defender=combat_display_name(effective_defender, viewer),
+                attacker=combat_role_name(attacker, viewer, role="attacker"),
+                defender=combat_role_name(defender, viewer, role="defender"),
+                effective_defender=combat_role_name(effective_defender, viewer, role="defender"),
                 loc=body_part,
             )
         )
@@ -581,29 +603,35 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
         attacker.attributes.remove("combat_skip_next_turn")
         if getattr(attacker.db, "combat_flee_attempted", False):
             attacker.attributes.remove("combat_flee_attempted")
-        attacker.msg("|yYou're too busy adjusting your grip to strike this moment.|n")
-        defender.msg("|y%s is distracted and doesn't strike.|n" % combat_display_name(attacker, defender))
+        if getattr(attacker.db, "combat_positioning_attempted", False):
+            attacker.attributes.remove("combat_positioning_attempted")
+        combat_msg(attacker, "|yYou're too busy adjusting your grip to strike this moment.|n")
+        defender_name = combat_role_name(attacker, defender, role="attacker")
+        combat_msg(defender, "|y%s is distracted and doesn't strike.|n" % defender_name)
         loc = getattr(attacker, "location", None) or getattr(defender, "location", None)
         if loc and hasattr(loc, "contents_get"):
             for viewer in loc.contents_get(content_type="character"):
                 if viewer in (attacker, defender):
                     continue
-                atk_v = combat_display_name(attacker, viewer)
-                viewer.msg(f"{atk_v} adjusts their grip and doesn't strike this moment.")
+                atk_v = combat_role_name(attacker, viewer, role="attacker")
+                combat_msg(viewer, f"{atk_v} adjusts their grip and doesn't strike this moment.")
         return
     wielded_obj = attacker.db.wielded_obj
     if wielded_obj and wielded_obj.location == attacker:
         weapon_key = attacker.db.wielded
+    elif _has_deployed_claws(attacker):
+        weapon_key = "claws"
     else:
         weapon_key = "fists"
     range_penalty = get_attack_range_penalty(attacker, defender, weapon_key)
     if range_penalty is None:
         current_range = get_combat_range(attacker, defender)
         range_label = RANGE_LABELS.get(current_range, "this distance")
-        attacker.msg(
+        combat_msg(
+            attacker,
             f"|rYou can't use that weapon at {range_label} range. Use |wadvance|n or |wretreat|n to reposition.|n"
         )
-        attacker.msg(get_range_display_line(attacker, defender))
+        combat_msg(attacker, get_range_display_line(attacker, defender))
         return
 
     if not can_attack(attacker, defender, weapon_key, wielded_obj):
@@ -619,19 +647,20 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
     attack_move = weapon[roll_1d6]
 
     if not can_fight(defender):
-        attacker.msg(
-            f"{combat_display_name(defender, attacker)} is too exhausted to defend. You land a solid blow."
+        combat_msg(
+            attacker,
+            f"{combat_role_name(defender, attacker, role='defender')} is too exhausted to defend. You land a solid blow."
         )
-        defender.msg("You're too exhausted to defend yourself. The blow lands.")
+        combat_msg(defender, "You're too exhausted to defend yourself. The blow lands.")
         result, attack_value, attacker_rating = "HIT", 10, None
         loc = getattr(attacker, "location", None) or getattr(defender, "location", None)
         if loc and hasattr(loc, "contents_get"):
             for viewer in loc.contents_get(content_type="character"):
                 if viewer in (attacker, defender):
                     continue
-                atk_v = combat_display_name(attacker, viewer)
-                def_v = combat_display_name(defender, viewer)
-                viewer.msg(f"{def_v} looks too exhausted to defend as {atk_v}'s blow lands.")
+                atk_v = combat_role_name(attacker, viewer, role="attacker")
+                def_v = combat_role_name(defender, viewer, role="defender")
+                combat_msg(viewer, f"{def_v} looks too exhausted to defend as {atk_v}'s blow lands.")
     else:
         spend_stamina(defender, STAMINA_COST_DEFEND)
         resolved = resolve_attack(attacker, defender, weapon_key)
@@ -644,7 +673,7 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
     move_name = attack_move["name"]
     if result in ("MISS", "PARRIED", "DODGED"):
         _emit_result_messages(attacker, defender, result, weapon_key, wielded_obj, move_name)
-        attacker.msg(get_range_display_line(attacker, defender))
+        combat_msg(attacker, get_range_display_line(attacker, defender))
     elif result in ("HIT", "CRITICAL"):
         if (defender.db.current_hp or 0) <= 0:
             _remove_both_combat_tickers(attacker, defender)
@@ -660,12 +689,18 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
         is_critical = result == "CRITICAL"
 
         damage_type = get_damage_type(weapon_key, wielded_obj)
-        total_prot, armor_pieces = get_armor_protection_for_location(effective_defender, body_part, damage_type)
+        if damage_type == "arc":
+            arc_vuln = getattr(effective_defender, "get_arc_vulnerability", lambda: 0.0)()
+            if arc_vuln > 0:
+                damage = int(damage * (1.0 + arc_vuln))
+        total_prot, armor_pieces, cyberware_pieces = get_armor_protection_for_location(effective_defender, body_part, damage_type)
         reduction, absorbed_fully = compute_armor_reduction(total_prot, damage)
         damage = max(0, damage - reduction)
         damage = apply_cover_damage_reduction(attacker, effective_defender, damage, damage_type)
         if armor_pieces and reduction > 0:
             degrade_armor(armor_pieces, damage_type, reduction)
+        if cyberware_pieces and reduction > 0:
+            degrade_cyberware_armor(effective_defender, cyberware_pieces, reduction)
 
         if absorbed_fully and damage <= 0:
             _emit_soak(attacker, defender, effective_defender, body_part, weapon_key, wielded_obj, move_name, hit_shield)
@@ -678,18 +713,19 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
                 weapon_key=weapon_key,
                 weapon_obj=wielded_obj,
             )
-            def_for_atk = combat_display_name(defender, attacker)
-            atk_for_def = combat_display_name(attacker, defender)
-            eff_for_atk = combat_display_name(effective_defender, attacker)
-            eff_for_def = combat_display_name(effective_defender, defender)
-            eff_for_eff = combat_display_name(effective_defender, effective_defender)
-            def_for_eff = combat_display_name(defender, effective_defender)
-            atk_for_eff = combat_display_name(attacker, effective_defender)
+            def_for_atk = combat_role_name(defender, attacker, role="defender")
+            atk_for_def = combat_role_name(attacker, defender, role="attacker")
+            eff_for_atk = combat_role_name(effective_defender, attacker, role="defender")
+            eff_for_def = combat_role_name(effective_defender, defender, role="defender")
+            eff_for_eff = combat_role_name(effective_defender, effective_defender, role="defender")
+            def_for_eff = combat_role_name(defender, effective_defender, role="attacker")
+            atk_for_eff = combat_role_name(attacker, effective_defender, role="attacker")
             if hit_shield:
-                attacker.msg(
+                combat_msg(
+                    attacker,
                     f"|r{def_for_atk} pulls {eff_for_atk} in the way! Your blow lands on {eff_for_atk}'s {body_part}.|n"
                 )
-                defender.msg(f"|yYou pull {eff_for_def} in the way. The blow hits them.|n")
+                combat_msg(defender, f"|yYou pull {eff_for_def} in the way. The blow hits them.|n")
                 _, def_line_shield = hit_message(
                     weapon_key,
                     body_part,
@@ -699,7 +735,7 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
                     weapon_obj=wielded_obj,
                     move_name=move_name,
                 )
-                eff_self = combat_display_name(effective_defender, effective_defender)
+                eff_self = combat_role_name(effective_defender, effective_defender, role="defender")
                 flavor_atk, flavor_shield = get_brutal_hit_flavor(
                     weapon_key,
                     body_part,
@@ -709,7 +745,8 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
                     is_critical,
                     weapon_obj=wielded_obj,
                 )
-                effective_defender.msg(
+                combat_msg(
+                    effective_defender,
                     f"|r{def_for_eff} uses you as a shield! {atk_for_eff}'s blow hits you — {def_line_shield} {flavor_shield}".strip()
                 )
                 loc = getattr(attacker, "location", None) or getattr(defender, "location", None)
@@ -717,11 +754,12 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
                     for viewer in loc.contents_get(content_type="character"):
                         if viewer in (attacker, defender, effective_defender):
                             continue
-                        atk_v = combat_display_name(attacker, viewer)
-                        def_v = combat_display_name(defender, viewer)
-                        eff_v = combat_display_name(effective_defender, viewer)
+                        atk_v = combat_role_name(attacker, viewer, role="attacker")
+                        def_v = combat_role_name(defender, viewer, role="defender")
+                        eff_v = combat_role_name(effective_defender, viewer, role="defender")
                         crit_tag = "|yCRITICAL.|n " if is_critical else ""
-                        viewer.msg(
+                        combat_msg(
+                            viewer,
                             f"{def_v} drags {eff_v} into the path of {atk_v}'s attack. {crit_tag}{atk_v}'s blow crashes into {eff_v}'s {body_part}."
                         )
             else:
@@ -743,17 +781,21 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
                     is_critical,
                     weapon_obj=wielded_obj,
                 )
-                attacker.msg(f"{main_atk} {flavor_atk}".strip())
-                defender.msg(f"{main_def} {flavor_def}".strip())
+                combat_msg(attacker, f"{main_atk} {flavor_atk}".strip())
+                pain_editor = any(type(cw).__name__ == "PainEditor" and not bool(getattr(cw.db, "malfunctioning", False)) for cw in (getattr(defender.db, "cyberware", None) or []))
+                if pain_editor:
+                    combat_msg(defender, f"|xDamage registered at {body_part}. You feel nothing.|n")
+                else:
+                    combat_msg(defender, f"{main_def} {flavor_def}".strip())
                 loc = getattr(attacker, "location", None) or getattr(defender, "location", None)
                 if loc and hasattr(loc, "contents_get"):
                     for viewer in loc.contents_get(content_type="character"):
                         if viewer in (attacker, defender):
                             continue
-                        atk_v = combat_display_name(attacker, viewer)
-                        def_v = combat_display_name(defender, viewer)
+                        atk_v = combat_role_name(attacker, viewer, role="attacker")
+                        def_v = combat_role_name(defender, viewer, role="defender")
                         crit_tag = "|yCRITICAL.|n " if is_critical else ""
-                        viewer.msg(f"{crit_tag}{atk_v}'s strike slams into {def_v}'s {body_part}.")
+                        combat_msg(viewer, f"{crit_tag}{atk_v}'s strike slams into {def_v}'s {body_part}.")
             effective_defender.at_damage(
                 attacker,
                 damage,

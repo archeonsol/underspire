@@ -270,13 +270,16 @@ def execute_creature_move(creature, target, move_key, move_spec=None):
             get_armor_protection_for_location,
             compute_armor_reduction,
             degrade_armor,
+            degrade_cyberware_armor,
         )
         damage_type = get_damage_type(weapon_key, None)
-        total_prot, armor_pieces = get_armor_protection_for_location(target, body_part, damage_type)
+        total_prot, armor_pieces, cyberware_pieces = get_armor_protection_for_location(target, body_part, damage_type)
         reduction, absorbed_fully = compute_armor_reduction(total_prot, damage)
         damage = max(0, damage - reduction)
         if armor_pieces and reduction > 0:
             degrade_armor(armor_pieces, damage_type, reduction)
+        if cyberware_pieces and reduction > 0:
+            degrade_cyberware_armor(target, cyberware_pieces, reduction)
     except Exception:
         absorbed_fully = False
 

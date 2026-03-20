@@ -121,6 +121,13 @@ class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, F
     def at_server_start(self):
         """Re-apply cyberware buffs after a server restart (BuffHandler is non-persistent)."""
         super().at_server_start()
+        # Clear stale procedure lock on startup and reconcile unconscious timers/cmdset.
+        self.db.surgery_in_progress = False
+        try:
+            from world.combat.grapple import reconcile_unconscious_state
+            reconcile_unconscious_state(self)
+        except Exception as err:
+            logger.log_trace(f"characters.at_server_start reconcile_unconscious_state: {err}")
         for obj in (self.db.cyberware or []):
             try:
                 obj.reapply_buffs(self)
@@ -147,6 +154,16 @@ class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, F
         installed = list(self.db.cyberware or [])
         if any(type(c) is type(cyberware_obj) for c in installed):
             return f"{type(cyberware_obj).__name__} is already installed."
+        installed_types = {type(c).__name__ for c in installed}
+        for conflict_name in (getattr(cyberware_obj, "conflicts_with", None) or []):
+            if conflict_name in installed_types:
+                return f"Conflicts with installed {conflict_name}."
+        for req_name in (getattr(cyberware_obj, "required_implants", None) or []):
+            if req_name not in installed_types:
+                return f"Requires {req_name} to be installed first."
+        req_any = list(getattr(cyberware_obj, "required_implants_any", None) or [])
+        if req_any and not any(name in installed_types for name in req_any):
+            return f"Requires one of: {', '.join(req_any)}."
         if cyberware_obj.body_mods:
             locked = self.db.locked_descriptions or {}
             for part, (mode, _) in cyberware_obj.body_mods.items():
@@ -192,6 +209,16 @@ class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, F
         obj.on_uninstall(self)
         installed.remove(obj)
         self.db.cyberware = installed
+        # Re-check eye-dependent modules after removals.
+        for cw in installed:
+            if type(cw).__name__ != "TargetingReticle":
+                continue
+            try:
+                if hasattr(cw, "_has_eye_dependency") and not cw._has_eye_dependency(self):
+                    if getattr(cw, "buff_class", None):
+                        self.buffs.remove(cw.buff_class.key)
+            except Exception:
+                pass
         return True
 
     def get_cyberware(self):
@@ -201,6 +228,20 @@ class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, F
     def has_cyberware(self, obj):
         """Return True if the given cyberware object is installed on this character."""
         return obj in (self.db.cyberware or [])
+
+    def get_arc_vulnerability(self):
+        """Sum additional incoming arc damage multiplier from installed cyberware."""
+        total = 0.0
+        for cw in (self.db.cyberware or []):
+            if getattr(cw.db, "malfunctioning", False):
+                continue
+            buff = getattr(cw, "buff_class", None)
+            if buff:
+                vulns = getattr(buff, "vulnerabilities", None) or {}
+            else:
+                vulns = getattr(cw, "vulnerabilities", None) or {}
+            total += float(vulns.get("arc", 0.0))
+        return total
 
     def at_server_reload(self):
         """
@@ -218,6 +259,13 @@ class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, F
                     logger.log_trace("characters.at_server_reload FlatlinedCmdSet: %s" % err)
         except Exception as err:
             logger.log_trace("characters.at_server_reload is_flatlined: %s" % err)
+        # Reload should never leave a stale surgery lock behind.
+        self.db.surgery_in_progress = False
+        try:
+            from world.combat.grapple import reconcile_unconscious_state
+            reconcile_unconscious_state(self)
+        except Exception as err:
+            logger.log_trace("characters.at_server_reload reconcile_unconscious_state: %s" % err)
 
 
 
@@ -250,6 +298,14 @@ class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, F
         Return dict of body part -> description string (for appearance/look).
         Full pipeline: naked → missing → cyberware → injuries → treatment → clothing.
         """
+        current = dict(getattr(self.db, "body_descriptions", None) or {})
+        merged = False
+        for part in _body_parts():
+            if part not in current:
+                current[part] = ""
+                merged = True
+        if merged:
+            self.db.body_descriptions = current
         from world.appearance import get_effective_body_descriptions
         return get_effective_body_descriptions(self)
 

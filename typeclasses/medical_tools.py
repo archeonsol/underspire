@@ -81,6 +81,10 @@ class Bioscanner(MedicalTool):
     def use_for_scan(self, operator, target):
         if not hasattr(target, "db"):
             return False, "Target not scannable; no valid biosigns."
+        from world.medical import BIOSCANNER_MIN_MEDICINE
+        med_level = getattr(operator, "get_skill_level", lambda s: 0)("medicine")
+        if med_level < BIOSCANNER_MIN_MEDICINE:
+            return False, "You lack the training to interpret its readout."
         from world.medical.medical_scanner import get_scanner_readout
         hp = getattr(target, "hp", 0)
         mx = getattr(target, "max_hp", 1)
@@ -316,8 +320,9 @@ class OperatingTable(MedicalTool):
             endurance = int(target.get_stat_level("endurance") or 0)
         else:
             endurance = int((getattr(target.db, "stats", None) or {}).get("endurance", 0) or 0)
-        base = 120
-        return max(30, base - int(endurance * 0.6))
+        # Keep OR sedation long enough for multi-phase surgeries.
+        base = 240
+        return max(90, base - int(endurance * 0.4))
 
     def use_for_sedation(self, operator, target):
         if not hasattr(target, "db"):
@@ -325,7 +330,8 @@ class OperatingTable(MedicalTool):
         patient = self.get_patient()
         if patient != target:
             return False, "Anesthesia can only be administered to the patient on the operating table."
-        if bool(getattr(target.db, "unconscious", False)):
+        now_ts = time.time()
+        if bool(getattr(target.db, "medical_unconscious", False)) and float(getattr(target.db, "medical_unconscious_until", 0.0) or 0.0) > now_ts:
             return False, "Patient is already unconscious."
         delay_secs = random.randint(5, 6)
         target.msg("|mA mask descends. You inhale |wsevoflurane|m vapor as the room starts to blur...|n")
@@ -341,17 +347,55 @@ class OperatingTable(MedicalTool):
         def _induce():
             if self.get_patient() != target or not getattr(target, "db", None):
                 return
-            from world.combat.grapple import set_unconscious_for_seconds
+            from world.combat.grapple import set_medical_unconscious_for_seconds
             ko_secs = self._ko_seconds_for_target(target)
-            set_unconscious_for_seconds(target, ko_secs)
+            set_medical_unconscious_for_seconds(target, ko_secs)
             now = time.time()
             old_until = float(getattr(target.db, "sedated_until", 0.0) or 0.0)
             target.db.sedated_until = max(old_until, now + ko_secs)
+            old_med_until = float(getattr(target.db, "medical_unconscious_until", 0.0) or 0.0)
+            target.db.medical_unconscious = True
+            target.db.medical_unconscious_until = max(old_med_until, now + ko_secs)
             target.db.sedated_by = getattr(operator, "id", None)
             target.msg("|mThe vapor takes hold. Darkness closes in.|n")
 
         delay(delay_secs, _induce)
         return True, "You start sevoflurane induction. Loss of consciousness expected in about %ds." % delay_secs
+
+    def wake_patient(self, operator, target):
+        """
+        Wake the current table patient and clear active sedation markers.
+        """
+        if not hasattr(target, "db"):
+            return False, "That target cannot be awakened."
+        patient = self.get_patient()
+        if patient != target:
+            return False, "You can only wake the patient lying on the operating table."
+
+        was_sedated = float(getattr(target.db, "sedated_until", 0.0) or 0.0) > time.time()
+        was_uncon = bool(getattr(target.db, "medical_unconscious", False))
+        if not was_sedated and not was_uncon:
+            return False, "They are already awake."
+
+        try:
+            from world.combat.grapple import force_wake_medical_unconscious
+            force_wake_medical_unconscious(target, silent=True)
+        except Exception:
+            target.db.medical_unconscious = False
+            target.db.medical_unconscious_until = 0.0
+
+        target.db.sedated_until = 0.0
+        target.db.sedated_by = None
+        target.msg("|mThe chemical haze thins. Your awareness snaps back in a rush.|n")
+        if target.location and hasattr(target.location, "contents_get"):
+            for v in target.location.contents_get(content_type="character"):
+                if v in (target, operator):
+                    continue
+                v.msg("%s rouses %s from the table." % (
+                    operator.get_display_name(v) if hasattr(operator, "get_display_name") else operator.name,
+                    target.get_display_name(v) if hasattr(target, "get_display_name") else target.name,
+                ))
+        return True, "You wake the patient and cut the anesthesia."
 
 
 def get_medical_tools_from_inventory(character):

@@ -14,6 +14,8 @@ INFECTION_CATALOG = {
     "sewer_fever": {"label": "Sewer fever", "base_severity": 2},
     "chrome_interface_necrosis": {"label": "Chrome-interface necrosis", "base_severity": 3},
     "bloodfire_sepsis": {"label": "Bloodfire sepsis", "base_severity": 3},
+    "chrome_rejection_syndrome": {"label": "Chrome rejection syndrome", "base_severity": 2},
+    "neural_rejection_cascade": {"label": "Neural rejection cascade", "base_severity": 3},
 }
 
 INFECTION_STAGE_LABELS = {
@@ -63,6 +65,16 @@ INFECTION_DISEASE_MESSAGES = {
         "onset": ["|mHeat floods your veins. Your pulse hammers out of rhythm.|n"],
         "worsen": ["|rYou drift between chills and burning fever. Sepsis is advancing.|n"],
         "critical": ["|RYour vision tunnels and your pressure crashes. Bloodfire sepsis is terminal without immediate care.|n"],
+    },
+    "chrome_rejection_syndrome": {
+        "onset": ["|mThe tissue around the implant is hot and swollen. The body is fighting the chrome.|n"],
+        "worsen": ["|rInflammation spreads from the interface. The implant site weeps fluid. Rejection is escalating.|n"],
+        "critical": ["|RThe body is winning against the chrome. The implant is being pushed out. Without intervention, it will fail.|n"],
+    },
+    "neural_rejection_cascade": {
+        "onset": ["|mA static ache blooms along neural interface lines. Signal quality drops.|n"],
+        "worsen": ["|rNeural backlash spikes through the implant. Motor control stutters and pain sharpens.|n"],
+        "critical": ["|RNeural rejection cascade is catastrophic. The interface is failing in real time.|n"],
     },
 }
 
@@ -174,6 +186,18 @@ def apply_infection_tick(character):
         if last_tick and (now - last_tick) < INFECTION_STAGE_ADVANCE_SECS:
             continue
         injury["last_infection_tick"] = now
+        if injury.get("cyberware_dbref") and injury.get("type") == "surgery":
+            rejection_base = float(injury.get("rejection_risk", 0.05) or 0.05)
+            age_hours = (now - float(injury.get("created_at", now) or now)) / 3600.0
+            age_decay = max(0.0, 1.0 - (age_hours / 48.0))
+            effective_risk = rejection_base * age_decay
+            if random.random() < (effective_risk * 0.1):
+                if not injury.get("infection_type"):
+                    injury["infection_type"] = "chrome_rejection_syndrome"
+                    injury["infection_stage"] = max(1, int(injury.get("infection_stage", 0) or 0))
+                    msg = _infection_message("chrome_rejection_syndrome", "onset")
+                    if msg and hasattr(character, "msg"):
+                        character.msg(msg)
         quality = int(injury.get("treatment_quality", 0) or 0)
         cleaned_recently = (now - float(injury.get("cleaned_at", 0.0) or 0.0)) < 3600
         risk_gain = 0.04 * env_mod

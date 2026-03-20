@@ -70,6 +70,8 @@ BODY_PART_TO_REGION = {
     "face":           "head",
     "left eye":       "head",
     "right eye":      "head",
+    "left ear":       "head",
+    "right ear":      "head",
     "neck":           "neck",
     "torso":          "torso",
     "back":           "torso",

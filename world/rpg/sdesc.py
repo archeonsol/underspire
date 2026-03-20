@@ -112,7 +112,7 @@ def _is_helmet_item(obj):
     if layer != 5:
         return False
     parts = getattr(obj.db, "covered_parts", None) or []
-    head_face = {"head", "face", "neck"}
+    head_face = {"head", "face", "left ear", "right ear", "neck"}
     return bool(head_face.intersection(set(p.lower() for p in parts)))
 
 
