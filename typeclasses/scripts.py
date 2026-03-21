@@ -118,8 +118,10 @@ class StaminaRegenScript(Script):
         self.persistent = True
 
     def at_repeat(self):
+        from world.profiling import timed_tick
         from world.rpg.stamina import stamina_regen_all
-        stamina_regen_all()
+        with timed_tick("stamina_regen", self.interval):
+            stamina_regen_all()
 
 
 class BleedingTickScript(Script):
@@ -136,8 +138,10 @@ class BleedingTickScript(Script):
         self.persistent = True
 
     def at_repeat(self):
+        from world.profiling import timed_tick
         from world.medical import bleeding_tick_all
-        bleeding_tick_all()
+        with timed_tick("bleeding_tick", self.interval):
+            bleeding_tick_all()
 
 
 class StaffPendingScript(Script):
@@ -169,6 +173,11 @@ class HandsetMessageCleanupScript(Script):
         self.persistent = True
 
     def at_repeat(self):
+        from world.profiling import timed_tick
+        with timed_tick("handset_message_cleanup", self.interval):
+            self._run_cleanup()
+
+    def _run_cleanup(self):
         cutoff = time.time() - 86400
         try:
             from evennia.objects.models import ObjectDB
@@ -199,6 +208,9 @@ class HandsetMessageCleanupScript(Script):
                     continue
             if kept != texts:
                 obj.db.texts = kept
+
+        from world.profiling import snapshot_object_counts
+        snapshot_object_counts({"Handset": len(qs)})
 
 
 # Matrix scripts

@@ -111,6 +111,28 @@ def at_server_start():
             create_channel(key=key, aliases=aliases, desc=desc, locks=locks)
     cleanup_orphaned_combat_tickers()
 
+    # Profiling script
+    if not ScriptDB.objects.filter(db_key="profiling").first():
+        create_script("world.profiling.ProfilingScript", key="profiling", persistent=True)
+
+    # Set ndb baselines (always rebuild — ndb is cleared on every reload)
+    try:
+        import time
+        import resource
+        from evennia import search_script as _ss
+        _prof_results = _ss("profiling")
+        if _prof_results:
+            _prof = _prof_results[0]
+            _prof.ndb.script_count_baseline = ScriptDB.objects.count()
+            _prof.ndb.start_time = time.time()
+            _prof.ndb.rss_baseline_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            _prof.ndb.timing_enabled = False  # Always start with timing off
+        # Clear module-level cache so it re-fetches after reload
+        import world.profiling as _profmod
+        _profmod._SCRIPT = None
+    except Exception:
+        pass
+
 
 def at_server_stop():
     """

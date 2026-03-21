@@ -1253,6 +1253,11 @@ class CmdNoMatch(Command):
     key = CMD_NOMATCH
     locks = "cmd:all()"
 
+    def parse(self):
+        # The entire raw input is the args — no command key to strip.
+        self.args = (self.raw_string or "").strip()
+        self.switches = []
+
     def func(self):
         raw = (self.args or "").strip()
         if raw.startswith("."):

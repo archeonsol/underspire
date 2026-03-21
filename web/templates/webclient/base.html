@@ -1964,6 +1964,34 @@
             programmaticScroll = false;
           }
         }
+        // Single shared rAF loop for all concurrent typewriter animations.
+        // Previously each message spawned its own loop, causing N forced layout
+        // reflows per frame (one scrollToBottom() read of scrollHeight per job).
+        var twQueue = [];
+        var twRafId = null;
+        function twTick() {
+          twRafId = null;
+          var active = false;
+          for (var q = 0; q < twQueue.length; q++) {
+            var job = twQueue[q];
+            if (job.segIdx >= job.segments.length) continue;
+            active = true;
+            for (var i = 0; i < job.charsPerFrame; i++) {
+              if (job.segIdx >= job.segments.length) break;
+              var seg = job.segments[job.segIdx];
+              job.charIdx++;
+              seg.node.textContent = seg.full.slice(0, job.charIdx);
+              if (job.charIdx >= seg.full.length) {
+                job.segIdx++;
+                job.charIdx = 0;
+              }
+            }
+          }
+          scrollToBottom();
+          if (active) {
+            twRafId = requestAnimationFrame(twTick);
+          }
+        }
         function typewriter($el) {
           $output.append($el);
           if (!settings || !settings.msgAnim) {
@@ -1994,25 +2022,10 @@
           }
           // Target 200ms at ~60fps = ~12 frames
           var charsPerFrame = Math.max(1, Math.ceil(totalChars / 18));
-          var segIdx = 0;
-          var charIdx = 0;
-          function tick() {
-            for (var i = 0; i < charsPerFrame; i++) {
-              if (segIdx >= segments.length) break;
-              var seg = segments[segIdx];
-              charIdx++;
-              seg.node.textContent = seg.full.slice(0, charIdx);
-              if (charIdx >= seg.full.length) {
-                segIdx++;
-                charIdx = 0;
-              }
-            }
-            scrollToBottom();
-            if (segIdx < segments.length) {
-              requestAnimationFrame(tick);
-            }
+          twQueue.push({ segments: segments, segIdx: 0, charIdx: 0, charsPerFrame: charsPerFrame });
+          if (!twRafId) {
+            twRafId = requestAnimationFrame(twTick);
           }
-          requestAnimationFrame(tick);
         }
 
         // ═══════════════════════════════════════

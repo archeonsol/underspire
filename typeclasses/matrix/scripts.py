@@ -35,6 +35,11 @@ class MatrixCleanupScript(DefaultScript):
 
     def at_repeat(self):
         """Called every interval. Cleans up empty ephemeral node clusters."""
+        from world.profiling import timed_tick
+        with timed_tick("matrix_cleanup", self.interval):
+            self._run_cleanup()
+
+    def _run_cleanup(self):
         from typeclasses.matrix.rooms import MatrixNode, Room
         from typeclasses.matrix.avatars import MatrixAvatar
 
@@ -115,6 +120,9 @@ class MatrixCleanupScript(DefaultScript):
             from evennia.utils import logger
             logger.log_info(f"Matrix cleanup: deleted {deleted_count} empty ephemeral node(s)")
 
+        from world.profiling import snapshot_object_counts
+        snapshot_object_counts({"MatrixNode": len(all_nodes) - deleted_count})
+
     def at_start(self):
         """Called when script starts (including after server restart)."""
         from evennia.utils import logger
@@ -145,6 +153,11 @@ class MatrixConnectionScript(DefaultScript):
 
     def at_repeat(self):
         """Called every interval. Checks all active dive and teleop connections."""
+        from world.profiling import timed_tick
+        with timed_tick("matrix_connection_check", self.interval):
+            self._run_check()
+
+    def _run_check(self):
         from evennia.objects.models import ObjectDB
 
         # Check dive rig connections

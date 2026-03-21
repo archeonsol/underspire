@@ -2122,6 +2122,193 @@ class StaffCharDelete(CmdCharDelete):
 
     locks = "cmd:perm(Builder)"
 
+class CmdProfiling(Command):
+    """
+    View server performance metrics and toggle profiling modes.
+
+    Usage:
+      @profiling              view current metrics
+      @profiling/timing       toggle wall-clock and DB query timing on/off
+      @profiling/reset        clear all aggregates (baselines are kept)
+
+    Always-on metrics (command rate, object counts, script ticks, RSS memory)
+    are shown regardless of timing mode. The /timing switch enables per-command
+    wall-clock measurement and DB query counting; it sets settings.DEBUG=True
+    while active, which has a small memory cost per query — disable when done.
+
+    Budget thresholds are calibrated for 300 concurrent users.
+    """
+    key = "@profiling"
+    aliases = ["@prof"]
+    locks = "cmd:perm(Builder)"
+    help_category = "Staff"
+
+    def func(self):
+        caller = self.caller
+        from world.profiling import get_profiling_script, BUDGETS
+
+        script = get_profiling_script()
+        if not script:
+            caller.msg("|rProfiler script not found. Try @reload or check at_server_start.|n")
+            return
+
+        if "timing" in self.switches:
+            self._toggle_timing(caller, script)
+            return
+
+        if "reset" in self.switches:
+            script.ndb.cmd_counts = {}
+            script.ndb.cmd_rate_buckets = {}
+            script.ndb.script_ticks = {}
+            caller.msg("|gProfiler aggregates cleared.|n Baselines retained.")
+            return
+
+        self._show(caller, script)
+
+    def _toggle_timing(self, caller, script):
+        current = bool(script.ndb.timing_enabled)
+        new_state = not current
+        script.ndb.timing_enabled = new_state
+        if new_state:
+            try:
+                from django.conf import settings
+                settings.DEBUG = True
+            except Exception:
+                pass
+            caller.msg("|gTiming enabled.|n settings.DEBUG=True — query counting active. Disable when done.")
+        else:
+            try:
+                from django.conf import settings
+                from django.db import reset_queries
+                settings.DEBUG = False
+                reset_queries()
+            except Exception:
+                pass
+            caller.msg("|yTiming disabled.|n settings.DEBUG restored to False.")
+
+    def _show(self, caller, script):
+        import time
+        import sys
+        from world.profiling import get_cmd_rate_1min, get_p95, BUDGETS
+        from world.ui_utils import fade_rule
+        from evennia.utils.evtable import EvTable
+
+        timing = bool(script.ndb.timing_enabled)
+        start_time = script.ndb.start_time or time.time()
+        uptime_s = int(time.time() - start_time)
+        h, m = divmod(uptime_s // 60, 60)
+        try:
+            from evennia.server.sessionhandler import SESSION_HANDLER
+            session_count = SESSION_HANDLER.count()
+        except Exception:
+            session_count = "?"
+
+        w = 65
+        rule = "|c" + fade_rule(w - 2, "=") + "|n"
+        timing_label = "|gON|n" if timing else "|yOFF|n"
+        caller.msg(rule)
+        caller.msg(f"|wServer Profiling|n   Uptime: {h}h {m}m | Sessions: {session_count} | Timing: {timing_label}")
+        caller.msg(rule)
+
+        # --- Always-on ---
+        caller.msg("|w[Always-On]|n")
+
+        rate = get_cmd_rate_1min(script)
+        budget_rate = BUDGETS["cmd_rate_per_min"]
+        rate_status = "|gOK|n" if rate <= budget_rate else "|rOVER|n"
+        caller.msg(f"  Cmd rate (1m):   {rate:<6}  budget: {budget_rate}/min   {rate_status}")
+
+        try:
+            from evennia.scripts.models import ScriptDB
+            scount = ScriptDB.objects.count()
+            baseline = script.ndb.script_count_baseline or scount
+            sdelta = scount - baseline
+            if sdelta == 0:
+                s_status = "|gOK|n"
+            elif sdelta > 0:
+                s_status = f"|rCHANGED (+{sdelta})|n"
+            else:
+                s_status = f"|yCHANGED ({sdelta})|n"
+            caller.msg(f"  ScriptDB count:  {scount:<6}  baseline: {baseline}   {s_status}")
+        except Exception:
+            caller.msg("  ScriptDB count:  |yunavailable|n")
+
+        try:
+            import resource as _res
+            rss_raw = _res.getrusage(_res.RUSAGE_SELF).ru_maxrss
+            baseline_raw = script.ndb.rss_baseline_kb or rss_raw
+            # macOS: ru_maxrss is bytes; Linux: kilobytes
+            divisor = (1024 * 1024) if sys.platform == "darwin" else 1024
+            rss_mb = rss_raw / divisor
+            base_mb = baseline_raw / divisor
+            delta_mb = rss_mb - base_mb
+            sign = "+" if delta_mb >= 0 else ""
+            caller.msg(f"  RSS memory:      {rss_mb:.0f} MB   baseline: {base_mb:.0f} MB   ({sign}{delta_mb:.0f} MB)")
+        except Exception:
+            caller.msg("  RSS memory:      |yunavailable|n")
+
+        # --- Object counts (cached from cleanup cycles) ---
+        caller.msg("\n|w[Object Counts]|n  |x(updated each cleanup cycle)|n")
+        obj_counts = script.ndb.object_counts or {}
+        if not obj_counts:
+            caller.msg("  |yNo snapshot yet — waiting for first cleanup cycle.|n")
+        else:
+            for name, count in sorted(obj_counts.items()):
+                caller.msg(f"  {name:<30} {count}")
+
+        # --- Script ticks ---
+        caller.msg("\n|w[Script Ticks]|n")
+        ticks = script.ndb.script_ticks or {}
+        if not ticks:
+            caller.msg("  |yNo tick data yet — waiting for first script cycle.|n")
+        else:
+            for key, entry in sorted(ticks.items()):
+                interval_s = entry.get("interval_s") or 1
+                budget_ms = interval_s * BUDGETS["script_tick_pct"] * 1000
+                last_ms = entry.get("last_ms", 0.0)
+                max_ms = entry.get("max_ms", 0.0)
+                calls = entry.get("calls", 0)
+                t_status = "|gOK|n" if max_ms < budget_ms else "|rWARN|n"
+                caller.msg(
+                    f"  {key:<25} last: {last_ms:6.1f}ms  max: {max_ms:6.1f}ms"
+                    f"  calls: {calls:<4}  budget: <{budget_ms:.0f}ms  {t_status}"
+                )
+
+        # --- Command timings ---
+        caller.msg("\n|w[Command Timings]|n")
+        if not timing:
+            caller.msg("  |yOFF — use @profiling/timing to enable.|n")
+        else:
+            counts = script.ndb.cmd_counts or {}
+            if not counts:
+                caller.msg("  |yNo data yet — run some commands first.|n")
+            else:
+                t = EvTable(
+                    "cmd", "calls", "avg_ms", "p95_ms", "max_ms", "queries", "status",
+                    border="none", pad_width=1,
+                )
+                for cmd_key, entry in sorted(counts.items(), key=lambda x: -x[1]["calls"]):
+                    calls = entry["calls"]
+                    avg_ms = entry["total_ms"] / calls if calls else 0.0
+                    max_ms = entry["max_ms"]
+                    p95_ms = get_p95(entry.get("ms_samples", []))
+                    avg_q = entry["total_queries"] / calls if calls else 0.0
+                    if max_ms > BUDGETS["cmd_max_ms"] or p95_ms > BUDGETS["cmd_p95_ms"]:
+                        st = "|rCRIT|n"
+                    elif avg_ms > BUDGETS["cmd_avg_ms"] or avg_q > BUDGETS["cmd_queries_warn"]:
+                        st = "|yWARN|n"
+                    else:
+                        st = "|gOK|n"
+                    t.add_row(
+                        cmd_key, calls,
+                        f"{avg_ms:.1f}", f"{p95_ms:.1f}", f"{max_ms:.1f}",
+                        f"{avg_q:.1f}", st,
+                    )
+                caller.msg(str(t))
+
+        caller.msg(rule)
+
+
 class CmdMusic(Command):
     """
     Play a background track via YouTube ID.

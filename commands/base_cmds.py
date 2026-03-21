@@ -30,8 +30,23 @@ class Command(BaseCommand):
     """
     Base command. Blocks all commands when character is flatlined (dying) or dead except for Admins/Builders.
     """
+    def parse(self):
+        """Extract switches and args from raw_string. Sets self.switches (list) and self.args (str)."""
+        raw = self.raw_string or ""
+        self.switches = []
+        parts = raw.split(None, 1)
+        if parts:
+            segments = parts[0].split("/")
+            if len(segments) > 1:
+                self.switches = [s.lower() for s in segments[1:] if s]
+            self.args = parts[1].strip() if len(parts) > 1 else ""
+        else:
+            self.args = ""
+
     def at_pre_cmd(self):
         """Block commands if character is flatlined (dying) or permanently dead."""
+        from world.profiling import record_command_start
+        record_command_start(self)
         caller = self.caller
         if not caller:
             return super().at_pre_cmd()
@@ -42,6 +57,11 @@ class Command(BaseCommand):
             caller.msg(msg)
             return True
         return super().at_pre_cmd()
+
+    def at_post_cmd(self):
+        from world.profiling import record_command_end
+        record_command_end(self)
+        return super().at_post_cmd()
 
 
 class CmdLook(DefaultCmdLook):
@@ -56,6 +76,8 @@ class CmdLook(DefaultCmdLook):
 
     def at_pre_cmd(self):
         """Block look when flatlined/dead so state-specific cmdset message can show."""
+        from world.profiling import record_command_start
+        record_command_start(self)
         caller = self.caller
         if not caller:
             return super().at_pre_cmd() if hasattr(super(), "at_pre_cmd") else None
@@ -66,6 +88,10 @@ class CmdLook(DefaultCmdLook):
             caller.msg(msg)
             return True
         return super().at_pre_cmd() if hasattr(super(), "at_pre_cmd") else None
+
+    def at_post_cmd(self):
+        from world.profiling import record_command_end
+        record_command_end(self)
 
     def func(self):
         caller = self.caller
@@ -353,6 +379,8 @@ class CmdGet(DefaultCmdGet if DefaultCmdGet else BaseCommand):
 
     def at_pre_cmd(self):
         """Block when flatlined/dead (CmdGet does not inherit from Command)."""
+        from world.profiling import record_command_start
+        record_command_start(self)
         char = _command_character(self)
         from world.death import character_can_act
         can_act, msg = character_can_act(char, allow_builders=True)
@@ -360,6 +388,10 @@ class CmdGet(DefaultCmdGet if DefaultCmdGet else BaseCommand):
             self.caller.msg(msg)
             return True
         return super().at_pre_cmd() if hasattr(super(), "at_pre_cmd") else None
+
+    def at_post_cmd(self):
+        from world.profiling import record_command_end
+        record_command_end(self)
 
     def func(self):
         caller = self.caller

@@ -380,34 +380,6 @@ class CmdMatrixDig(Command):
     locks = "cmd:perm(Builder)"
     help_category = "Building"
 
-    def parse(self):
-        """
-        Parse the command to extract switches manually.
-        Evennia's default parser doesn't seem to be picking them up.
-        """
-        super().parse()
-
-        # Extract switches from raw_string
-        # Format: "mdig/switch1/switch2 args"
-        raw = self.raw_string or ""
-        self.switches = []
-
-        # Find the command and switches
-        parts = raw.split(None, 1)  # Split on first whitespace
-        if parts:
-            cmd_part = parts[0]  # e.g., "mdig/force/tel"
-            # Split by / to get switches
-            segments = cmd_part.split('/')
-            if len(segments) > 1:
-                # First segment is the command, rest are switches
-                self.switches = segments[1:]
-
-            # Update args to not include switches
-            if len(parts) > 1:
-                self.args = parts[1]
-            else:
-                self.args = ""
-
     def func(self):
         caller = self.caller
         args = (self.args or "").strip()
@@ -618,37 +590,10 @@ class CmdMatrixLink(Command):
     help_category = "Building"
     switch_options = ("clear",)
 
-    def parse(self):
-        """
-        Parse the command to extract switches manually.
-        """
-        super().parse()
-
-        # Extract switches from raw_string
-        # Format: "mlink/switch args"
-        raw = self.raw_string or ""
-        self.switches = []
-
-        # Find the command and switches
-        parts = raw.split(None, 1)  # Split on first whitespace
-        if parts:
-            cmd_part = parts[0]  # e.g., "mlink/clear"
-            # Split by / to get switches
-            segments = cmd_part.split('/')
-            if len(segments) > 1:
-                # First segment is the command, rest are switches
-                self.switches = segments[1:]
-
-            # Update args to not include switches
-            if len(parts) > 1:
-                self.args = parts[1]
-            else:
-                self.args = ""
-
     def func(self):
         caller = self.caller
         args = (self.args or "").strip()
-        clear = "clear" in getattr(self, "switches", [])
+        clear = "clear" in self.switches
 
         loc = caller.location
         if not loc:

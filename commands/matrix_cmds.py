@@ -407,26 +407,6 @@ class CmdMacl(Command):
     locks = ADMIN_LOCK
     help_category = "Building"
 
-    def parse(self):
-        """Parse switches from raw_string."""
-        super().parse()
-
-        raw = self.raw_string or ""
-        self.switches = []
-
-        # Find switches in format: macl/grant/revoke args
-        parts = raw.split(None, 1)
-        if parts:
-            cmd_part = parts[0]
-            segments = cmd_part.split('/')
-            if len(segments) > 1:
-                self.switches = segments[1:]
-
-            if len(parts) > 1:
-                self.args = parts[1]
-            else:
-                self.args = ""
-
     def func(self):
         caller = self.caller
 

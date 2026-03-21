@@ -33,17 +33,6 @@ class CmdCyberware(Command):
     locks = ADMIN_LOCK
     help_category = "Staff"
 
-    def parse(self):
-        super().parse()
-        raw = self.raw_string or ""
-        self.switches = []
-        parts = raw.split(None, 1)
-        if parts:
-            segments = parts[0].split("/")
-            if len(segments) > 1:
-                self.switches = segments[1:]
-            self.args = parts[1] if len(parts) > 1 else ""
-
     def func(self):
         caller = self.caller
 
