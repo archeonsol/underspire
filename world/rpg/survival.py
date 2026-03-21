@@ -64,8 +64,9 @@ def apply_move_hunger_thirst(character, from_room, to_room):
     t_cost = max(0, int(round(THIRST_MOVE_COST * scale)))
 
     cyber = list(getattr(character.db, "cyberware", None) or [])
-    has_metabolic = any(type(cw).__name__ == "MetabolicRegulator" and not bool(getattr(cw.db, "malfunctioning", False)) for cw in cyber)
-    has_chrome_stomach = any(type(cw).__name__ == "ChromeStomach" and not bool(getattr(cw.db, "malfunctioning", False)) for cw in cyber)
+    from typeclasses.cyberware_catalog import MetabolicRegulator, ChromeStomach
+    has_metabolic = any(isinstance(cw, MetabolicRegulator) and not bool(getattr(cw.db, "malfunctioning", False)) for cw in cyber)
+    has_chrome_stomach = any(isinstance(cw, ChromeStomach) and not bool(getattr(cw.db, "malfunctioning", False)) for cw in cyber)
     if has_metabolic or has_chrome_stomach:
         h_cost = max(0, int(round(h_cost * 0.5)))
     if has_metabolic:

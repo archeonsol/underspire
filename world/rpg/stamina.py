@@ -92,8 +92,9 @@ def get_regen_rate(character):
             pass
 
         cyber = list(getattr(character.db, "cyberware", None) or [])
-        has_cardio = any(type(cw).__name__ == "CardioPulmonaryBooster" and not bool(getattr(cw.db, "malfunctioning", False)) for cw in cyber)
-        has_metabolic = any(type(cw).__name__ == "MetabolicRegulator" and not bool(getattr(cw.db, "malfunctioning", False)) for cw in cyber)
+        from typeclasses.cyberware_catalog import CardioPulmonaryBooster, MetabolicRegulator
+        has_cardio = any(isinstance(cw, CardioPulmonaryBooster) and not bool(getattr(cw.db, "malfunctioning", False)) for cw in cyber)
+        has_metabolic = any(isinstance(cw, MetabolicRegulator) and not bool(getattr(cw.db, "malfunctioning", False)) for cw in cyber)
         if has_cardio:
             rate += 2
         if has_metabolic:

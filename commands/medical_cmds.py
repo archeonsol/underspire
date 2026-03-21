@@ -602,7 +602,8 @@ class CmdSurgery(Command):
                 if table.get_patient() != target:
                     caller.msg("That patient is not on the operating table.")
                     return
-                if type(cw).__name__ == "SkinWeave":
+                from typeclasses.cyberware_catalog import SkinWeave
+                if isinstance(cw, SkinWeave):
                     try:
                         from typeclasses.cyberware_catalog import SKINWEAVE_EXTENDED_COVERAGE
                         parts = {"torso", "face"}

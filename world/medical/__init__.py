@@ -472,7 +472,8 @@ def apply_trauma(character, body_part, damage, is_critical=False, weapon_key="fi
                 _apply_cyberware_damage(cw, effective_damage)
                 result["chrome_damage"] = (cw, effective_damage, cw.db.chrome_hp)
                 # Memory core instability under heavy damage can trigger flashback episodes.
-                if type(cw).__name__ == "MemoryCore":
+                from typeclasses.cyberware_catalog import MemoryCore
+                if isinstance(cw, MemoryCore):
                     mx = int(getattr(cw.db, "chrome_max_hp", getattr(cw, "chrome_max_hp", 25)) or 25)
                     if cw.db.chrome_hp < (mx * 0.5):
                         if random.random() < 0.35:
@@ -488,7 +489,8 @@ def apply_trauma(character, body_part, damage, is_critical=False, weapon_key="fi
                 if cw.db.chrome_hp <= 0:
                     result["chrome_destroyed"] = cw
                     # Cardiopulmonary failure cascades into immediate stamina collapse.
-                    if type(cw).__name__ == "CardioPulmonaryBooster":
+                    from typeclasses.cyberware_catalog import CardioPulmonaryBooster
+                    if isinstance(cw, CardioPulmonaryBooster):
                         character.db.current_stamina = 0
         if damage_type == "arc" and effective_damage >= 12:
             neural_chrome = [
@@ -519,10 +521,10 @@ def apply_trauma(character, body_part, damage, is_critical=False, weapon_key="fi
         for cw in (character.db.cyberware or []):
             if getattr(cw.db, "malfunctioning", False):
                 continue
-            cname = type(cw).__name__
-            if cname == "WiredReflexes" and random.random() < 0.10:
+            from typeclasses.cyberware_catalog import WiredReflexes, SynapticAccelerator
+            if isinstance(cw, WiredReflexes) and random.random() < 0.10:
                 character.db.combat_skip_next_turn = True
-            if cname == "SynapticAccelerator":
+            if isinstance(cw, SynapticAccelerator):
                 until = time.time() + 60
                 if float(getattr(character.db, "synaptic_arc_debuff_until", 0.0) or 0.0) < until:
                     character.db.synaptic_arc_debuff_until = until
@@ -607,7 +609,8 @@ def apply_trauma(character, body_part, damage, is_critical=False, weapon_key="fi
     base_fracture = 0.04 + damage / 80 + (0.12 if is_critical else 0)
     fracture_chance = min(0.55, base_fracture * rehit_bonus * fracture_mult)
     # Bone lacing lowers fracture likelihood.
-    has_bone_lacing = any(type(cw).__name__ == "BoneLacing" and not bool(getattr(cw.db, "malfunctioning", False)) for cw in (character.db.cyberware or []))
+    from typeclasses.cyberware_catalog import BoneLacing
+    has_bone_lacing = any(isinstance(cw, BoneLacing) and not bool(getattr(cw.db, "malfunctioning", False)) for cw in (character.db.cyberware or []))
     if has_bone_lacing:
         fracture_chance *= 0.6
     if bones and damage >= 10 and random.random() < fracture_chance:
@@ -641,7 +644,8 @@ def apply_trauma(character, body_part, damage, is_critical=False, weapon_key="fi
         rate_map = {"capillary": 1.0, "venous": 2.0, "arterial": 3.0}
         base_rate = rate_map.get(vessel_type, 1.0)
         added = float(delta) * (1.2 if is_critical else 1.0)
-        has_hemo_reg = any(type(cw).__name__ == "HemostaticRegulator" and not bool(getattr(cw.db, "malfunctioning", False)) for cw in (character.db.cyberware or []))
+        from typeclasses.cyberware_catalog import HemostaticRegulator
+        has_hemo_reg = any(isinstance(cw, HemostaticRegulator) and not bool(getattr(cw.db, "malfunctioning", False)) for cw in (character.db.cyberware or []))
         if has_hemo_reg:
             base_rate = max(0.0, base_rate - 1.0)
         wound["bleed_rate"] = max(float(wound.get("bleed_rate", 0.0) or 0.0), base_rate + added)

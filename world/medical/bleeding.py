@@ -15,7 +15,8 @@ def get_bleeding_drain_per_tick(character):
     if level == 0:
         return 0
     drain = BLEEDING_DRAIN_PER_TICK[min(level - 1, 3)]
-    has_hemo_reg = any(type(cw).__name__ == "HemostaticRegulator" and not bool(getattr(cw.db, "malfunctioning", False)) for cw in (getattr(character.db, "cyberware", None) or []))
+    from typeclasses.cyberware_catalog import HemostaticRegulator
+    has_hemo_reg = any(isinstance(cw, HemostaticRegulator) and not bool(getattr(cw.db, "malfunctioning", False)) for cw in (getattr(character.db, "cyberware", None) or []))
     if has_hemo_reg:
         drain = max(0, int(round(drain * 0.7)))
     return drain
@@ -113,7 +114,8 @@ def apply_bleeding_tick(character):
         return False
     character.db.current_hp = max(0, (current or 0) - drain)
     if character.location:
-        has_pain_editor = any(type(cw).__name__ == "PainEditor" and not bool(getattr(cw.db, "malfunctioning", False)) for cw in (getattr(character.db, "cyberware", None) or []))
+        from typeclasses.cyberware_catalog import PainEditor
+        has_pain_editor = any(isinstance(cw, PainEditor) and not bool(getattr(cw.db, "malfunctioning", False)) for cw in (getattr(character.db, "cyberware", None) or []))
         if not has_pain_editor:
             character.msg("|rYou're bleeding.|n")
         character.location.msg_contents(

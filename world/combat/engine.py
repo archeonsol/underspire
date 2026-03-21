@@ -80,8 +80,9 @@ def _allowed_attack_indices(skill_level):
 
 
 def _has_deployed_claws(character):
+    from typeclasses.cyberware_catalog import RetractableClaws
     for cw in (getattr(character.db, "cyberware", None) or []):
-        if type(cw).__name__ == "RetractableClaws" and bool(getattr(cw.db, "claws_deployed", False)) and not bool(
+        if isinstance(cw, RetractableClaws) and bool(getattr(cw.db, "claws_deployed", False)) and not bool(
             getattr(cw.db, "malfunctioning", False)
         ):
             return True
@@ -782,7 +783,8 @@ def execute_combat_turn(attacker=None, defender=None, attack_type=None, **kwargs
                     weapon_obj=wielded_obj,
                 )
                 combat_msg(attacker, f"{main_atk} {flavor_atk}".strip())
-                pain_editor = any(type(cw).__name__ == "PainEditor" and not bool(getattr(cw.db, "malfunctioning", False)) for cw in (getattr(defender.db, "cyberware", None) or []))
+                from typeclasses.cyberware_catalog import PainEditor
+                pain_editor = any(isinstance(cw, PainEditor) and not bool(getattr(cw.db, "malfunctioning", False)) for cw in (getattr(defender.db, "cyberware", None) or []))
                 if pain_editor:
                     combat_msg(defender, f"|xDamage registered at {body_part}. You feel nothing.|n")
                 else:

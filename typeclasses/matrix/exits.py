@@ -45,11 +45,18 @@ class MatrixExit(Exit):
             super().at_traverse(traversing_object, destination)
             return
 
-        # TODO: Security checks for future implementation
-        # if self.db.security_clearance > 0:
-        #     # Check traversing_object has required clearance
-        #     # Alert ICE if unauthorized
-        #     pass
+        # ACL enforcement: if this exit guards a device, require ACL membership
+        guarded_device_pk = getattr(self.db, 'guarded_device_pk', None)
+        if guarded_device_pk and getattr(self.db, 'security_clearance', 0) > 0:
+            try:
+                from evennia import ObjectDB
+                device = ObjectDB.objects.get(id=guarded_device_pk)
+            except Exception:
+                device = None
+            if device and hasattr(device, 'check_acl'):
+                if device.check_acl(traversing_object) <= 0:
+                    traversing_object.msg("|rAccess denied. You are not authorised on this device.|n")
+                    return
 
         # Matrix navigation delay - fast but not instant
         # Base delay: 1.0s, reduced by decking skill

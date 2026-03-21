@@ -35,7 +35,8 @@ class MedicalMixin:
         end_display = self.get_display_stat("endurance")
         base = 20 + (end_display * 5)
         cyber = list(getattr(self.db, "cyberware", None) or [])
-        has_cardio = any(type(cw).__name__ == "CardioPulmonaryBooster" and not bool(getattr(cw.db, "malfunctioning", False)) for cw in cyber)
+        from typeclasses.cyberware_catalog import CardioPulmonaryBooster
+        has_cardio = any(isinstance(cw, CardioPulmonaryBooster) and not bool(getattr(cw.db, "malfunctioning", False)) for cw in cyber)
         if has_cardio:
             base += 15
         return base
