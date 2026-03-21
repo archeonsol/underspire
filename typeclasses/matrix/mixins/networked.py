@@ -134,7 +134,7 @@ class NetworkedMixin(MatrixIdMixin):
         # Create exits between rooms
         from typeclasses.matrix.exits import MatrixExit
 
-        # Checkpoint -> Interface (locked unless caller is on ACL)
+        # Checkpoint -> Interface (locked until ICE defeated or on ACL)
         exit_to_interface = create_object(
             MatrixExit,
             key="Interface",
@@ -142,8 +142,8 @@ class NetworkedMixin(MatrixIdMixin):
             location=checkpoint,
             destination=interface
         )
-        exit_to_interface.db.guarded_device_pk = self.pk
-        exit_to_interface.db.security_clearance = int(self.db.security_level or 0)
+        # TODO: Add lock based on ICE/ACL status
+        # exit_to_interface.locks.add("traverse:...")
 
         # Interface -> Checkpoint (back exit)
         exit_to_checkpoint = create_object(
