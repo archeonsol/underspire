@@ -100,12 +100,6 @@ class CmdJackOut(Command):
             caller.msg("Error: Cannot locate your physical body.")
             return
 
-        # Block jackout during combat — the combat ticker handles forced disconnects
-        from world.combat.utils import is_in_combat
-        if is_in_combat(character):
-            caller.msg("|rYou cannot jack out while in combat.|n")
-            return
-
         # Perform clean logout via the rig
         entry_device.disconnect(
             character,
