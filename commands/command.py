@@ -47,13 +47,13 @@ from commands.cover_commands import (
 # medical_cmds
 from commands.medical_cmds import (
     CmdHt,
-    CmdUse,
     CmdApply,
     CmdStabilize,
     CmdSedate,
     CmdSurgery,
     CmdDefib,
 )
+from commands.use_cmds import CmdUse
 
 # scavenge_cmds
 from commands.scavenge_cmds import (
@@ -122,7 +122,6 @@ from commands.roleplay_cmds import (
     CmdEmote,
     CmdNoMatch,
     CmdTease,
-    CmdDescribeBodypart,
     CmdDescribeMeAs,
     CmdVoice,
     CmdLanguage,
@@ -334,7 +333,6 @@ __all__ = [
     "CmdEmote",
     "CmdNoMatch",
     "CmdTease",
-    "CmdDescribeBodypart",
     "CmdDescribeMeAs",
     "CmdVoice",
     "CmdLanguage",

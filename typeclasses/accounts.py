@@ -165,9 +165,11 @@ class Account(DefaultAccount):
 
     @property
     def account_has_clone(self):
-        """True if the dead character (corpse) has a stored clone/shard. Used by CmdGoShard lock when on Account cmdset."""
+        """True if corpse has a shard or account has clone_snapshot_backup. Used by CmdGoShard lock when on Account cmdset."""
         corpse = getattr(self.db, "dead_character_corpse", None)
-        return bool(corpse and getattr(corpse, "db", None) and getattr(corpse.db, "clone_snapshot", None))
+        if corpse and getattr(corpse, "db", None) and getattr(corpse.db, "clone_snapshot", None):
+            return True
+        return bool(getattr(self.db, "clone_snapshot_backup", None))
 
     def at_post_login(self, session=None, **kwargs):
         """

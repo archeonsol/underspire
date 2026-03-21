@@ -316,9 +316,16 @@ def locking_cyberware_for_part(character, part):
     return None
 
 
-def apply_skin_tone_to_bio_text(character, raw_text):
+def apply_skin_tone_to_bio_text(character, raw_text, part=None):
     """Wrap biological description text in skin tone color."""
     if not raw_text or not str(raw_text).strip():
+        return raw_text
+    race = (getattr(character.db, "race", None) or "human") if hasattr(character, "db") else "human"
+    if (
+        race == "splicer"
+        and part in ("tail", "left ear", "right ear")
+        and _text_has_markup(raw_text)
+    ):
         return raw_text
     code = getattr(character.db, "skin_tone_code", None) if hasattr(character, "db") else None
     if not code:

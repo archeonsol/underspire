@@ -46,7 +46,6 @@ class CmdStaffSheet(Command):
         _db = target.db
         stats = _db.stats or {}
         skills = _db.skills or {}
-        bg = _db.background or "Unknown"
         try:
             hp_str = "{} / {}".format(target.hp, target.max_hp)
             st_str = "{} / {}".format(target.stamina, target.max_stamina)
@@ -62,7 +61,18 @@ class CmdStaffSheet(Command):
         npc_tag = " |r[NPC]|n" if getattr(_db, "is_npc", False) else ""
         output = line + "\n"
         output += "|c||n  |W STAFF READOUT |w {}|n{}\n".format((target.name or "Unknown"), npc_tag)
-        output += "|c|||n  |wOrigin|n " + bg + "\n"
+        rk = (getattr(_db, "race", None) or "human").lower()
+        if rk == "splicer":
+            an = (getattr(_db, "splicer_animal", None) or "unknown").title()
+            output += "|c|||n  |wRace|n Splicer (" + an + ")\n"
+        else:
+            output += "|c|||n  |wRace|n Human\n"
+        try:
+            ay = getattr(_db, "age_years", None)
+            if ay is not None:
+                output += "|c|||n  |wAge|n {} years\n".format(int(ay))
+        except Exception as e:
+            logger.log_trace("staff_cmds.CmdStaffSheet age: %s" % e)
         output += thin + "\n"
         output += "|c|||n  |rVitality|n " + hp_str.ljust(12) + " |yStamina|n " + st_str.ljust(12) + " |gLoad|n " + load_str + "\n"
         output += thin + "\n"
@@ -1062,6 +1072,39 @@ class CmdSpawnOR(Command):
             caller.msg("|gOperating table created here. Patients: |wlie on operating table|n. Surgeon: |wsurgery <organ>|n (patient must be on the table).|n")
         except Exception as e:
             caller.msg(f"|rCould not create operating table: {e}|n")
+
+
+class CmdSpawnCyberwareStation(Command):
+    """
+    Create a cyberware customization station in the current room. Builder/Admin only.
+    Put cyberware in it, then use it to customize color and descriptions (requires EE 75).
+    Usage: spawnstation [name]
+    """
+    key = "spawnstation"
+    aliases = ["spawn station", "spawn cyberware station", "spawn chromework station"]
+    locks = "cmd:perm(Builder)"
+    help_category = "Admin"
+
+    def func(self):
+        caller = self.caller
+        name = (self.args or "cyberware customization station").strip()
+        loc = caller.location
+        if not loc:
+            caller.msg("You need to be in a room to spawn a station.")
+            return
+        from evennia.utils.create import create_object
+        try:
+            obj = create_object(
+                "typeclasses.cyberware_station.CyberwareCustomizationStation",
+                key=name,
+                location=loc,
+            )
+            caller.msg(
+                f"|gCyberware customization station |w{name}|n created here. "
+                f"|wPut|n cyberware in it, then |wuse {name}|n to customize.|n"
+            )
+        except Exception as e:
+            caller.msg(f"|rCould not create station: {e}|n")
 
 
 class CmdSpawnSeat(Command):

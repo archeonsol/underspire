@@ -83,6 +83,25 @@ def _log_limbo_error(step, err):
         pass
 
 
+def _log_death_step(step, err):
+    """Log make_permanent_death sub-step failures."""
+    try:
+        from evennia import logger
+        logger.log_err("death.make_permanent_death %s: %s" % (step, err))
+    except Exception:
+        pass
+
+
+def account_has_stored_clone(account):
+    """True if corpse carries clone_snapshot or account has clone_snapshot_backup."""
+    if not account or not getattr(account, "db", None):
+        return False
+    corpse = getattr(account.db, "dead_character_corpse", None)
+    if corpse and getattr(corpse, "db", None) and getattr(corpse.db, "clone_snapshot", None):
+        return True
+    return bool(getattr(account.db, "clone_snapshot_backup", None))
+
+
 def is_character_multi_puppeted(character):
     """True if character is in an account's multi-puppet set and that account has a session (staff multi-puppeting)."""
     if not character or not getattr(character, "db", None):
@@ -257,6 +276,8 @@ def _flatline_to_permanent_callback(character_id):
         return
     if not is_flatlined(character):
         return
+    if is_permanently_dead(character):
+        return
     make_permanent_death(character, attacker=None, reason="time")
 
 
@@ -326,62 +347,212 @@ def _get_or_create_spirit(account, limbo):
     return spirit
 
 
-def _send_account_to_limbo(account, sessions, dead_character_name):
-    """Puppet the account's spirit in the Death Lobby (replaces current puppet, no OOC) and send death message."""
+def _fail_unpuppet_sessions(account, sessions):
+    """If we can't send to limbo, unpuppet so the account isn't left on the body when it becomes a corpse."""
+    for session in sessions:
+        try:
+            if hasattr(account, "unpuppet_object"):
+                account.unpuppet_object(session)
+        except Exception as e:
+            _log_limbo_error("unpuppet_on_fail", e)
 
-    def _fail_unpuppet():
-        """If we can't send to limbo, unpuppet so the account isn't left on the body when it becomes a corpse."""
-        for session in sessions:
-            try:
-                if hasattr(account, "unpuppet_object"):
-                    account.unpuppet_object(session)
-            except Exception:
-                pass
 
+def _ensure_limbo_room():
+    """Return (limbo, None) or (None, error)."""
     try:
         limbo = _get_or_create_limbo()
+        return limbo, None
     except Exception as e:
         _log_limbo_error("limbo", e)
-        if hasattr(account, "msg"):
-            account.msg("|rYou have died. You are in the void. (Limbo room could not be created.)|n")
-        _fail_unpuppet()
-        return
-    if not limbo:
-        if hasattr(account, "msg"):
-            account.msg("|rYou have died. You are in the void. (Limbo room could not be created.)|n")
-        _fail_unpuppet()
-        return
+        return None, e
+
+
+def _ensure_spirit_on_limbo(account, limbo):
+    """Return (spirit, None) or (None, error)."""
     try:
         spirit = _get_or_create_spirit(account, limbo)
+        return spirit, None
     except Exception as e:
         _log_limbo_error("spirit", e)
-        if hasattr(account, "msg"):
-            account.msg("|rYou have died. (Spirit could not be created.)|n")
-        _fail_unpuppet()
-        return
-    if not spirit:
-        if hasattr(account, "msg"):
-            account.msg("|rYou have died. (Spirit could not be created.)|n")
-        _fail_unpuppet()
-        return
+        return None, e
+
+
+def _puppet_sessions_to_spirit(account, sessions, spirit):
     for session in sessions:
         try:
             if hasattr(account, "puppet_object"):
                 account.puppet_object(session, spirit)
         except Exception as e:
             _log_limbo_error("puppet_object", e)
-    if hasattr(account, "msg"):
-        corpse = getattr(account.db, "dead_character_corpse", None)
-        has_clone = bool(corpse and getattr(corpse, "db", None) and getattr(corpse.db, "clone_snapshot", None))
+
+
+def _send_death_lobby_messages(account, dead_character_name):
+    """Death lobby text; dead_character_name reserved for future personalization."""
+    if not hasattr(account, "msg"):
+        return
+    has_clone = account_has_stored_clone(account)
+    account.msg(
+        "|rYou have permanently died.|n\n"
+        "|yYou wake in a dim, quiet space. No pain. No body. Just you and a sign that says "
+        "PLEASE WAIT. Welcome to Hell. Make yourself at home. Type |wlook|n when you're ready.|n"
+    )
+    if has_clone:
         account.msg(
-            "|rYou have permanently died.|n\n"
-            "|yYou wake in a dim, quiet space. No pain. No body. Just you and a sign that says "
-            "PLEASE WAIT. Welcome to Hell. Make yourself at home. Type |wlook|n when you're ready.|n"
+            "|yYou feel a sliver of yourself elsewhere — a shard. Type |wgo shard|n to wake in the clone. "
+            "Or type |wgo light|n to let go and create a new character.|n"
         )
-        if has_clone:
-            account.msg("|yYou feel a sliver of yourself elsewhere — a shard. Type |wgo shard|n to wake in the clone. Or type |wgo light|n to let go and create a new character.|n")
+    else:
+        account.msg("|yYou have no stored shard. Type |wgo light|n to let go and create a new character from the start.|n")
+
+
+def _send_account_to_limbo(account, sessions, dead_character_name):
+    """Puppet the account's spirit in the Death Lobby (replaces current puppet, no OOC) and send death message."""
+    limbo, _err = _ensure_limbo_room()
+    if not limbo:
+        if hasattr(account, "msg"):
+            account.msg("|rYou have died. You are in the void. (Limbo room could not be created.)|n")
+        _fail_unpuppet_sessions(account, sessions)
+        return
+    spirit, _err = _ensure_spirit_on_limbo(account, limbo)
+    if not spirit:
+        if hasattr(account, "msg"):
+            account.msg("|rYou have died. (Spirit could not be created.)|n")
+        _fail_unpuppet_sessions(account, sessions)
+        return
+    _puppet_sessions_to_spirit(account, sessions, spirit)
+    _send_death_lobby_messages(account, dead_character_name)
+
+
+def _safe_swap_corpse_typeclass(character, name, pronoun, corpse_key, corpse_cyberware):
+    """Swap to Corpse and set corpse-specific db. Returns True on success."""
+    try:
+        character.swap_typeclass("typeclasses.corpse.Corpse", clean_attributes=False, no_default=True)
+        character.db.original_name = name
+        character.db.corpse_pronoun = pronoun
+        character.db.death_time = time.time()
+        if corpse_cyberware:
+            character.db.cyberware = corpse_cyberware
+            character.db.cyberware_source_name = name
+        character.key = corpse_key
+        return True
+    except Exception as e:
+        _log_death_step("swap_typeclass", e)
+        return False
+
+
+def _safe_clear_corpse_aliases(character, corpse_key):
+    try:
+        character.aliases.clear()
+        character.aliases.add("corpse")
+        character.aliases.add(corpse_key)
+    except Exception as e:
+        _log_death_step("aliases", e)
+
+
+def _safe_clear_room_pose(character):
+    try:
+        if hasattr(character.db, "room_pose"):
+            character.attributes.remove("room_pose")
+    except KeyError:
+        pass
+    except Exception as e:
+        _log_death_step("clear_room_pose", e)
+
+
+def _safe_corpse_locks(character):
+    try:
+        character.locks.add("get:all()")
+    except Exception as e:
+        _log_death_step("locks_get", e)
+    try:
+        character.locks.add("puppet:false()")
+    except Exception as e:
+        _log_death_step("locks_puppet", e)
+
+
+def _safe_wipe_corpse_cmdsets(character):
+    try:
+        del character.cmdset_storage
+    except Exception:
+        try:
+            character.cmdset_storage = []
+        except Exception as e:
+            _log_death_step("cmdset_storage", e)
+    try:
+        character.cmdset.cmdset_stack = []
+        character.cmdset.update()
+    except Exception as e:
+        _log_death_step("cmdset_stack", e)
+
+
+def _safe_remove_corpse_from_account_list(character, account_sessions):
+    for acc in account_sessions:
+        try:
+            if hasattr(acc, "characters"):
+                acc.characters.remove(character)
+        except Exception as e:
+            _log_death_step("account_characters_remove", e)
+
+
+def _broadcast_simple_death_fallback(loc, character, name):
+    """Minimal room notify when corpse conversion fails."""
+    if not loc or not hasattr(loc, "contents_get"):
+        return
+    try:
+        for v in loc.contents_get(content_type="character"):
+            if v == character:
+                continue
+            n = character.get_display_name(v) if hasattr(character, "get_display_name") else name
+            v.msg("|r%s has died.|n" % n)
+    except Exception as e:
+        _log_death_step("broadcast_simple_death_fallback", e)
+
+
+def _safe_send_room_messages_on_permanent_death(loc, character, attacker, reason, predeath_names_by_viewer, name):
+    if not loc or not hasattr(loc, "contents_get"):
+        return
+    try:
+        if reason == "executed" and attacker and attacker != character:
+            try:
+                from world.combat import _get_attacker_weapon_key
+                weapon_key = _get_attacker_weapon_key(attacker)
+            except Exception:
+                weapon_key = "fists"
+            attacker_msg = EXECUTE_ATTACKER_MSG.get(weapon_key, EXECUTE_ATTACKER_MSG["fists"])
+            room_msg = EXECUTE_ROOM_MSG.get(weapon_key, EXECUTE_ROOM_MSG["fists"])
+            if hasattr(attacker, "msg"):
+                name_for_attacker = predeath_names_by_viewer.get(
+                    attacker,
+                    character.get_display_name(attacker) if hasattr(character, "get_display_name") else name,
+                )
+                attacker.msg(attacker_msg.format(name=name_for_attacker))
+            for v in loc.contents_get(content_type="character"):
+                if v in (character, attacker):
+                    continue
+                victim_name_for_viewer = predeath_names_by_viewer.get(
+                    v,
+                    character.get_display_name(v) if hasattr(character, "get_display_name") else name,
+                )
+                attacker_name_for_viewer = (
+                    attacker.get_display_name(v) if hasattr(attacker, "get_display_name") else attacker.name
+                )
+                v.msg(
+                    room_msg.format(
+                        attacker=attacker_name_for_viewer,
+                        name=victim_name_for_viewer,
+                    )
+                )
         else:
-            account.msg("|yYou have no stored shard. Type |wgo light|n to let go and create a new character from the start.|n")
+            for v in loc.contents_get(content_type="character"):
+                if v == character:
+                    continue
+                n = predeath_names_by_viewer.get(
+                    v,
+                    character.get_display_name(v) if hasattr(character, "get_display_name") else name,
+                )
+                v.msg("|r%s has slipped away. No pulse. No return. The body is still.|n" % n)
+    except Exception as e:
+        _log_death_step("room_messages", e)
 
 
 def make_permanent_death(character, attacker=None, reason="executed"):
@@ -396,15 +567,13 @@ def make_permanent_death(character, attacker=None, reason="executed"):
     character.db.death_state = DEATH_STATE_PERMANENT
     loc = character.location
     name = character.name
-    # Shard stays on the character (and thus on the corpse after swap); we do not copy to account.
-    snapshot = getattr(character.db, "clone_snapshot", None)
     # Capture installed chrome before conversion so the corpse keeps installed hardware.
     # We intentionally do not call on_uninstall: the chrome is still in the body.
     corpse_cyberware = list(getattr(character.db, "cyberware", None) or [])
     character.db.cyberware = []
     # Send each account straight to Death Lobby by puppeting their Spirit (puppet_object
     # unpuppets the current character and puppets the spirit in one go — no OOC stop).
-    account_sessions = {}  # account -> list of sessions
+    account_sessions = {}
     try:
         for session in character.sessions.get():
             try:
@@ -413,17 +582,28 @@ def make_permanent_death(character, attacker=None, reason="executed"):
                     account_sessions.setdefault(acc, []).append(session)
                     acc.db.dead_character_name = name
                     acc.db.dead_character_corpse = character
-            except Exception:
-                pass
+            except Exception as e:
+                _log_death_step("collect_account_session", e)
+    except Exception as e:
+        _log_death_step("collect_sessions", e)
+
+    clone_snap = getattr(character.db, "clone_snapshot", None)
+    if clone_snap and account_sessions:
+        try:
+            snap_copy = dict(clone_snap)
+            for acc in account_sessions:
+                acc.db.clone_snapshot_backup = snap_copy
+        except Exception as e:
+            _log_death_step("clone_snapshot_backup", e)
+
+    try:
         for acc, sessions in account_sessions.items():
             _send_account_to_limbo(acc, sessions, name)
-    except Exception:
-        pass
-    # Convert to corpse (swap typeclass); key by pronoun so "male corpse", "female corpse", "neuter corpse"
+    except Exception as e:
+        _log_death_step("send_account_to_limbo", e)
+
     pronoun = getattr(character.db, "pronoun", None) or "neutral"
     corpse_key = CORPSE_KEY_BY_PRONOUN.get(pronoun, "neuter corpse")
-    # Capture per-viewer display name *before* we swap typeclass so execute/death
-    # messages can show the recognizable/sdesc name instead of the generic corpse key.
     predeath_names_by_viewer = {}
     if loc and hasattr(loc, "contents_get"):
         for v in loc.contents_get(content_type="character"):
@@ -435,108 +615,26 @@ def make_permanent_death(character, attacker=None, reason="executed"):
                 )
             except Exception:
                 predeath_names_by_viewer[v] = name
+
+    if not _safe_swap_corpse_typeclass(character, name, pronoun, corpse_key, corpse_cyberware):
+        _broadcast_simple_death_fallback(loc, character, name)
+        return
+
     try:
-        character.swap_typeclass("typeclasses.corpse.Corpse", clean_attributes=False, no_default=True)
-        character.db.original_name = name
-        character.db.corpse_pronoun = pronoun  # for look: "body of a man/woman/neuter"
-        character.db.death_time = time.time()  # when they became a corpse (for logs/future use)
-        if corpse_cyberware:
-            character.db.cyberware = corpse_cyberware
-            character.db.cyberware_source_name = name
-        character.key = corpse_key
-        # Remove the dead character's aliases (e.g. "Cairn") so the corpse is only findable as "corpse" / "neuter corpse" etc.
-        try:
-            character.aliases.clear()
-            character.aliases.add("corpse")
-            character.aliases.add(corpse_key)
-        except Exception:
-            pass
-        if hasattr(character.db, "room_pose"):
-            del character.db.room_pose
-        try:
-            character.locks.add("get:all()")
-        except Exception:
-            pass
-        try:
-            character.locks.add("puppet:false()")
-        except Exception:
-            pass
-        # Wipe the Character's cmdset_storage (persistent DB) so the corpse doesn't keep
-        # look/get/wield etc. and get merged for everyone in the room as an "interactive" object.
-        try:
-            del character.cmdset_storage
-        except Exception:
-            try:
-                character.cmdset_storage = []
-            except Exception:
-                pass
-        try:
-            character.cmdset.cmdset_stack = []
-            character.cmdset.update()
-        except Exception:
-            pass
-        # So "ic" never offers the corpse: remove it from each account's characters.
-        for acc in account_sessions:
-            try:
-                if hasattr(acc, "characters"):
-                    acc.characters.remove(character)
-            except Exception:
-                pass
-        if loc:
-            if reason == "executed" and attacker and attacker != character:
-                try:
-                    from world.combat import _get_attacker_weapon_key
-                    weapon_key = _get_attacker_weapon_key(attacker)
-                except Exception:
-                    weapon_key = "fists"
-                attacker_msg = EXECUTE_ATTACKER_MSG.get(weapon_key, EXECUTE_ATTACKER_MSG["fists"])
-                room_msg = EXECUTE_ROOM_MSG.get(weapon_key, EXECUTE_ROOM_MSG["fists"])
-                if hasattr(attacker, "msg"):
-                    # For the attacker, keep using their personalized view of the victim.
-                    name_for_attacker = predeath_names_by_viewer.get(
-                        attacker,
-                        character.get_display_name(attacker) if hasattr(character, "get_display_name") else name,
-                    )
-                    attacker.msg(attacker_msg.format(name=name_for_attacker))
-                for v in loc.contents_get(content_type="character"):
-                    if v in (character, attacker):
-                        continue
-                    # For room viewers, use the pre-death recognizable name if we have it,
-                    # falling back to current display name/canonical name.
-                    victim_name_for_viewer = predeath_names_by_viewer.get(
-                        v,
-                        character.get_display_name(v) if hasattr(character, "get_display_name") else name,
-                    )
-                    attacker_name_for_viewer = (
-                        attacker.get_display_name(v) if hasattr(attacker, "get_display_name") else attacker.name
-                    )
-                    v.msg(
-                        room_msg.format(
-                            attacker=attacker_name_for_viewer,
-                            name=victim_name_for_viewer,
-                        )
-                    )
-            else:
-                for v in loc.contents_get(content_type="character"):
-                    if v == character:
-                        continue
-                    n = predeath_names_by_viewer.get(
-                        v,
-                        character.get_display_name(v) if hasattr(character, "get_display_name") else name,
-                    )
-                    v.msg("|r%s has slipped away. No pulse. No return. The body is still.|n" % n)
+        from world.rpg.factions import FACTIONS
+
+        for _fk, fd in FACTIONS.items():
+            if character.tags.has(fd["tag"], category=fd["tag_category"]):
+                character.tags.remove(fd["tag"], category=fd["tag_category"])
     except Exception as e:
-        if loc and hasattr(loc, "contents_get"):
-            for v in loc.contents_get(content_type="character"):
-                if v == character:
-                    continue
-                n = character.get_display_name(v) if hasattr(character, "get_display_name") else name
-                v.msg("|r%s has died.|n" % n)
-        try:
-            from evennia import logger
-            logger.log_err("death.make_permanent_death swap_typeclass: %s" % e)
-        except Exception:
-            pass
+        _log_death_step("strip_corpse_faction_tags", e)
+
+    _safe_clear_corpse_aliases(character, corpse_key)
+    _safe_clear_room_pose(character)
+    _safe_corpse_locks(character)
+    _safe_wipe_corpse_cmdsets(character)
+    _safe_remove_corpse_from_account_list(character, account_sessions)
+    _safe_send_room_messages_on_permanent_death(loc, character, attacker, reason, predeath_names_by_viewer, name)
 
 
 def clear_flatline(target):
@@ -544,8 +642,17 @@ def clear_flatline(target):
     if not target or not hasattr(target, "db"):
         return
     target.db.death_state = DEATH_STATE_ALIVE
-    if hasattr(target.db, "flatline_at"):
-        del target.db.flatline_at
+    try:
+        if hasattr(target.db, "flatline_at"):
+            target.attributes.remove("flatline_at")
+    except KeyError:
+        pass
+    except Exception as e:
+        try:
+            from evennia import logger
+            logger.log_err("death.clear_flatline flatline_at: %s" % e)
+        except Exception:
+            pass
     try:
         target.cmdset.remove("FlatlinedCmdSet")
         from django.conf import settings

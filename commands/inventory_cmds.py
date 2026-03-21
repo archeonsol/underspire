@@ -87,6 +87,16 @@ class CmdWield(Command):
                 caller.msg("Your deployed claws prevent you from holding items. Retract them first.")
                 return
 
+        try:
+            from world.medical.limb_trauma import is_hand_usable
+            use_left = is_hand_usable(caller, "left")
+            use_right = is_hand_usable(caller, "right")
+        except Exception:
+            use_left = use_right = True
+        if not use_left and not use_right:
+            caller.msg("Your arms are ruined. You can't hold anything until you get chrome.")
+            return
+
         target = caller.search(self.args.strip(), location=caller)
         if not target:
             return
@@ -105,6 +115,9 @@ class CmdWield(Command):
         left = getattr(caller.db, "left_hand_obj", None)
         right = getattr(caller.db, "right_hand_obj", None)
         if hands_needed == 2:
+            if not (use_left and use_right):
+                caller.msg("You need two working arms to wield that. Your limb won't cooperate.")
+                return
             if left or right:
                 caller.msg("You need both hands free to wield that. Unwield or drop what you're holding first.")
                 return
@@ -124,10 +137,13 @@ class CmdWield(Command):
             caller.db.left_hand_obj = target
             caller.db.right_hand_obj = target
         else:
-            if not right:
+            if not right and use_right:
                 caller.db.right_hand_obj = target
-            else:
+            elif not left and use_left:
                 caller.db.left_hand_obj = target
+            else:
+                caller.msg("You have no free usable hand.")
+                return
         _update_primary_wielded(caller)
         if getattr(caller.db, "combat_target", None) is not None:
             caller.db.combat_skip_next_turn = True
@@ -490,6 +506,14 @@ class CmdWear(Command):
         covered = getattr(target.db, "covered_parts", None)
         if not covered:
             caller.msg(f"{target.get_display_name(caller)} isn't something you can wear.")
+            return
+        race_fit = getattr(target.db, "race_fit", None)
+        character_race = (getattr(caller.db, "race", None) or "human").lower()
+        if race_fit == "human_only" and character_race == "splicer":
+            caller.msg("This garment doesn't accommodate your tail.")
+            return
+        if race_fit == "splicer_only" and character_race != "splicer":
+            caller.msg("This garment is cut for a Splicer's frame.")
             return
         worn = caller.db.worn or []
         if target in worn:

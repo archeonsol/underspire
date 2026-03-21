@@ -6,6 +6,7 @@ import random
 
 from world.clothing import get_worn_items
 from world.combat.damage_types import DAMAGE_TYPES
+from world.races import ARMOR_SLOTS
 
 # Maximum total stacking_score a character can wear. Exceeding blocks wear.
 MAX_ARMOR_STACKING_SCORE = 24
@@ -37,6 +38,10 @@ def get_armor_protection_for_location(character, body_part, damage_type):
     where cyberware_pieces includes armor-model cyberware contributors for
     deterministic chrome durability wear.
     """
+    from world.body import get_character_body_parts
+
+    if not character or body_part not in get_character_body_parts(character):
+        return 0, [], []
     total = 0
     pieces = []
     cyberware_pieces = []

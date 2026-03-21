@@ -41,6 +41,12 @@ CYBERWARE_INSTALL_NARRATIVES = {
         "The chrome hand seats onto the wrist interface. You lock it. Then the delicate work: each tendon mated to its actuator, each nerve bundle - median, ulnar, radial - soldered to its chrome counterpart. The fingers will move. They will grip. They will feel pressure and temperature, but not texture. Not the way a real hand feels things. That is gone.",
         "You close the junction. The seam around the wrist is tight, surgical, angry red. You test the hand: open, close, pinch, grip, point. Each finger responds. The thumb opposes. It is a hand. It will do what hands do. You dress the site and step back. They will learn to live with the cold of it. Everyone does.",
     ],
+    "chrome_tail": [
+        "You make the incision at the sacrum, the base of the spine, where the vertebral column ends and biology gave up. You are about to convince it to keep going. You clear the tissue down to the coccyx and prepare the interface: an anchor plate that bolts to the sacral vertebrae, a nerve tap that splices into the cauda equina: the horse's tail of nerve fibers that the spine fans into at its base.",
+        "The tail assembly feeds through the anchor plate one segment at a time. Each chrome vertebra locks into the one before it, building outward from the spine like a sentence being written. You connect the motor nerves: twelve independent actuator bundles, each one governing a segment of the tail's range of motion. The tail curls on the table as each bundle comes online. It is learning to move before the patient knows it exists.",
+        "You connect the sensory array. Pressure, temperature, proprioception: the tail needs to know where it is in space or it's a liability instead of an asset. The nerve splicing at the cauda equina is delicate: too deep and you compromise bladder control, too shallow and the tail is numb. You find the layer. You hold your breath. The monitor shows signal propagation. The tail twitches.",
+        "You close the surgical site around the anchor plate. The tail extends from the base of the spine, chrome and cable and articulated steel, already shifting with the patient's breathing. The body doesn't know what to make of it yet: the brain is receiving input from a limb it never had. It will adapt. Humans are disturbingly good at adopting new appendages. You dress the wound and step back. The tail curls once, testing itself, and goes still.",
+    ],
     "chrome_eyes": [
         "You retract the lids with speculums. The biological eyes stare up at you - the last things they will see with the equipment they were born with. You sever the extraocular muscles one by one. The eye rotates freely, untethered. You clamp the optic nerve and cut. The globe comes out in your hand, trailing fluid. You do it twice.",
         "The sockets are raw, red, empty. You irrigate and inspect - the orbital walls are intact. You seat the chrome housings: machined titanium cups that will hold the new optics. Screws into bone. The drill whines. You fit the vascular ports to the ophthalmic arteries - the new eyes need blood supply for the interface tissue that lines the socket.",
@@ -240,6 +246,7 @@ NARRATIVE_KEY_MAP = {
     "chrome_arm": ("chrome_arm", "chrome_arm_removal"),
     "chrome_leg": ("chrome_leg", "chrome_leg_removal"),
     "chrome_hand": ("chrome_hand", "generic_removal"),
+    "chrome_tail": ("chrome_tail", "generic_removal"),
     # Sensory
     "chrome_eyes": ("chrome_eyes", "chrome_eyes_removal"),
     "chrome_eye_single": ("chrome_eye_single", "chrome_eyes_removal"),

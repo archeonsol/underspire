@@ -4,8 +4,8 @@ Clothing and armor define which body parts they cover; worn items,
 layering, and coverage queries live here. The appearance pipeline
 (assembling body descriptions from all systems) lives in world.appearance.
 """
-from world.medical import BODY_PARTS
 from world.body import UPPER_BODY as UPPER_BODY_PARTS  # re-export for sdesc
+from world.races import ALL_COVERABLE_BODY_PARTS
 
 # ---------------------------------------------------------------------------
 # Tailored clothing layering keywords
@@ -57,7 +57,7 @@ def get_covered_parts_set(character):
     covered = set()
     for item in worn:
         parts = getattr(item.db, "covered_parts", None) or []
-        covered.update(p for p in parts if p in BODY_PARTS)
+        covered.update(p for p in parts if p in ALL_COVERABLE_BODY_PARTS)
     return covered
 
 

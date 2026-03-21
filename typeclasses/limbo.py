@@ -27,7 +27,7 @@ class DeathLimbo(DefaultRoom):
 class Spirit(DefaultCharacter):
     """
     Disembodied spirit in the Death Lobby. One per account, reused.
-    Uses SpiritCmdSet only (look, say, pose, go light; go shard only if account has clone_snapshot).
+    Uses SpiritCmdSet only (look, say, pose, go light; go shard if corpse or account has shard data).
     """
     def at_object_creation(self):
         self.db.desc = "A faint, slightly translucent presence. You. Or what's left of you."
@@ -46,12 +46,14 @@ class Spirit(DefaultCharacter):
 
     @property
     def account_has_clone(self):
-        """True if the dead character (corpse) has a stored clone/shard. Used by CmdGoShard lock."""
+        """True if corpse has a shard or account has clone_snapshot_backup. Used by CmdGoShard lock."""
         acc = getattr(self, "account", None)
         if not acc or not getattr(acc, "db", None):
             return False
         corpse = getattr(acc.db, "dead_character_corpse", None)
-        return bool(corpse and getattr(corpse, "db", None) and getattr(corpse.db, "clone_snapshot", None))
+        if corpse and getattr(corpse, "db", None) and getattr(corpse.db, "clone_snapshot", None):
+            return True
+        return bool(getattr(acc.db, "clone_snapshot_backup", None))
 
     def at_post_puppet(self, **kwargs):
         """Skip the default 'You become X' message; do look and room announcement only."""

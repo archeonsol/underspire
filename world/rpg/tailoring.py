@@ -207,6 +207,7 @@ def get_outfit_quality_line(character, looker=None):
 
 # Parse args for tailor command (migrated from command.py for one place to edit)
 TAILOR_SUBCMDS = [
+    "modify",
     "name",
     "aliases",
     "worn",

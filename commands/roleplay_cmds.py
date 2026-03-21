@@ -8,17 +8,24 @@ from evennia.commands.cmdhandler import CMD_NOMATCH
 from evennia.utils import logger
 
 
-def _resolve_body_part(name):
+def _resolve_body_part(name, caller=None):
     """Resolve short alias or full name to canonical body part key, or None."""
+    from world.body import get_character_body_parts
     from world.medical import BODY_PARTS, BODY_PART_ALIASES
     raw = name.strip().lower()
     if raw in BODY_PARTS:
         return raw
-    return BODY_PART_ALIASES.get(raw)
+    resolved = BODY_PART_ALIASES.get(raw)
+    if resolved:
+        return resolved
+    if raw == "tail" and caller is not None and "tail" in get_character_body_parts(caller):
+        return "tail"
+    return None
 
 
-def _body_parts_usage_list():
+def _body_parts_usage_list(caller=None):
     """Head-to-feet list with short names where available (for usage line)."""
+    from world.body import get_character_body_parts
     from world.medical import BODY_PARTS_HEAD_TO_FEET, BODY_PART_ALIASES
     rev = {}
     for alias, full in BODY_PART_ALIASES.items():
@@ -31,7 +38,55 @@ def _body_parts_usage_list():
         new_score = (len(alias), 1 if " " in alias else 0)
         if new_score < current_score:
             rev[full] = alias
-    return [rev.get(p, p) for p in BODY_PARTS_HEAD_TO_FEET]
+    out = [rev.get(p, p) for p in BODY_PARTS_HEAD_TO_FEET]
+    if caller is not None and "tail" in get_character_body_parts(caller):
+        out.append("tail")
+    return out
+
+
+def _set_body_part_description(caller, args):
+    """Set one body-part line from args like '<part> = <text>'. Returns True if handled (set or error msg)."""
+    if not hasattr(caller, "get_body_descriptions"):
+        caller.msg("You cannot set body descriptions.")
+        return True
+    if not args or "=" not in args:
+        caller.msg("Usage: @body <body part> = <text>")
+        caller.msg("Body parts: " + ", ".join(_body_parts_usage_list(caller)))
+        return True
+    raw, _, rest = args.partition("=")
+    rest = rest.strip()
+    if not rest:
+        caller.msg("Provide a description after the =.")
+        return True
+    from world.body import get_character_body_parts
+
+    part = _resolve_body_part(raw, caller=caller)
+    if not part:
+        caller.msg("Unknown body part. Use: " + ", ".join(_body_parts_usage_list(caller)))
+        return True
+    if part not in get_character_body_parts(caller):
+        caller.msg("You don't have that body part.")
+        return True
+    locked = getattr(caller.db, "locked_descriptions", None) or {}
+    if part in locked:
+        caller.msg(f"|r{part.title()} is locked by installed cyberware and cannot be edited.|n")
+        return True
+    if not caller.check_permstring("Builder"):
+        from world.skin_tones import strip_color_codes
+
+        race = (getattr(caller.db, "race", None) or "human").lower()
+        allow_markup = race == "splicer" and part in ("tail", "left ear", "right ear")
+        if not allow_markup:
+            stripped = strip_color_codes(rest)
+            if stripped != rest:
+                caller.msg(
+                    "Color codes are not allowed in body descriptions. Your skin tone provides the coloring."
+                )
+            rest = stripped
+    caller.get_body_descriptions()
+    caller.db.body_descriptions[part] = rest
+    caller.msg(f"Set your |w{part}|n description: {rest}")
+    return True
 
 
 def _run_emote(caller, text, improvise=False):
@@ -254,61 +309,6 @@ def _run_emote(caller, text, improvise=False):
             else:
                 caller.msg(f"|yTo {who}:|n {line}")
         caller.msg("|w---|n")
-
-
-class CmdDescribeBodypart(Command):
-    """
-    Set a body-part description for your character (shown when someone looks at you).
-    You can use tokens $N (your name), $P/$p (possessive), $S/$s (subject). See help tokens.
-
-    Usage:
-      @describe_bodypart <body part> = <text>
-      @describe_bodypart head = scarred and crooked
-      @descpart lshoulder = $S has an old burn mark on $p shoulder
-
-    Body parts (head to feet): head, face, leye, reye, lear, rear, neck, lshoulder,
-    rshoulder, torso, back, abdomen, larm, rarm, lhand, rhand, groin, lthigh,
-    rthigh, lfoot, rfoot
-    """
-    key = "@describe_bodypart"
-    aliases = ["@descpart"]
-    locks = "cmd:all()"
-    help_category = "General"
-
-    def func(self):
-        caller = self.caller
-        if not hasattr(caller, "get_body_descriptions"):
-            caller.msg("You cannot set body descriptions.")
-            return
-        if not self.args or "=" not in self.args:
-            caller.msg("Usage: @describe_bodypart <body part> = <text>")
-            caller.msg("Body parts: " + ", ".join(_body_parts_usage_list()))
-            return
-        raw, _, rest = self.args.partition("=")
-        rest = rest.strip()
-        if not rest:
-            caller.msg("Provide a description after the =.")
-            return
-        part = _resolve_body_part(raw)
-        if not part:
-            caller.msg("Unknown body part. Use: " + ", ".join(_body_parts_usage_list()))
-            return
-        locked = getattr(caller.db, "locked_descriptions", None) or {}
-        if part in locked:
-            caller.msg(f"|r{part.title()} is locked by installed cyberware and cannot be edited.|n")
-            return
-        if not caller.check_permstring("Builder"):
-            from world.skin_tones import strip_color_codes
-
-            stripped = strip_color_codes(rest)
-            if stripped != rest:
-                caller.msg(
-                    "Color codes are not allowed in body descriptions. Your skin tone provides the coloring."
-                )
-            rest = stripped
-        caller.get_body_descriptions()
-        caller.db.body_descriptions[part] = rest
-        caller.msg(f"Set your |w{part}|n description: {rest}")
 
 
 class CmdDescribeMeAs(Command):
@@ -852,25 +852,42 @@ class CmdRecog(Command):
 
 class CmdBody(Command):
     """
-    List all body parts and their current descriptions (head to feet).
+    List or set body-part descriptions (shown when someone looks at you).
+    You can use tokens $N (your name), $P/$p (possessive), $S/$s (subject). See help tokens.
 
     Usage:
       @body
+      @body <body part> = <text>
+      @body head = scarred and crooked
+      @body lshoulder = $S has an old burn mark on $p shoulder
+
+    Body parts (head to feet): head, face, leye, reye, lear, rear, neck, lshoulder,
+    rshoulder, torso, back, abdomen, larm, rarm, lhand, rhand, groin, lthigh,
+    rthigh, lfoot, rfoot
     """
     key = "@body"
+    aliases = ["@describe_bodypart", "@descpart"]
+    locks = "cmd:all()"
     help_category = "General"
 
     def func(self):
-        from world.medical import BODY_PARTS_HEAD_TO_FEET
+        from world.body import body_part_groups_for_character
         caller = self.caller
+        args = (self.args or "").strip()
+        if "=" in args:
+            _set_body_part_description(caller, args)
+            return
         if not hasattr(caller, "db") or not hasattr(caller.db, "body_descriptions"):
             caller.msg("You cannot view body descriptions.")
             return
         # Show raw descriptions you set, not clothing-overridden (look uses effective desc)
         parts = caller.db.body_descriptions or {}
-        caller.msg("|wYour body part descriptions|n (use |w@describe_bodypart <part> = <text>|n to set)")
+        caller.msg("|wYour body part descriptions|n (use |w@body <part> = <text>|n to set)")
         caller.msg("")
-        for part in BODY_PARTS_HEAD_TO_FEET:
+        order = []
+        for group in body_part_groups_for_character(caller):
+            order.extend(group)
+        for part in order:
             text = (parts.get(part) or "").strip()
             if text:
                 caller.msg(f"  |w{part}|n: {text}")
@@ -1388,7 +1405,7 @@ class CmdTease(Command):
              Bob sees:  'He lifts his shirt and shows his chest to you.'
              Others:    'He lifts his shirt and shows his chest to Bob.'
 
-    Same tokens work in describe_bodypart, lp/pose, and worndesc. See |whelp tokens|n.
+    Same tokens work in |w@body|n part lines, lp/pose, and worndesc. See |whelp tokens|n.
 
     Usage:
       tease <clothing> [at <target>]

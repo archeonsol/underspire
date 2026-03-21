@@ -445,7 +445,19 @@ def attempt_retreat(mover, opponent):
     return False, current, f"{CC['miss']}You try to pull back but they stay on you. Still at {current_label} range.|n", f"|g{{mover}} tries to break away. You stay on them.|n", msg_room
 
 
+def _pair_in_combat_engagement(a, b):
+    """True if either character is targeting the other for combat (footwork / range applies)."""
+    if not a or not b:
+        return False
+    ta = getattr(getattr(a, "db", None), "combat_target", None)
+    tb = getattr(getattr(b, "db", None), "combat_target", None)
+    return ta == b or tb == a
+
+
 def validate_grapple_range(grappler, target):
+    # Outside of mutual combat, positional range is not tracked — allow grabbing someone in the room.
+    if not _pair_in_combat_engagement(grappler, target):
+        return True, None
     current = get_combat_range(grappler, target)
     if current in (RANGE_CLINCH, RANGE_CLOSE):
         return True, None

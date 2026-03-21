@@ -69,6 +69,23 @@ def get_medical_summary(character):
             parts.append(f"{names[0]} ({desc}){stab}")
         if parts:
             lines.append(f"{MC['critical']}Organ trauma:|n " + "; ".join(parts))
+    from world.medical.limb_trauma import LIMB_INFO, LIMB_SLOTS
+    limb_damage = character.db.limb_damage or {}
+    if limb_damage:
+        lparts = []
+        for limb_key in sorted(LIMB_SLOTS):
+            sev = int(limb_damage.get(limb_key, 0) or 0)
+            if sev <= 0:
+                continue
+            names = LIMB_INFO.get(limb_key, (limb_key,) * 4)
+            destroyed = any(
+                limb_key in (i.get("limb_damage") or {}) and i.get("fracture_destroyed")
+                for i in (character.db.injuries or [])
+            )
+            desc = f"{MC['arrest']}DESTROYED — chrome limb required|n" if destroyed else names[min(sev, 3)]
+            lparts.append(f"{names[0]} ({desc})")
+        if lparts:
+            lines.append(f"{MC['critical']}Limb trauma:|n " + "; ".join(lparts))
     fractures = character.db.fractures or []
     splinted = character.db.splinted_bones or []
     if fractures:
@@ -190,6 +207,25 @@ def get_medical_detail(character):
                     out.append(f"  {names[0].title()}: {names[min(severity, 3)]}")
     else:
         out.append("|wInternal / organ trauma:|n  None noted.")
+    from world.medical.limb_trauma import LIMB_INFO, LIMB_SLOTS
+    limb_damage = character.db.limb_damage or {}
+    if limb_damage:
+        out.append("|wLimb trauma:|n")
+        for limb_key in sorted(LIMB_SLOTS):
+            sev = int(limb_damage.get(limb_key, 0) or 0)
+            if sev <= 0:
+                continue
+            names = LIMB_INFO.get(limb_key, (limb_key,) * 4)
+            destroyed = any(
+                limb_key in (i.get("limb_damage") or {}) and i.get("fracture_destroyed")
+                for i in (character.db.injuries or [])
+            )
+            if destroyed:
+                out.append(f"  {names[0].title()}: {MC['arrest']}DESTROYED - chrome limb required|n")
+            else:
+                out.append(f"  {names[0].title()}: {names[min(sev, 3)]}")
+    else:
+        out.append("|wLimb trauma:|n  None noted.")
     fractures = character.db.fractures or []
     out.append("|wFractures:|n " + (", ".join(BONE_INFO.get(b, b) for b in fractures) if fractures else " None."))
     level, _ = compute_effective_bleed_level(character)

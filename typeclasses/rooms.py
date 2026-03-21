@@ -431,7 +431,36 @@ class Room(MatrixIdMixin, ObjectParent, DefaultRoom):
         """
         Called when an object enters this room. After the base handler runs,
         apply any configured smell effects (e.g. bad-smell tiles).
+
+        Builder fields:
+            db.room_faction_required — faction key (e.g. IMP); only members may enter.
+            db.room_faction_min_rank — minimum rank (default 1).
         """
+        try:
+            fk = getattr(self.db, "room_faction_required", None)
+            if fk:
+                from evennia.objects.objects import DefaultCharacter
+
+                if isinstance(obj, DefaultCharacter):
+                    from world.rpg.factions import is_faction_member
+                    from world.rpg.factions.membership import get_member_rank
+                    from world.rpg.factions.doors import staff_bypass
+
+                    if not staff_bypass(obj):
+                        min_r = int(getattr(self.db, "room_faction_min_rank", None) or 1)
+                        if not is_faction_member(obj, fk):
+                            obj.msg("|rAccess denied. This area is restricted.|n")
+                            if source_location and hasattr(obj, "move_to"):
+                                obj.move_to(source_location, quiet=True)
+                            return
+                        if get_member_rank(obj, fk) < min_r:
+                            obj.msg("|rAccess denied. Insufficient clearance.|n")
+                            if source_location and hasattr(obj, "move_to"):
+                                obj.move_to(source_location, quiet=True)
+                            return
+        except Exception:
+            pass
+
         super().at_object_receive(obj, source_location, move_type=move_type, **kwargs)
         try:
             scripts = list(self.scripts.all())

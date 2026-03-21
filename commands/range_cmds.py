@@ -29,7 +29,6 @@ def _emit_room(caller, opponent, msg_room):
 
 class CmdAdvance(Command):
     key = "advance"
-    aliases = ["close", "close in", "push forward"]
     locks = "cmd:all()"
     help_category = "Combat"
 
@@ -62,7 +61,6 @@ class CmdAdvance(Command):
 
 class CmdRetreat(Command):
     key = "retreat"
-    aliases = ["back off", "back away", "disengage", "pull back"]
     locks = "cmd:all()"
     help_category = "Combat"
 

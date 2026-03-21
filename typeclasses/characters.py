@@ -8,9 +8,10 @@ from typeclasses.mixins import FurnitureMixin, MedicalMixin, RPGCharacterMixin, 
 from typeclasses.matrix.mixins.matrix_id import MatrixIdMixin
 
 
-def _body_parts():
-    from world.medical import BODY_PARTS
-    return BODY_PARTS
+def _body_parts(character):
+    from world.body import get_character_body_parts
+
+    return get_character_body_parts(character)
 
 
 # When you look at a character: name = orange (match room list), sdesc in parens = white
@@ -72,16 +73,18 @@ class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, F
 
         self.db.current_hp = None
         self.db.current_stamina = None
-        self.db.background = "Unknown"
+        self.db.race = "human"
+        self.db.splicer_animal = None
         self.db.traits = []
         self.db.needs_chargen = True
         # General "describe me as" line (shown first when someone looks at you; short one-liner)
         self.db.general_desc = "This is a character."
         # Per-body-part descriptions for look/appearance (keys from world.medical.BODY_PARTS)
-        self.db.body_descriptions = {part: "" for part in _body_parts()}
+        self.db.body_descriptions = {part: "" for part in _body_parts(self)}
         # Medical / trauma (organs, fractures, bleeding) - see world.medical
         self.db.injuries = []  # HP-occupancy wound list; see world.medical.add_injury
         self.db.organ_damage = {}
+        self.db.limb_damage = {}
         self.db.fractures = []
         self.db.bleeding_level = 0
         # Worn clothing/armor (list of objects); order = bottom to top layer
@@ -99,6 +102,8 @@ class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, F
         self.db.voice = ""
         # Pronouns for emotes: "male" (he/his/him), "female" (she/her/her), "neutral"/"they" (they/their/them)
         self.db.pronoun = "neutral"
+        # Age in years (set at chargen; optional for legacy NPCs)
+        self.db.age_years = None
         # XP: gained every 6h while eligible (max 4 drops/24h); cap enforced so you stop earning after XP_CAP
         self.db.xp = 0
         from world.rpg.xp import XP_CAP
@@ -113,6 +118,8 @@ class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, F
         self.db.blood_alcohol = 0.0
         # Amputations / severed limbs (body part keys from world.medical.BODY_PARTS)
         self.db.missing_body_parts = []
+        # Cyberware-added anatomy (e.g. chrome tail on a human); merged in world.body.get_character_body_parts
+        self.db.extra_body_parts = []
         # Installed cyberware: list of CyberwareBase objects (location=None while installed)
         self.db.cyberware = []
         # Cyberware body description overrides — managed by CyberwareBase, not user-editable
@@ -192,12 +199,31 @@ class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, F
         req_any = list(getattr(cyberware_obj, "required_implants_any", None) or [])
         if req_any and not any(name in installed_types for name in req_any):
             return f"Requires one of: {', '.join(req_any)}."
-        if cyberware_obj.body_mods:
-            locked = self.db.locked_descriptions or {}
-            for part, (mode, _) in cyberware_obj.body_mods.items():
-                if mode == "lock" and part in locked:
-                    return f"Body part '{part}' is already locked by installed cyberware."
-        cyberware_obj.on_install(self)
+        adds = list(getattr(cyberware_obj, "adds_body_parts", None) or [])
+        if adds or cyberware_obj.body_mods:
+            from world.body import (
+                commit_adds_body_parts,
+                preview_body_parts_for_cyberware_install,
+            )
+
+            preview = preview_body_parts_for_cyberware_install(self, cyberware_obj)
+            if cyberware_obj.body_mods:
+                for part, (mode, _) in cyberware_obj.body_mods.items():
+                    if part not in preview:
+                        return f"Body part '{part}' is not part of your anatomy."
+                locked = self.db.locked_descriptions or {}
+                for part, (mode, _) in cyberware_obj.body_mods.items():
+                    if mode == "lock" and part in locked:
+                        return f"Body part '{part}' is already locked by installed cyberware."
+            extras_before = list(getattr(self.db, "extra_body_parts", None) or [])
+            try:
+                commit_adds_body_parts(self, cyberware_obj)
+                cyberware_obj.on_install(self)
+            except Exception:
+                self.db.extra_body_parts = extras_before
+                raise
+        else:
+            cyberware_obj.on_install(self)
         if not skip_surgery:
             try:
                 cyberware_obj.on_surgery_install(self)
@@ -237,6 +263,9 @@ class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, F
         obj.on_uninstall(self)
         installed.remove(obj)
         self.db.cyberware = installed
+        from world.body import cleanup_adds_body_parts_on_remove
+
+        cleanup_adds_body_parts_on_remove(self, obj, installed)
         # Re-check eye-dependent modules after removals.
         for cw in installed:
             if type(cw).__name__ != "TargetingReticle":
@@ -328,7 +357,7 @@ class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, F
         """
         current = dict(getattr(self.db, "body_descriptions", None) or {})
         merged = False
-        for part in _body_parts():
+        for part in _body_parts(self):
             if part not in current:
                 current[part] = ""
                 merged = True
@@ -345,7 +374,8 @@ class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, F
         Returns the full string (one or more paragraphs) or "" if nothing set.
         """
         from world.appearance import format_body_appearance
-        return format_body_appearance(self.get_body_descriptions())
+
+        return format_body_appearance(self.get_body_descriptions(), character=self)
 
     def format_appearance(self, appearance, looker, **kwargs):
         """Allow one blank line between paragraphs (Evennia default collapses to single newline)."""
@@ -476,9 +506,9 @@ class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, F
         # If needs_chargen is True but character clearly already completed chargen (stale/corrupted flag),
         # e.g. after puppet-switching, avoid forcing them back into the pipeline.
         if getattr(self.db, "needs_chargen", False):
-            bg = getattr(self.db, "background", None)
             stats = getattr(self.db, "stats", None)
-            if (bg and str(bg) != "Unknown") or (stats and any(stats.values())):
+            priority = getattr(self.db, "stat_priority_order", None)
+            if priority or (stats and any((v or 0) for v in stats.values())):
                 self.db.needs_chargen = False
             else:
                 from world.rpg.chargen import start_cinematic_chargen
@@ -553,6 +583,39 @@ class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, F
         """Carry capacity from strength display level (uses get_display_stat from RPGCharacterMixin)."""
         str_display = self.get_display_stat("strength")
         return 10 + (str_display * 10)
+
+    def get_factions(self):
+        """Return list of faction dicts this character belongs to."""
+        from world.rpg.factions import get_character_factions
+
+        return get_character_factions(self)
+
+    def get_faction_rank(self, faction_key):
+        """Return rank number in a faction, or 0 if not a member."""
+        from world.rpg.factions.membership import get_member_rank
+
+        return get_member_rank(self, faction_key)
+
+    def is_faction_member(self, faction_key):
+        """Check faction membership."""
+        from world.rpg.factions import is_faction_member
+
+        return is_faction_member(self, faction_key)
+
+    def get_faction_display(self):
+        """Formatted faction memberships for @sheet display."""
+        factions = self.get_factions()
+        if not factions:
+            return "None"
+        parts = []
+        for fdata in factions:
+            ranks = self.db.faction_ranks or {}
+            rank = ranks.get(fdata["key"], 1)
+            from world.rpg.factions.ranks import get_rank_name
+
+            rank_name = get_rank_name(fdata["ranks"], rank)
+            parts.append(f"{fdata['color']}{fdata['short_name']}|n ({rank_name})")
+        return ", ".join(parts)
 
     def at_post_move(self, source_location, move_type="move", **kwargs):
         """

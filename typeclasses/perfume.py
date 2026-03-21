@@ -6,12 +6,9 @@ scent overlay and Charisma bonus via world.smell, for testing and gameplay.
 """
 
 import time
-from evennia import default_cmds
 from evennia.utils.create import create_object
 
 from typeclasses.items import Item
-from world.smell import PERFUME_DURATION_SECS
-from commands.inventory_cmds import _obj_in_hands
 
 
 class Perfume(Item):
@@ -79,48 +76,6 @@ class Perfume(Item):
         if self.location == user:
             # Default: one-shot bottle; customize as desired.
             self.delete()
-
-
-class CmdUsePerfume(default_cmds.MuxCommand):
-    """
-    Use a perfume bottle you are holding.
-
-    Usage:
-      use perfume
-      use <perfume name>
-
-    Applies its scent overlay and Charisma bonus for a few hours.
-    """
-
-    key = "useperfume"
-    aliases = ["use perfume", "apply perfume", "spray perfume"]
-    locks = "cmd:all()"
-    help_category = "General"
-
-    def func(self):
-        caller = self.caller
-        args = (self.args or "").strip()
-
-        # No args: use the currently wielded object, if it's a perfume.
-        if not args:
-            obj = getattr(caller.db, "wielded_obj", None)
-            if not obj or not isinstance(obj, Perfume):
-                caller.msg("You need to be holding a perfume bottle to use it. Wield one first (|wwield <perfume>|n).")
-                return
-        else:
-            target_name = args
-            obj = caller.search(target_name, location=caller)
-            if not obj:
-                return
-            if not isinstance(obj, Perfume):
-                caller.msg("That is not a perfume bottle.")
-                return
-            # Must be in hand to use.
-            if not _obj_in_hands(caller, obj):
-                caller.msg("You need to be holding that in your hands to use it. Wield it first (|wwield %s|n)." % obj.get_display_name(caller))
-                return
-
-        obj.at_use(caller)
 
 
 def spawn_example_perfume(caller):

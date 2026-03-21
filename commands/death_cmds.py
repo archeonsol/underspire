@@ -87,12 +87,14 @@ def _go_light_unpuppet_all(account):
 
 def _go_light_clear_death_attrs(account):
     """Remove corpse/spirit refs and spirit object from account. Logs and continues on exception."""
-    for key in ("dead_character_name", "dead_character_corpse"):
-        if hasattr(account.db, key):
-            try:
-                del account.db[key]
-            except Exception as e:
-                logger.log_trace("death_cmds._go_light_clear_death_attrs %s: %s" % (key, e))
+    for key in ("dead_character_name", "dead_character_corpse", "clone_snapshot_backup"):
+        try:
+            if hasattr(account.db, key):
+                account.attributes.remove(key)
+        except KeyError:
+            pass
+        except Exception as e:
+            logger.log_trace("death_cmds._go_light_clear_death_attrs %s: %s" % (key, e))
     spirit = getattr(account.db, "death_spirit", None)
     if spirit and hasattr(spirit, "id"):
         if hasattr(account, "characters") and hasattr(account.characters, "remove"):
@@ -104,16 +106,14 @@ def _go_light_clear_death_attrs(account):
             spirit.delete()
         except Exception as e:
             logger.log_trace("death_cmds._go_light_clear_death_attrs spirit.delete: %s" % e)
-    if hasattr(account.db, "death_spirit"):
+    for key in ("death_spirit", "_last_puppet"):
         try:
-            del account.db["death_spirit"]
+            if hasattr(account.db, key):
+                account.attributes.remove(key)
+        except KeyError:
+            pass
         except Exception as e:
-            logger.log_trace("death_cmds._go_light_clear_death_attrs del death_spirit: %s" % e)
-    if hasattr(account.db, "_last_puppet"):
-        try:
-            del account.db["_last_puppet"]
-        except Exception as e:
-            logger.log_trace("death_cmds._go_light_clear_death_attrs del _last_puppet: %s" % e)
+            logger.log_trace("death_cmds._go_light_clear_death_attrs %s: %s" % (key, e))
 
 
 def _go_light_disconnect_sessions(account, reason):
@@ -352,7 +352,11 @@ class CmdGoShard(Command):
             caller.msg("You are not in a state to do that.")
             return
         corpse = getattr(account.db, "dead_character_corpse", None)
-        snapshot = getattr(corpse, "db", None) and getattr(corpse.db, "clone_snapshot", None) if corpse else None
+        snapshot = None
+        if corpse and getattr(corpse, "db", None):
+            snapshot = getattr(corpse.db, "clone_snapshot", None)
+        if not snapshot:
+            snapshot = getattr(account.db, "clone_snapshot_backup", None)
         if not snapshot:
             caller.msg("|yYou have no stored shard. Only |wgo light|n is left.|n")
             return
@@ -387,9 +391,18 @@ class CmdGoShard(Command):
                     logger.log_trace("death_cmds.CmdGoShard remove corpse: %s" % e)
             if corpse and getattr(corpse, "db", None) and hasattr(corpse.db, "clone_snapshot"):
                 try:
-                    del corpse.db["clone_snapshot"]
+                    corpse.attributes.remove("clone_snapshot")
+                except KeyError:
+                    pass
                 except Exception as e:
-                    logger.log_trace("death_cmds.CmdGoShard del clone_snapshot: %s" % e)
+                    logger.log_trace("death_cmds.CmdGoShard remove clone_snapshot: %s" % e)
+            try:
+                if hasattr(account.db, "clone_snapshot_backup"):
+                    account.attributes.remove("clone_snapshot_backup")
+            except KeyError:
+                pass
+            except Exception as e:
+                logger.log_trace("death_cmds.CmdGoShard remove clone_snapshot_backup: %s" % e)
             caller.msg("|xThe shard stirs. You are pulled away from the lobby.|n")
             run_awakening_sequence(account, new_char, spawn_room)
         except Exception as e:
@@ -402,7 +415,9 @@ class CmdGoLight(Command):
     Usage: go light
     """
     key = "go light"
-    aliases = ["go light", "light"]
+    # No bare "light" alias: it steals the first token of phrases like "light tan" (chargen skin tone)
+    # and other IC text while Account + puppet cmdsets are merged with EvMenu.
+    aliases = []
     locks = "cmd:attr(has_spirit_puppet)"
     help_category = "Death"
 

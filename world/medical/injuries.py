@@ -41,6 +41,7 @@ def ensure_injury_schema(injury):
     injury.setdefault("treated", bool(injury.get("treated", False)))
     injury.setdefault("created_at", float(injury.get("created_at", time.time()) or time.time()))
     injury.setdefault("organ_damage", {})
+    injury.setdefault("limb_damage", {})
     injury.setdefault("fracture", None)
     injury.setdefault("bleed_rate", 0.0)
     injury.setdefault("vessel_type", "none")
@@ -61,6 +62,8 @@ def ensure_injury_schema(injury):
     injury["bleed_rate"] = max(0.0, float(injury.get("bleed_rate", 0.0) or 0.0))
     if not isinstance(injury.get("organ_damage"), dict):
         injury["organ_damage"] = {}
+    if not isinstance(injury.get("limb_damage"), dict):
+        injury["limb_damage"] = {}
     injury["treatment_quality"] = max(0, min(3, int(injury.get("treatment_quality", 0) or 0)))
     return injury
 
@@ -85,6 +88,7 @@ def _normalize_injuries(character):
 def rebuild_derived_trauma_views(character):
     injuries = _normalize_injuries(character)
     organ_damage = {}
+    limb_damage = {}
     fractures = []
     for injury in injuries:
         if (injury.get("hp_occupied", 0) or 0) <= 0:
@@ -93,12 +97,22 @@ def rebuild_derived_trauma_views(character):
             if sev <= 0:
                 continue
             organ_damage[organ_key] = max(organ_damage.get(organ_key, 0), int(sev))
+        for limb_key, sev in (injury.get("limb_damage") or {}).items():
+            if sev <= 0:
+                continue
+            limb_damage[limb_key] = max(limb_damage.get(limb_key, 0), int(sev))
         bone = injury.get("fracture")
         if bone and bone not in fractures:
             fractures.append(bone)
     character.db.organ_damage = organ_damage
+    character.db.limb_damage = limb_damage
     character.db.fractures = fractures
-    return organ_damage, fractures
+    try:
+        from world.medical.limb_trauma import enforce_limb_hand_restrictions
+        enforce_limb_hand_restrictions(character)
+    except Exception:
+        pass
+    return organ_damage, limb_damage, fractures
 
 
 def get_active_bleed_wounds(character):

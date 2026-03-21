@@ -74,6 +74,14 @@ class ChromeHandRightBuff(_CyberBuff):
     vulnerabilities = {"arc": 0.08}
 
 
+class ChromeTailBuff(_CyberBuff):
+    key = "chrome_tail"
+    name = "Chrome Tail"
+    flavor = "Counterbalance and proprioception from an articulated appendage."
+    stat_mods = {"agility": 3}
+    vulnerabilities = {"arc": 0.05}
+
+
 class ChromeEyesBuff(_CyberBuff):
     key = "chrome_eyes"
     name = "Chrome Eyes"

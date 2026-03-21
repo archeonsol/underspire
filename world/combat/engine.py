@@ -456,6 +456,14 @@ def can_attack(attacker, defender, weapon_key, wielded_obj):
         combat_msg(attacker, f"You're busy maintaining a grapple on {held_name} and cannot make normal attacks.")
         return False
 
+    try:
+        from world.medical.limb_trauma import is_hand_usable
+        if not is_hand_usable(attacker, "left") and not is_hand_usable(attacker, "right"):
+            combat_msg(attacker, "You can't strike. Your arms are ruined.")
+            return False
+    except Exception:
+        pass
+
     if not can_fight(attacker):
         combat_msg(attacker, "You're too exhausted to strike.")
         atk_name = combat_role_name(attacker, defender, role="attacker")

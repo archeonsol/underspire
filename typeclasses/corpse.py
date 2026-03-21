@@ -31,7 +31,7 @@ class Corpse(Object):
         try:
             from world.appearance import get_effective_body_descriptions, format_body_appearance
             parts = get_effective_body_descriptions(self)
-            merged = format_body_appearance(parts)
+            merged = format_body_appearance(parts, character=self)
             if merged:
                 intro = intro + "\n\n" + merged
         except Exception as e:

@@ -28,10 +28,12 @@ def _ts_display() -> str:
 
 
 def normalize_matrix_id(raw: str) -> str:
+    """Normalize Matrix ID to ^ + uppercase body (matches registry; avoids member-list mismatches)."""
     s = (raw or "").strip()
     if not s:
         return ""
-    return s if s.startswith("^") else f"^{s}"
+    body = s[1:] if s.startswith("^") else s
+    return "^" + body.upper()
 
 
 def generate_group_id(handset) -> str:
@@ -141,6 +143,34 @@ def remove_group_entry(handset, group_id: str) -> None:
         _save_groups(handset, chats)
 
 
+def _as_plain_mapping(value):
+    """Normalize Evennia Attribute wrappers to plain dict (matches device_menu)."""
+    if isinstance(value, Mapping):
+        try:
+            return dict(value)
+        except Exception:
+            return {}
+    return {}
+
+
+def _get_group_payload(handset, group_id: str) -> tuple[str | None, dict | None]:
+    """
+    Resolve group_id to a plain dict and canonical key (uppercase).
+    Handles Evennia wrappers and case-insensitive key lookup.
+    """
+    want = (group_id or "").strip().upper()
+    if not want:
+        return None, None
+    raw = _as_plain_mapping(getattr(getattr(handset, "db", None), "group_chats", None) or {})
+    for k, v in raw.items():
+        if str(k).strip().upper() != want:
+            continue
+        pl = _as_plain_mapping(v) if isinstance(v, Mapping) else {}
+        if isinstance(pl, dict):
+            return str(k).strip().upper(), pl
+    return None, None
+
+
 def resolve_group_by_name(handset, name: str) -> tuple[str | None, dict | None, str | None]:
     """
     Case-insensitive substring match on local group names.
@@ -149,13 +179,18 @@ def resolve_group_by_name(handset, name: str) -> tuple[str | None, dict | None, 
     key = (name or "").strip().lower()
     if not key:
         return None, None, "No group name given."
+    groups = _as_plain_mapping(getattr(getattr(handset, "db", None), "group_chats", None) or {})
     matches = []
-    for gid, data in _groups(handset).items():
+    for gid, data in groups.items():
+        data = _as_plain_mapping(data) if isinstance(data, Mapping) else (data if isinstance(data, dict) else {})
         if not isinstance(data, dict):
             continue
-        gname = str(data.get("name", "") or "").lower()
-        if key in gname or gname.startswith(key):
-            matches.append((gid, data))
+        gname = str((data.get("name") or "") or "").strip().lower()
+        if not gname:
+            continue
+        # Exact match first, then substring
+        if key == gname or key in gname or gname.startswith(key):
+            matches.append((str(gid).strip().upper(), data))
     if len(matches) == 0:
         return None, None, "No group matches that name."
     if len(matches) > 1:
@@ -165,9 +200,8 @@ def resolve_group_by_name(handset, name: str) -> tuple[str | None, dict | None, 
 
 
 def resolve_group_by_id(handset, group_id: str) -> tuple[str | None, dict | None, str | None]:
-    gid = (group_id or "").strip().upper()
-    data = _groups(handset).get(gid)
-    if not isinstance(data, dict):
+    gid, data = _get_group_payload(handset, group_id)
+    if not data:
         return None, None, "You are not in that group."
     return gid, data, None
 
@@ -246,6 +280,20 @@ def lookup_handset(matrix_id: str):
     return obj
 
 
+def _sender_is_group_member(sender_handset, sender_mid: str, members: list[str]) -> bool:
+    """True if sender is in the roster (by id) or any member id resolves to this handset."""
+    if sender_mid and sender_mid in members:
+        return True
+    for m in members:
+        try:
+            h = lookup_handset(m)
+        except Exception:
+            h = None
+        if h is sender_handset:
+            return True
+    return False
+
+
 def apply_sync_from_entry(handset, entry: dict) -> None:
     """Apply member_sync/admin_sync from a system row to local group_chats."""
     if not entry.get("system"):
@@ -281,6 +329,20 @@ def append_texts_entry(handset, entry: dict) -> bool:
     return True
 
 
+def _beep_echo_to_room(holder) -> None:
+    """Echo 'X's handset beeps.' to others in the room."""
+    if not holder:
+        return
+    room = getattr(holder, "location", None)
+    if not room:
+        return
+    hname = holder.get_display_name(holder) if hasattr(holder, "get_display_name") else holder.key
+    try:
+        room.msg_contents(f"{hname}'s handset beeps.", exclude=holder)
+    except Exception:
+        pass
+
+
 def deliver_texts_entry(handset, entry: dict, line_for_holder: str | None) -> None:
     """
     Store entry, apply group sync side effects, optionally beep + show line (respect mute for group).
@@ -301,6 +363,7 @@ def deliver_texts_entry(handset, entry: dict, line_for_holder: str | None) -> No
     if muted and (entry.get("group") or entry.get("group_invite")):
         return
     holder.msg("Your handset beeps.")
+    _beep_echo_to_room(holder)
     holder.msg(line_for_holder)
 
 
@@ -357,29 +420,40 @@ def send_group_message(sender_handset, group_id: str, message: str) -> tuple[int
     msg = (message or "").strip()
     if not msg:
         return 0, 0
-    chats = _groups(sender_handset)
-    g = chats.get(group_id)
-    if not isinstance(g, dict):
+    gid_key, g = _get_group_payload(sender_handset, group_id)
+    if not g:
         return 0, 0
-    members = [normalize_matrix_id(str(m)) for m in (g.get("members") or [])]
+    members = [normalize_matrix_id(str(m)) for m in (g.get("members") or []) if m]
     sender = _self_id(sender_handset)
-    if sender not in members:
+    if not _sender_is_group_member(sender_handset, sender, members):
         return 0, 0
     # Drop dead Matrix IDs from sender's copy before delivering.
     for mid in list(members):
-        if mid != sender and not lookup_handset(mid):
-            prune_dead_member_from_sender(sender_handset, group_id, mid)
-    g = _groups(sender_handset).get(group_id) or {}
-    members = [normalize_matrix_id(str(m)) for m in (g.get("members") or [])]
+        if mid == sender:
+            continue
+        try:
+            h = lookup_handset(mid)
+        except Exception:
+            h = None
+        if h is sender_handset:
+            continue
+        if not h:
+            prune_dead_member_from_sender(sender_handset, gid_key, mid)
+    g2 = _get_group_payload(sender_handset, gid_key)[1] or {}
+    members = [normalize_matrix_id(str(m)) for m in (g2.get("members") or []) if m]
     ts = _ts_display()
     now = time.time()
     total = len(members)
     delivered = 0
-    gname = str(g.get("name", group_id))
+    gname = str(g2.get("name", gid_key))
 
     for mid in members:
-        entry = {"t": now, "ts": ts, "from": sender, "msg": msg, "group": group_id}
-        if mid == sender:
+        entry = {"t": now, "ts": ts, "from": sender, "msg": msg, "group": gid_key}
+        try:
+            is_self = (mid == sender) or (lookup_handset(mid) is sender_handset)
+        except Exception:
+            is_self = mid == sender
+        if is_self:
             line = f"{COMM['phone_call']}[{gname}]|n You: {msg}"
             deliver_texts_entry(sender_handset, entry, line)
             delivered += 1
@@ -611,6 +685,7 @@ def _beep_decline_notice(inviter_handset, declining_handset, group_name: str) ->
     holder = inviter_handset.get_authenticated_user() if hasattr(inviter_handset, "get_authenticated_user") else None
     if holder:
         holder.msg("Your handset beeps.")
+        _beep_echo_to_room(holder)
         holder.msg(f"{MC['compensated']}Your invite to|n {COMM['say']}'{group_name}'|n {MC['compensated']}was declined.|n")
 
 
@@ -679,6 +754,7 @@ def kick_member(admin_handset, group_id: str, target_mid: str) -> tuple[bool, st
             holder = victim.get_authenticated_user() if hasattr(victim, "get_authenticated_user") else None
             if holder:
                 holder.msg("Your handset beeps.")
+                _beep_echo_to_room(holder)
                 holder.msg(f"{MC['critical']}You were removed from|n {COMM['say']}'{gname}'|n.")
 
     chats_ad = dict(_groups(admin_handset))

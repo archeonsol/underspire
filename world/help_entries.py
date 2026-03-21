@@ -31,8 +31,8 @@ HELP_ENTRY_DICTS = [
         "category": "General",
         "text": """
             Pronoun and name tokens let you write one message that adapts to who sees it and to
-            the wearer's/target's pronouns. They work in |wtease|n messages, |wdescribe_bodypart|n
-            text, |wlp|n/|wpose|n (room pose), and clothing |wworndesc|n.
+            the wearer's/target's pronouns. They work in |wtease|n messages, |w@body|n
+            part lines, |wlp|n/|wpose|n (room pose), and clothing |wworndesc|n.
 
             # Wearer / first person (doer)
 
@@ -67,7 +67,7 @@ HELP_ENTRY_DICTS = [
 
             # Examples
 
-            describe_bodypart head = $S has a scar across $p brow.
+            @body head = $S has a scar across $p brow.
             lp leaning on the wall, $p arms crossed.
             tease message: $N .flash $p $I at $T and .grin.
         """,

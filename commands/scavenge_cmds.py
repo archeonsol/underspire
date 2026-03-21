@@ -490,7 +490,7 @@ class CmdSever(Command):
         if not target:
             return
 
-        # Resolve body part (reuse same rules as describe_bodypart).
+        # Resolve body part (reuse same rules as @body).
         raw = part_raw.strip().lower()
         full = raw
         if full not in BODY_PARTS:

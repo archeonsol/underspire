@@ -446,6 +446,14 @@ def attempt_splint(operator, target, bone_key, tool_type=None, tool_obj=None):
         label = BONE_TREATMENT_LABEL.get(bone_key, f"fractured {BONE_INFO.get(bone_key, bone_key)}")
         return False, f"There is no fracture there to treat ({label})."
 
+    injuries = getattr(target.db, "injuries", None) or []
+    for i in injuries:
+        if i.get("fracture") != bone_key or (i.get("hp_occupied", 0) or 0) <= 0:
+            continue
+        if i.get("fracture_destroyed"):
+            return False, "The bone is splintered beyond salvage. Field immobilization will not hold — they need a chrome limb."
+        break
+
     splinted = target.db.splinted_bones or []
     if bone_key in splinted:
         return False, "That fracture is already reduced and immobilized. No further field intervention indicated."
@@ -456,6 +464,18 @@ def attempt_splint(operator, target, bone_key, tool_type=None, tool_obj=None):
 
     label = BONE_TREATMENT_LABEL.get(bone_key, f"Splint {BONE_INFO.get(bone_key, bone_key)}")
     if success_level == 0:
+        from world.medical.limb_trauma import body_part_to_limb_slot
+        injuries = getattr(target.db, "injuries", None) or []
+        for i in injuries:
+            if i.get("fracture") != bone_key or (i.get("hp_occupied", 0) or 0) <= 0:
+                continue
+            slot = body_part_to_limb_slot((i.get("body_part") or "").strip())
+            if slot and int((i.get("limb_damage") or {}).get(slot, 0) or 0) >= 3:
+                i["fracture_destroyed"] = True
+                target.db.injuries = injuries
+                rebuild_derived_trauma_views(target)
+                return False, random.choice(_SPLINT_FAIL) + " The limb is mangled beyond field repair. Chrome replacement is the only option."
+            break
         return False, random.choice(_SPLINT_FAIL)
 
     splinted = list(splinted) + [bone_key]
@@ -712,6 +732,7 @@ def get_treatment_options(operator, target, tools_by_type):
         try:
             from typeclasses.medical_tools import OperatingTable
             from world.medical.cybersurgery import _check_cyberware_conflicts, find_chrome_replacement_in_inventory, is_organ_destroyed
+            from world.medical.limb_trauma import is_limb_destroyed, LIMB_INFO, LIMB_SLOTS
             table = None
             loc = getattr(operator, "location", None)
             if loc:
@@ -750,6 +771,14 @@ def get_treatment_options(operator, target, tools_by_type):
                         if replacement:
                             organ_name = ORGAN_INFO.get(organ_key, (organ_key,))[0]
                             options.append(("chrome_replace", f"Chrome replacement: {organ_name}", TOOL_SURGICAL_KIT, (organ_key, replacement.id)))
+                for limb_key in sorted(LIMB_SLOTS):
+                    sev = int((target.db.limb_damage or {}).get(limb_key, 0) or 0)
+                    if sev < 3 or not is_limb_destroyed(target, limb_key):
+                        continue
+                    replacement = find_chrome_replacement_in_inventory(operator, limb_key)
+                    if replacement:
+                        limb_name = LIMB_INFO.get(limb_key, (limb_key,))[0]
+                        options.append(("chrome_replace", f"Chrome limb: {limb_name}", TOOL_SURGICAL_KIT, (limb_key, replacement.id)))
         except Exception:
             pass
 

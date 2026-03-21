@@ -28,6 +28,8 @@ def _ensure_medical_db(character):
     """
     if character.db.organ_damage is None:
         character.db.organ_damage = {}
+    if character.db.limb_damage is None:
+        character.db.limb_damage = {}
     if character.db.fractures is None:
         character.db.fractures = []
     if character.db.bleeding_level is None:

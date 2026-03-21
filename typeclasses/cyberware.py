@@ -36,6 +36,7 @@ class CyberwareBase(DefaultObject):
         }
         armor_values = {}          # Optional. {damage_type: protection_score}
         damage_model = "none"      # Optional durability routing model.
+        adds_body_parts = []       # Optional. Part keys appended to anatomy before body_mods (world.body).
 
     mode "lock"   — fully replaces the character's naked for that body part.
                     The user cannot edit it while installed.
@@ -63,6 +64,9 @@ class CyberwareBase(DefaultObject):
     required_implants = []  # class names that must already be installed
     required_implants_any = []  # at least one of these class names must be installed
     conflicts_with = []  # class names that cannot coexist
+    # Body part keys this implant adds to anatomy if missing (e.g. tail for a human).
+    # Applied before body_mods during install; see world.body.commit_adds_body_parts.
+    adds_body_parts = []
 
     # Surgery defaults: wound recorded when installed/removed via surgery.
     # Override surgery_body_part to target a specific part; otherwise the first

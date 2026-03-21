@@ -12,9 +12,8 @@ Each layer can be extended independently. The pipeline order:
 Skin tone and chrome colors are applied at render time (see world.skin_tones).
 """
 
-from world.body import BODY_PART_GROUPS, get_part_state, is_part_present
+from world.body import body_part_groups_for_character, get_character_body_parts, get_part_state, is_part_present
 from world.medical import (
-    BODY_PARTS,
     BODY_PART_BONES,
     BODY_PART_ORGANS,
     _pronoun_sub_poss,
@@ -145,7 +144,7 @@ def get_effective_body_descriptions(character):
 
     result = {}
 
-    for part in BODY_PARTS:
+    for part in get_character_body_parts(character):
         missing = not is_part_present(character, part)
         base_naked = (raw_body.get(part) or "").strip()
 
@@ -170,7 +169,7 @@ def get_effective_body_descriptions(character):
             bio_bits.extend(treat_segs)
             bio_joined = " ".join(bio_bits).strip()
             if bio_joined:
-                bio_colored = apply_skin_tone_to_bio_text(character, bio_joined)
+                bio_colored = apply_skin_tone_to_bio_text(character, bio_joined, part=part)
                 result[part] = f"{chrome_block} {bio_colored}".strip() if chrome_block else bio_colored
             else:
                 result[part] = chrome_block
@@ -196,14 +195,14 @@ def get_effective_body_descriptions(character):
         bio_plain = " ".join(bio_bits).strip()
 
         if chrome_fragments:
-            bio_colored = apply_skin_tone_to_bio_text(character, bio_plain) if bio_plain else ""
+            bio_colored = apply_skin_tone_to_bio_text(character, bio_plain, part=part) if bio_plain else ""
             chrome_joined = " ".join(chrome_fragments)
             if bio_colored:
                 result[part] = f"{bio_colored} {chrome_joined}".strip()
             else:
                 result[part] = chrome_joined
         else:
-            result[part] = apply_skin_tone_to_bio_text(character, bio_plain) if bio_plain else ""
+            result[part] = apply_skin_tone_to_bio_text(character, bio_plain, part=part) if bio_plain else ""
 
     # Layer 5: Clothing — replace covered parts with uncolored worn description
     worn = get_worn_items(character)
@@ -220,16 +219,18 @@ def get_effective_body_descriptions(character):
     return result
 
 
-def format_body_appearance(parts_dict):
+def format_body_appearance(parts_dict, character=None):
     """
     Merge body-part descriptions into three paragraphs (head/face, upper body, lower body).
     Identical descriptions within a region are shown once (first occurrence order) so a
     garment covering e.g. torso+shoulders doesn't repeat.
+    When character is set, race-specific display order applies (e.g. tail after abdomen).
     """
     if not parts_dict:
         return ""
     paragraphs = []
-    for group in BODY_PART_GROUPS:
+    groups = body_part_groups_for_character(character)
+    for group in groups:
         seen = set()
         bits = []
         for p in group:

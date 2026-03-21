@@ -2,7 +2,7 @@
 Device Interface Menu
 
 EvMenu-based interface for interacting with networked devices.
-Can be accessed from meatspace (via 'operate' command) or from Matrix (via 'patch cmd.exe').
+Can be accessed from meatspace (via 'use <device>' or 'operate' alias) or from Matrix (via 'patch cmd.exe').
 """
 
 from evennia import EvMenu

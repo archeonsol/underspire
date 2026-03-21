@@ -32,7 +32,7 @@ from evennia.settings_default import *
 ######################################################################
 
 # This is the name of your game. Make it catchy!
-SERVERNAME = "Underspire"
+SERVERNAME = "UNDERSPIRE"
 
 # Command set for Characters (must be the game's CharacterCmdSet so stats/heal etc. are available).
 CMDSET_CHARACTER = "commands.default_cmdsets.CharacterCmdSet"
@@ -118,6 +118,7 @@ PROTOTYPE_MODULES = [
     "world.prototypes.medical_prototypes",
     "world.prototypes.cyberware_prototypes",
     "world.prototypes.armor_prototypes",
+    "world.prototypes.faction_prototypes",
 ]
 
 ######################################################################

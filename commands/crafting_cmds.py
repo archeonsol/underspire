@@ -135,6 +135,8 @@ class CmdTailor(Command):
       @tailor [bolt] seethru               - toggle see-through (body/clothes show through this layer)
       @tailor [bolt] altstate              - switch tailoring edits between primary (A) and alternate (B) state
       @tailor [bolt] finalize              - roll tailoring and turn bolt into wearable clothing
+      @tailor modify <garment> tail        - add tail accommodation (coverage + desc note)
+      @tailor modify <garment> no-tail     - remove tail accommodation
 
     Layering:
       Tailored clothing is automatically assigned a clothing layer (0-5) based on its name:
@@ -169,7 +171,46 @@ class CmdTailor(Command):
     def func(self):
         caller = self.caller
         from world.rpg.tailoring import tailor_parse_args
+        from typeclasses.clothing import Clothing
+
         bolt_spec, subcmd, value = tailor_parse_args(self.args)
+
+        if subcmd == "modify":
+            if not (value or "").strip():
+                caller.msg("Usage: @tailor modify <garment> tail|no-tail")
+                return
+            bits = value.split()
+            if len(bits) < 2:
+                caller.msg("Usage: @tailor modify <garment> tail|no-tail")
+                return
+            mode = bits[-1].lower()
+            if mode not in ("tail", "no-tail"):
+                caller.msg("Usage: @tailor modify <garment> tail|no-tail")
+                return
+            garment_spec = " ".join(bits[:-1])
+            garment = caller.search(garment_spec, location=caller)
+            if not garment:
+                return
+            if not isinstance(garment, Clothing):
+                caller.msg("That isn't a tailored garment.")
+                return
+            TAIL_NOTE = "A tail slit has been cut in the back."
+            parts = list(getattr(garment.db, "covered_parts", None) or [])
+            if mode == "tail":
+                if "tail" not in parts:
+                    parts.append("tail")
+                    garment.db.covered_parts = parts
+                desc = (getattr(garment.db, "desc", None) or "").strip()
+                if TAIL_NOTE not in desc:
+                    garment.db.desc = (desc + "\n\n" + TAIL_NOTE).strip() if desc else TAIL_NOTE
+                caller.msg("You add tail accommodation to %s." % garment.get_display_name(caller))
+            else:
+                garment.db.covered_parts = [p for p in parts if p != "tail"]
+                desc = (getattr(garment.db, "desc", None) or "")
+                if TAIL_NOTE in desc:
+                    garment.db.desc = desc.replace(TAIL_NOTE, "").replace("\n\n\n", "\n\n").strip()
+                caller.msg("You remove tail accommodation from %s." % garment.get_display_name(caller))
+            return
 
         if not bolt_spec and not subcmd:
             caller.msg("Usage: @tailor [bolt] [name|aliases|desc|worndesc|tease|coverage|seethru|altstate|finalize] ...")
@@ -289,7 +330,8 @@ class CmdTailor(Command):
             parts = value.split() if value else []
             canonical, invalid = resolve_coverage_args(parts)
             if invalid:
-                caller.msg("Unknown body parts: %s. Use: %s" % (", ".join(invalid), ", ".join(BODY_PARTS_HEAD_TO_FEET)))
+                cov_hint = ", ".join(BODY_PARTS_HEAD_TO_FEET) + ", tail"
+                caller.msg("Unknown body parts: %s. Use: %s" % (", ".join(invalid), cov_hint))
                 return
             active = getattr(bolt.db, "draft_active_state", "a") or "a"
             if active == "b":
@@ -369,9 +411,10 @@ class CmdTailor(Command):
                 cov_parts = rest.split() if rest else []
                 canonical, invalid = resolve_coverage_args(cov_parts)
                 if invalid:
+                    cov_hint = ", ".join(BODY_PARTS_HEAD_TO_FEET) + ", tail"
                     caller.msg(
                         "Unknown body parts: %s. Use: %s"
-                        % (", ".join(invalid), ", ".join(BODY_PARTS_HEAD_TO_FEET))
+                        % (", ".join(invalid), cov_hint)
                     )
                     return
                 cfg["covered_parts"] = canonical

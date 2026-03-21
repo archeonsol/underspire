@@ -722,3 +722,195 @@ class CmdMatrixLink(Command):
 
         if matrix_id:
             caller.msg(f"Access Point ID assigned: |m{matrix_id}|n")
+
+
+def _resolve_exit_for_builder(caller, spec):
+    """
+    Resolve an exit from a direction keyword/alias in the caller's room, or #dbref anywhere.
+    """
+    spec = (spec or "").strip()
+    if not spec:
+        return None
+    if spec.startswith("#"):
+        from evennia.utils.search import search_object
+
+        res = search_object(spec)
+        return res[0] if res else None
+    from commands.door_cmds import find_exit_by_direction
+
+    return find_exit_by_direction(caller, spec)
+
+
+class CmdDoor(Command):
+    """
+    Configure door / bioscan attributes on an exit in your current room (or by #dbref).
+
+    Usage:
+        @door <direction|#dbref> = basic
+        @door <direction|#dbref> = locked <key_tag>
+        @door <direction|#dbref> = bioscan faction <FACTION_KEY>
+        @door <direction|#dbref> = bioscan rank <FACTION_KEY> <rank#>
+        @door <direction|#dbref> = bioscan whitelist
+
+    Examples:
+        @door east = basic
+        @door east = locked key_medbay
+        @door east = bioscan faction IMP
+        @door east = bioscan rank IMP 3
+    """
+
+    key = "@door"
+    aliases = ["budoor"]
+    locks = "cmd:perm(Builder)"
+    help_category = "Building"
+
+    def func(self):
+        caller = self.caller
+        args = (self.args or "").strip()
+        if "=" not in args:
+            caller.msg(
+                "Usage: |w@door <direction|#exit> = basic|n | |wlocked <key_tag>|n | "
+                "|wbioscan faction <KEY>|n | |wbioscan rank <KEY> <#>|n | |wbioscan whitelist|n"
+            )
+            return
+        left, right = args.split("=", 1)
+        exit_spec = left.strip()
+        rest = right.strip()
+        if not exit_spec or not rest:
+            caller.msg("Invalid arguments.")
+            return
+
+        ex = _resolve_exit_for_builder(caller, exit_spec)
+        if not ex:
+            caller.msg("No matching exit found.")
+            return
+        if not hasattr(ex, "destination"):
+            caller.msg("That object is not an exit.")
+            return
+
+        tokens = rest.split()
+        mode = (tokens[0] or "").lower()
+
+        if mode == "basic":
+            ex.db.door = True
+            ex.db.door_open = False
+            ex.db.door_name = getattr(ex.db, "door_name", None) or "door"
+            ex.db.door_locked = False
+            ex.db.door_key_tag = None
+            ex.db.door_auto_close = int(getattr(ex.db, "door_auto_close", None) or 0)
+            ex.db.bioscan = False
+            ex.db.bioscan_type = "faction"
+            ex.db.bioscan_faction = ""
+            ex.db.bioscan_rank = 1
+            ex.db.bioscan_whitelist = []
+            caller.msg(f"Set |w{ex.key}|n as a basic door (closed).")
+            return
+
+        if mode == "locked":
+            if len(tokens) < 2:
+                caller.msg("Usage: |w@door <exit> = locked <key_tag>|n (tag category |wkey|n on key items).")
+                return
+            key_tag = tokens[1]
+            ex.db.door = True
+            ex.db.door_open = False
+            ex.db.door_name = getattr(ex.db, "door_name", None) or "door"
+            ex.db.door_locked = True
+            ex.db.door_key_tag = key_tag
+            ex.db.door_auto_close = int(getattr(ex.db, "door_auto_close", None) or 0)
+            ex.db.bioscan = False
+            caller.msg(f"Set |w{ex.key}|n as a locked door (key tag |w{key_tag}|n).")
+            return
+
+        if mode == "bioscan":
+            if len(tokens) < 2:
+                caller.msg(
+                    "Usage: |w@door <exit> = bioscan faction <KEY>|n or |wbioscan rank <KEY> <#>|n or |wbioscan whitelist|n"
+                )
+                return
+            sub = tokens[1].lower()
+            ex.db.door = True
+            ex.db.door_open = False
+            ex.db.door_locked = False
+            ex.db.door_name = getattr(ex.db, "door_name", None) or "door"
+            ex.db.bioscan = True
+            ex.db.bioscan_auto_close = int(getattr(ex.db, "bioscan_auto_close", None) or 8)
+            ex.db.bioscan_sound_fail = True
+            if sub == "faction":
+                if len(tokens) < 3:
+                    caller.msg("Specify faction key, e.g. |w@door east = bioscan faction IMP|n")
+                    return
+                ex.db.bioscan_type = "faction"
+                ex.db.bioscan_faction = tokens[2].upper()
+                ex.db.bioscan_rank = 1
+                caller.msg(f"Bioscan door on |w{ex.key}|n: faction |w{ex.db.bioscan_faction}|n.")
+                return
+            if sub == "rank":
+                if len(tokens) < 4:
+                    caller.msg("Usage: |w@door <exit> = bioscan rank <FACTION_KEY> <rank#>|n")
+                    return
+                try:
+                    rnk = int(tokens[3])
+                except ValueError:
+                    caller.msg("Rank must be a number.")
+                    return
+                ex.db.bioscan_type = "rank"
+                ex.db.bioscan_faction = tokens[2].upper()
+                ex.db.bioscan_rank = rnk
+                caller.msg(
+                    f"Bioscan door on |w{ex.key}|n: |w{ex.db.bioscan_faction}|n rank >= {rnk}."
+                )
+                return
+            if sub == "whitelist":
+                ex.db.bioscan_type = "whitelist"
+                ex.db.bioscan_whitelist = []
+                ex.db.bioscan_faction = ""
+                caller.msg(
+                    f"Bioscan door on |w{ex.key}|n: whitelist (empty). Add character ids to |wbioscan_whitelist|n via @set."
+                )
+                return
+            caller.msg("Unknown bioscan mode. Use |wfaction|n, |wrank|n, or |wwhitelist|n.")
+            return
+
+        caller.msg("Unknown type. Use |wbasic|n, |wlocked|n, or |wbioscan|n.")
+
+
+class CmdDoorPair(Command):
+    """
+    Link two exits as paired doors (opening/closing one syncs the other).
+
+    Usage:
+        @doorpair <exit1> = <exit2>
+
+    Each side can be a direction (from your current room) or #dbref of an exit.
+    """
+
+    key = "@doorpair"
+    aliases = ["budoorpair"]
+    locks = "cmd:perm(Builder)"
+    help_category = "Building"
+
+    def func(self):
+        caller = self.caller
+        args = (self.args or "").strip()
+        if "=" not in args:
+            caller.msg("Usage: |w@doorpair <direction|#dbref> = <direction|#dbref>|n")
+            return
+        left, right = args.split("=", 1)
+        ex1 = _resolve_exit_for_builder(caller, left.strip())
+        ex2 = _resolve_exit_for_builder(caller, right.strip())
+        if not ex1 or not ex2:
+            caller.msg("Could not resolve one or both exits.")
+            return
+        if not hasattr(ex1, "destination") or not hasattr(ex2, "destination"):
+            caller.msg("Both sides must be exits.")
+            return
+        if ex1.id == ex2.id:
+            caller.msg("Cannot pair an exit with itself.")
+            return
+
+        ex1.db.door_pair = ex2.id
+        ex2.db.door_pair = ex1.id
+        caller.msg(
+            f"Door pair: |w{ex1.key}|n (#{ex1.id}) <-> |w{ex2.key}|n (#{ex2.id}). "
+            "Open/close/verify syncs both sides."
+        )

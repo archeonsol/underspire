@@ -14,10 +14,16 @@ from evennia.objects.objects import DefaultExit
 from .objects import ObjectParent
 
 try:
-    from world.staggered_movement import WALK_DELAY, CRAWL_DELAY, _staggered_walk_callback
+    from world.rpg.staggered_movement import (
+        WALK_DELAY,
+        CRAWL_DELAY_EXHAUSTED,
+        CRAWL_DELAY_LEG_TRAUMA,
+        _staggered_walk_callback,
+    )
 except ImportError:
     WALK_DELAY = 3.5
-    CRAWL_DELAY = 7.0
+    CRAWL_DELAY_EXHAUSTED = 8.5
+    CRAWL_DELAY_LEG_TRAUMA = 16.0
     _staggered_walk_callback = None
 
 
@@ -77,6 +83,42 @@ class Exit(ObjectParent, DefaultExit):
                     return
             except Exception:
                 pass
+
+        # Doors and faction-locked exits (before stamina / staggered move)
+        try:
+            from world.rpg.factions import is_faction_member
+            from world.rpg.factions.membership import get_member_rank
+            from world.rpg.factions.doors import staff_bypass as _faction_staff
+
+            if _faction_staff(traversing_object):
+                pass
+            else:
+                door = getattr(self.db, "door", None)
+                if door and not getattr(self.db, "door_open", False):
+                    dname = getattr(self.db, "door_name", None) or "door"
+                    if getattr(self.db, "door_locked", None):
+                        traversing_object.msg(f"The {dname} is locked.")
+                    elif getattr(self.db, "bioscan", None):
+                        dk = (self.key or "that way").strip()
+                        traversing_object.msg(
+                            f"The {dname} requires bioscan verification. Use: verify {dk}"
+                        )
+                    else:
+                        traversing_object.msg(f"The {dname} is closed.")
+                    return
+
+                fk = getattr(self.db, "faction_required", None)
+                if fk:
+                    min_r = int(getattr(self.db, "faction_required_rank", None) or 1)
+                    if not is_faction_member(traversing_object, fk):
+                        traversing_object.msg("|rAccess denied. Wrong faction clearance.|n")
+                        return
+                    if get_member_rank(traversing_object, fk) < min_r:
+                        traversing_object.msg("|rAccess denied. Insufficient rank.|n")
+                        return
+        except Exception:
+            pass
+
         try:
             from world.rpg.stamina import is_exhausted, spend_stamina, STAMINA_COST_WALK, STAMINA_COST_CRAWL
         except ImportError:
@@ -85,14 +127,19 @@ class Exit(ObjectParent, DefaultExit):
             STAMINA_COST_WALK = 1
             STAMINA_COST_CRAWL = 0
         exhausted = is_exhausted(traversing_object)
-        # Characters missing a leg/foot can only crawl (dragging themselves).
+        # Characters missing a leg/foot, or with an unsalvageable leg, must crawl (drag).
         try:
             missing = set(getattr(getattr(traversing_object, "db", None), "missing_body_parts", []) or [])
         except Exception:
             missing = set()
         leg_lost = bool(missing.intersection({"left thigh", "right thigh", "left foot", "right foot"}))
-        if leg_lost:
-            exhausted = True
+        try:
+            from world.medical.limb_trauma import is_limb_destroyed
+            if is_limb_destroyed(traversing_object, "left_leg") or is_limb_destroyed(traversing_object, "right_leg"):
+                leg_lost = True
+        except Exception:
+            pass
+        force_crawl = exhausted or leg_lost
         # High intoxication: occasionally stagger into a random exit instead of intended one.
         stagger_direction = None
         try:
@@ -125,11 +172,14 @@ class Exit(ObjectParent, DefaultExit):
             except Exception:
                 db.cancel_walking = False
 
-        if exhausted:
+        if force_crawl:
             spend_stamina(traversing_object, STAMINA_COST_CRAWL)
-            delay_secs = CRAWL_DELAY
+            delay_secs = CRAWL_DELAY_LEG_TRAUMA if leg_lost else CRAWL_DELAY_EXHAUSTED
             direction = stagger_direction or (self.key or "away").strip()
-            traversing_object.msg(f"You crawl slowly {direction}.")
+            if leg_lost:
+                traversing_object.msg(f"You drag yourself {direction}, barely moving.")
+            else:
+                traversing_object.msg(f"You crawl slowly {direction}.")
         else:
             spend_stamina(traversing_object, STAMINA_COST_WALK)
             delay_secs = WALK_DELAY
@@ -143,22 +193,41 @@ class Exit(ObjectParent, DefaultExit):
             viewers = [c for c in loc.contents_get(content_type="character") if c is not traversing_object]
             for viewer in viewers:
                 display = get_move_display_for_viewer(traversing_object, viewer)
-                if exhausted:
-                    viewer.msg(f"{display} crawls slowly {direction}.")
+                if force_crawl:
+                    viewer.msg(
+                        f"{display} drags along the ground {direction}."
+                        if leg_lost
+                        else f"{display} crawls slowly {direction}."
+                    )
                 else:
                     viewer.msg(f"{display} begins walking {direction}.")
-        if _staggered_walk_callback:
-            delay(delay_secs, _staggered_walk_callback, traversing_object.id, destination.id)
+        cb = _staggered_walk_callback
+        if cb:
+            delay(delay_secs, cb, traversing_object.id, destination.id)
         else:
-            traversing_object.move_to(destination)
-            victim = getattr(getattr(traversing_object, "db", None), "grappling", None)
-            if victim and hasattr(victim, "move_to"):
-                victim.move_to(destination, quiet=True)
-                if destination and hasattr(destination, "contents_get"):
-                    for v in destination.contents_get(content_type="character"):
-                        if v in (traversing_object, victim):
-                            continue
-                        vname = victim.get_display_name(v) if hasattr(victim, "get_display_name") else victim.name
-                        oname = traversing_object.get_display_name(v) if hasattr(traversing_object, "get_display_name") else traversing_object.name
-                        v.msg("%s is dragged in by %s." % (vname, oname))
+            # Never move instantly — same delay as normal stagger (fixes missing callback = teleport bug).
+            def _fallback_move():
+                o, d = traversing_object, destination
+                if not o or not d:
+                    return
+                db = getattr(o, "db", None)
+                if db is not None and getattr(db, "cancel_walking", False):
+                    try:
+                        del db.cancel_walking
+                    except Exception:
+                        db.cancel_walking = False
+                    return
+                o.move_to(d)
+                victim = getattr(getattr(o, "db", None), "grappling", None)
+                if victim and hasattr(victim, "move_to"):
+                    victim.move_to(d, quiet=True)
+                    if d and hasattr(d, "contents_get"):
+                        for v in d.contents_get(content_type="character"):
+                            if v in (o, victim):
+                                continue
+                            vname = victim.get_display_name(v) if hasattr(victim, "get_display_name") else victim.name
+                            oname = o.get_display_name(v) if hasattr(o, "get_display_name") else o.name
+                            v.msg("%s is dragged in by %s." % (vname, oname))
+
+            delay(delay_secs, _fallback_move)
         return

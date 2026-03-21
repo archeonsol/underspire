@@ -94,65 +94,11 @@ MARKS_TIER_INTRO = {
     ),
 }
 
-BACKGROUNDS = [
-    (
-        "Corporate Hab-Sector",
-        "Corporate Hab-Sector",
-        "The sealed sectors smell of processed air and other people's decisions. "
-        "Nutrition, a bunk, fluorescent light engineered to approximate daylight "
-        "without quite achieving it. You had quotas, compliance reviews, the "
-        "particular silence of people who know better than to ask certain questions. "
-        "You learned to want things the system doesn't catalog. That's usually how it starts."
-    ),
-    (
-        "The Smog-Lungs (Labour)",
-        "Smog-Lungs",
-        "Twelve-hour shifts in the refineries. The respirator that doesn't filter "
-        "everything — you learn this slowly, in the cough you've had since your "
-        "late teens. The supervisors say the exposure levels are within tolerance. "
-        "The tolerance levels are set by the same Authority that owns the refineries "
-        "and the clinic that treats the exposure. You stopped trusting tolerance a long time ago."
-    ),
-    (
-        "Undercity Rat",
-        "Undercity Rat",
-        "No sector assignment. No ration card — or a number the system stopped "
-        "looking for. The deep tunnels: trade routes that appear on no official map, "
-        "commerce that happens in the gaps of the Authority's attention. You learned "
-        "to read silence — which kind means nothing, which kind means something is "
-        "already in the walls with you."
-    ),
-    (
-        "Barracks-Child",
-        "Barracks-Child",
-        "The Guard housing blocks are adjacent to the barracks. You grew up counting "
-        "checkpoint steps, learning the weight of a mag-rifle by sight, reading the "
-        "expression on a face that has just been authorized to use force. Whether you "
-        "loved what you grew up near or feared it or both — the Rite doesn't care. "
-        "It reads the shape it left on you."
-    ),
-    (
-        "Apostate Sympathizer",
-        "Apostate Sympathizer",
-        "The Inquisition defines heresy in the present tense — it updates, revises, "
-        "reaches backward to reclassify what was permitted last cycle. Your family "
-        "whispered. You learned to read tone before words, to know which silences "
-        "were neutral and which were the kind that ended with a door and then nothing. "
-        "You know what the Inquisition hunts. You know how good it is at finding it."
-    ),
-    (
-        "Inquisitorial Servant",
-        "Inquisitorial Servant",
-        "There are many ways to serve. You filed requisitions, or ran messages, or "
-        "did the thing that happens after the door closes that no one refers to by "
-        "name. You've seen the Inquisition from inside the procedure. You've watched "
-        "the machinery. Whatever you decided about what you saw — you're here now, "
-        "in a room that doesn't appear in any Inquisitorial record. Not yet."
-    ),
-]
-
 HEIGHT_RANGES_CM = {"short": (152, 165), "average": (166, 178), "tall": (180, 195)}
 WEIGHT_RANGES_KG = {"thin": (45, 58), "average": (59, 82), "heavy": (83, 110)}
+# Player characters must be adults; upper bound keeps input plausible.
+CHARGEN_MIN_AGE = 18
+CHARGEN_MAX_AGE = 120
 
 _CHARGEN_TEMP_ATTRS = (
     "stat_points", "skill_points", "chargen_xp", "skill_chargen_xp",
@@ -165,6 +111,25 @@ _BLOCKED_MENU_ESCAPES = {"q", "quit", "exit", "@quit", "@q", "logout", "disconne
 
 def _is_blocked_menu_escape(raw_string: str) -> bool:
     return (raw_string or "").strip().lower() in _BLOCKED_MENU_ESCAPES
+
+
+def _parse_skintone_menu_input(raw_string: str):
+    """
+    If input mirrors the @skintone command (EvMenu does not run cmdsets on nodes),
+    return ("palette",) to show the list, or ("choose", arg) to set from arg.
+    Otherwise return None.
+    """
+    s = (raw_string or "").strip()
+    if not s:
+        return None
+    parts = s.split(None, 1)
+    head = parts[0].lower()
+    if head not in ("@skintone", "skintone"):
+        return None
+    if len(parts) == 1:
+        return ("palette",)
+    return ("choose", parts[1].strip())
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # UI HELPERS
@@ -494,39 +459,82 @@ def node_intro_lore(caller, raw_string="", **kwargs):
         "don't have time to see what they carry instead.|n\n\n"
         "|xYou are here because you ran out of other rooms. "
         "Or because something found you that you haven't named yet.|n\n\n"
-        "|R\"Your origin. Where did you come from?\"|n"
+        "|R\"Continue. The next mark is not where you came from. It's what you are.\"|n"
     )
     text    = _slab("THE PACT", text_body, status=f"IDENTITY LOGGED: {caller.key.upper()}")
-    options = [{"desc": "|rContinue|n", "goto": "node_background"}]
+    options = [{"desc": "|rContinue|n", "goto": "node_race"}]
     return text, options
 
-def node_background(caller):
+
+def node_race(caller, raw_string="", **kwargs):
     text_body = (
-        "|xThe Rite needs a point of origin. Blood has a longer memory than language. "
-        "Where you came from shapes what you became.|n\n\n"
-        "|xChoose |Ronce|x. The Rite does not offer second drafts.|n"
+        "|xThe sigil deepens. The grooves in the stone are reading "
+        "something older than skill or origin — the shape of the body "
+        "itself. What was built. What was modified. What was inherited "
+        "from a program that ended before you were born.|n\n\n"
+        "|R\"What are you? Not who. What.\"|n"
     )
-    text    = _slab("ORIGIN", text_body, status="SELECT BACKGROUND ANCHOR")
-    options = []
-    for i, (disp_name, _bg_key, _flavor) in enumerate(BACKGROUNDS):
-        options.append({
-            "desc": f"  |w{disp_name}|n",
-            "goto": ("node_apply_background", {"bg_index": i}),
-        })
+    text = _slab("THE VESSEL", text_body, status="VESSEL CLASSIFICATION REQUIRED")
+    options = [
+        {"desc": "  |wHuman|n\n     Unmodified baseline. The template the colony was built for.", "goto": ("node_apply_race", {"race": "human"})},
+        {
+            "desc": "  |wSplicer|n\n     Gene-spliced with animal DNA. The program ended.\n     The modifications didn't.",
+            "goto": ("node_apply_race", {"race": "splicer"}),
+        },
+    ]
     return text, options
 
-def node_apply_background(caller, raw_string="", **kwargs):
-    idx = max(0, min(kwargs.get("bg_index", 0), len(BACKGROUNDS) - 1))
-    disp_name, bg_key, flavor = BACKGROUNDS[idx]
-    caller.db.background = bg_key
 
+def node_apply_race(caller, raw_string="", **kwargs):
+    race = (kwargs.get("race") or "human").strip().lower()
+    if race not in ("human", "splicer"):
+        race = "human"
+    caller.db.race = race
+    if race == "human":
+        caller.db.splicer_animal = None
+        return node_priority_intro(caller)
+    bd = dict(getattr(caller.db, "body_descriptions", None) or {})
+    bd.setdefault("tail", "")
+    caller.db.body_descriptions = bd
+    caller.msg(
+        "|xWhen you set your short description (|w@sdesc|x), consider including your "
+        "splice features. The world sees them before it sees you.|n"
+    )
+    return node_splicer_animal(caller)
+
+
+def node_splicer_animal(caller, raw_string="", **kwargs):
     text_body = (
-        f"|x{flavor}|n\n\n"
-        "|R\"The sigil reads you. Now — the traits that kept you alive. In order.\"|n"
+        "|xThe Rite reads the other helix — the one that wasn't human "
+        "to begin with. Somewhere in the sequence, a donor species. "
+        "The program's records are sealed. The body remembers anyway.|n\n\n"
+        "|R\"What did they put in you? Name the animal.\"|n\n\n"
+        "|x(Type the animal name. One word or two. Examples: wolf, cat, "
+        "crow, shark, gecko, rat, mantis, octopus)|n"
     )
-    text    = _slab("ANCHOR LOCKED", text_body, status=f"ORIGIN: {disp_name.upper()}")
-    options = [{"desc": "|rContinue|n", "goto": "node_priority_intro"}]
+    text = _slab("SPLICE ORIGIN", text_body, status="SPLICE DONOR SPECIES REQUIRED")
+    options = [{"key": "_default", "goto": "node_apply_splicer_animal"}]
     return text, options
+
+
+def node_apply_splicer_animal(caller, raw_string, **kwargs):
+    if _is_blocked_menu_escape(raw_string):
+        caller.msg("\n|r[!] You cannot leave during the Rite. Complete character creation.|n\n")
+        return node_splicer_animal(caller)
+    raw = (raw_string or "").strip()
+    if len(raw) < 2:
+        caller.msg("\n|r[!] Too short. Two characters minimum.|n\n")
+        return node_splicer_animal(caller)
+    if len(raw) > 30:
+        caller.msg("\n|r[!] Too long. Thirty characters maximum.|n\n")
+        return node_splicer_animal(caller)
+    for ch in raw:
+        if not (ch.isalpha() or ch == " "):
+            caller.msg("\n|r[!] Letters and spaces only.|n\n")
+            return node_splicer_animal(caller)
+    caller.db.splicer_animal = " ".join(raw.lower().split())
+    return node_priority_intro(caller)
+
 
 def node_priority_intro(caller, raw_string="", **kwargs):
     # --- THE FIX: We changed "\n" to "\n\n" right here ---
@@ -719,7 +727,7 @@ def node_gender(caller, raw_string="", **kwargs):
         "  |wFemale|n    →  she / her / her\n"
         "  |wNonbinary|n →  they / their / them"
     )
-    text    = _slab("THE VESSEL", text_body, status="PRONOUN IDENTIFIER REQUIRED")
+    text    = _slab("THE HANDLE", text_body, status="PRONOUN IDENTIFIER REQUIRED")
     options = [
         {"desc": "  |wMale|n",      "goto": ("node_apply_gender", {"gender": "male"})},
         {"desc": "  |wFemale|n",    "goto": ("node_apply_gender", {"gender": "female"})},
@@ -730,7 +738,37 @@ def node_gender(caller, raw_string="", **kwargs):
 def node_apply_gender(caller, raw_string="", **kwargs):
     caller.db.gender  = kwargs.get("gender", "nonbinary")
     caller.db.pronoun = caller.db.gender
+    return node_age(caller)
+
+
+def node_age(caller, raw_string="", **kwargs):
+    text_body = (
+        "|R\"The Rite marks time. How many years has this body walked the world?\"|n\n\n"
+        f"|xEnter your age in |wyears|x (whole number). Minimum age is |w{CHARGEN_MIN_AGE}|x.|n"
+    )
+    text = _slab("THE MEASURE", text_body, status="AGE REQUIRED")
+    options = [{"key": "_default", "goto": "node_apply_age"}]
+    return text, options
+
+
+def node_apply_age(caller, raw_string, **kwargs):
+    if _is_blocked_menu_escape(raw_string):
+        caller.msg("\n|r[!] You cannot leave during the Rite. Complete character creation.|n\n")
+        return node_age(caller)
+    raw = (raw_string or "").strip()
+    if not raw.isdigit():
+        caller.msg("\n|r[!] Enter a whole number of years (e.g. 28).|n\n")
+        return node_age(caller)
+    age = int(raw)
+    if age < CHARGEN_MIN_AGE:
+        caller.msg(f"\n|r[!] Minimum age is {CHARGEN_MIN_AGE}.|n\n")
+        return node_age(caller)
+    if age > CHARGEN_MAX_AGE:
+        caller.msg(f"\n|r[!] Enter a believable age ({CHARGEN_MIN_AGE}–{CHARGEN_MAX_AGE} years).|n\n")
+        return node_age(caller)
+    caller.db.age_years = age
     return node_build_prompt(caller)
+
 
 def node_build_prompt(caller, raw_string="", **kwargs):
     text_body = (
@@ -797,7 +835,18 @@ def node_apply_skin_tone(caller, raw_string, **kwargs):
     if raw in ("skip", "none", ""):
         return node_finish(caller)
 
-    from world.skin_tones import resolve_skin_tone_key, set_character_skin_tone
+    from world.skin_tones import (
+        format_skintone_display,
+        resolve_skin_tone_key,
+        set_character_skin_tone,
+    )
+
+    sk = _parse_skintone_menu_input(raw_string)
+    if sk:
+        if sk[0] == "palette":
+            caller.msg(format_skintone_display(caller))
+            return node_skin_tone(caller)
+        raw_string = sk[1]
 
     key = resolve_skin_tone_key(raw_string.strip())
     if not key:
@@ -824,7 +873,12 @@ def node_finish(caller, raw_string="", **kwargs):
 
     stats         = caller.db.stats or {}
     skills        = caller.db.skills or {}
-    bg            = getattr(caller.db, "background", "Unknown")
+    race_key      = (getattr(caller.db, "race", None) or "human").lower()
+    if race_key == "splicer":
+        animal = (getattr(caller.db, "splicer_animal", None) or "unknown").title()
+        race_label = f"Splicer ({animal})"
+    else:
+        race_label = "Human"
     etched        = [SKILL_DISPLAY_NAMES.get(sk, sk) for sk in SKILL_KEYS if (skills.get(sk) or 0) > 0]
     skill_summary = ", ".join(etched) if etched else "none"
     stat_summary  = "  ".join(
@@ -850,7 +904,8 @@ def node_finish(caller, raw_string="", **kwargs):
         "|xYou don't know yet what you became in that room. "
         "You'll find out.|n\n\n"
         f"|x{divider}|n\n"
-        f"  |xOrigin|n  {bg}\n"
+        f"  |xRace|n    {race_label}\n"
+        f"  |xAge|n     {getattr(caller.db, 'age_years', None) or '?'} years\n"
         f"  |xStats|n   {stat_summary}\n"
         f"  |xMarks|n   {skill_summary}\n"
         f"|x{divider}|n"

@@ -201,7 +201,7 @@ class CmdSkinWeave(Command):
         if low.startswith("set ") and "=" in args:
             from commands.roleplay_cmds import _resolve_body_part
             left, _, desc = args[4:].partition("=")
-            part = _resolve_body_part(left.strip()) or left.strip().lower()
+            part = _resolve_body_part(left.strip(), caller=caller) or left.strip().lower()
             ok, msg = weave.update_weave_appearance(caller, part, desc.strip())
             caller.msg(msg if ok else f"|r{msg}|n")
             return

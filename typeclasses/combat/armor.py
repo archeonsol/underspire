@@ -5,8 +5,8 @@ protection, stacking_score, mobility_impact, and quality (durability) for combat
 Uses world.armor_levels for full damage type list (physical + fire, radiation).
 """
 from typeclasses.clothing import Clothing
-from world.medical import BODY_PARTS
 from world.combat.damage_types import DAMAGE_TYPES
+from world.races import ALL_COVERABLE_BODY_PARTS
 
 try:
     from world.armor_levels import ALL_ARMOR_DAMAGE_TYPES
@@ -108,4 +108,4 @@ class Armor(Clothing):
     def get_covered_parts(self):
         """Return list of body part keys this armor covers."""
         parts = getattr(self.db, "covered_parts", None) or []
-        return [p for p in parts if p in BODY_PARTS]
+        return [p for p in parts if p in ALL_COVERABLE_BODY_PARTS]

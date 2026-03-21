@@ -59,7 +59,12 @@ class CmdStats(Command):
 
         _db = data_source.db
         skills = _db.skills or {}
-        bg = _db.background or "Unknown"
+        race_key = (getattr(_db, "race", None) or "human").lower()
+        if race_key == "splicer":
+            animal = (getattr(_db, "splicer_animal", None) or "unknown").title()
+            race_line = f"Splicer ({animal})"
+        else:
+            race_line = "Human"
         display_name = data_source.name or "Unknown"
         xp = int(getattr(_db, "xp", 0) or 0)
 
@@ -78,11 +83,29 @@ class CmdStats(Command):
         w = 50
         output = "|x┌" + fade_rule(w - 2, "─") + "|n\n"
         output += "|x│|n |R■|n |wSOUL READOUT|n  |x—|n  " + display_name.ljust(18) + "\n"
-        output += "|x│|n   |wOrigin|n " + (bg or "Unknown").ljust(w - 18) + "\n"
+        output += "|x│|n   |wRace|n " + race_line.ljust(w - 12) + "\n"
+        try:
+            age_y = getattr(_db, "age_years", None)
+            if age_y is not None:
+                output += "|x│|n   |wAge|n " + str(int(age_y)).ljust(w - 12) + "\n"
+        except Exception as e:
+            logger.log_trace("sheet_cmds.CmdStats age: %s" % e)
+        try:
+            h_cm = int(getattr(_db, "height_cm", 0) or 0)
+            w_kg = int(getattr(_db, "weight_kg", 0) or 0)
+            if h_cm and w_kg:
+                output += "|x│|n   |wHeight|n {} cm   |wWeight|n {} kg\n".format(h_cm, w_kg)
+        except Exception as e:
+            logger.log_trace("sheet_cmds.CmdStats height/weight: %s" % e)
         output += "|x├" + fade_rule(w - 2, "─") + "|n\n"
         output += "|x│|n |wXP|n " + str(xp).ljust(w - 10) + "\n"
         if fragmented_str:
             output += "|x│|n |wLast fragmented|n " + fragmented_str.ljust(w - 21) + "\n"
+        try:
+            if hasattr(data_source, "get_faction_display"):
+                output += "|x│|n |wFactions|n " + str(data_source.get_faction_display()) + "\n"
+        except Exception as e:
+            logger.log_trace("sheet_cmds.CmdStats factions: %s" % e)
         output += "|x├" + fade_rule(w - 2, "─") + "|n\n"
         output += "|x│|n |R CORE|n" + " ".ljust(w - 9) + "\n"
 

@@ -22,6 +22,7 @@ SKINWEAVE_EXTENDED_COVERAGE = {
 
 class ChromeArmLeft(CyberwareBase):
     buff_class = ChromeArmLeftBuff
+    chrome_replacement_for = "left_arm"
     surgery_category = "limb"
     surgery_narrative_key = "chrome_arm"
     surgery_difficulty = 20
@@ -50,6 +51,7 @@ class ChromeArmRight(CyberwareBase):
 
 class ChromeLegLeft(CyberwareBase):
     buff_class = ChromeLegLeftBuff
+    chrome_replacement_for = "left_leg"
     surgery_category = "limb"
     surgery_narrative_key = "chrome_leg"
     surgery_difficulty = 22
@@ -64,6 +66,7 @@ class ChromeLegLeft(CyberwareBase):
 
 class ChromeLegRight(CyberwareBase):
     buff_class = ChromeLegRightBuff
+    chrome_replacement_for = "right_leg"
     surgery_category = "limb"
     surgery_narrative_key = "chrome_leg"
     surgery_difficulty = 22
@@ -96,6 +99,29 @@ class ChromeHandRight(CyberwareBase):
     chrome_max_hp = 60
     conflicts_with = ["ChromeArmRight"]
     body_mods = {"right hand": ("lock", "Five chrome fingers, each knuckle a visible pin joint. The grip plates are crosshatched for traction. When the hand closes, the servos hum at a pitch just below hearing. The fingertips are smooth, featureless: no prints, no whorls.")}
+
+
+class ChromeTail(CyberwareBase):
+    """
+    Adds the tail body part for races that lack it; locks/replaces for Splicers.
+    Future tail-slot cyberware should set conflicts_with to include ChromeTail (both ways).
+    """
+
+    buff_class = ChromeTailBuff
+    adds_body_parts = ["tail"]
+    surgery_category = "limb"
+    surgery_narrative_key = "chrome_tail"
+    surgery_difficulty = 16
+    surgery_blood_loss = "moderate"
+    chrome_max_hp = 80
+    armor_values = {"slashing": 3, "impact": 3}
+    damage_model = "none"
+    body_mods = {
+        "tail": (
+            "lock",
+            "A chrome tail extends from the base of the spine — segmented, articulated, each vertebral plate clicking softly as it moves.",
+        ),
+    }
 
 
 class ChromeEyes(CyberwareBase):

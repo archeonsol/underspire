@@ -122,6 +122,25 @@ def _trauma_summary_ic(target):
             parts.append(f"{_CRIT}{label}{_N}: {word}{stab}")
         if parts:
             lines.append(f"  {_LABEL_COLOR}Internal:{_N} " + "; ".join(parts))
+
+    from world.medical.limb_trauma import LIMB_INFO, LIMB_SLOTS
+    limb_damage = target.db.limb_damage or {}
+    if limb_damage:
+        limb_labels = {"left_arm": "L arm", "right_arm": "R arm", "left_leg": "L leg", "right_leg": "R leg"}
+        lparts = []
+        for limb_key in sorted(LIMB_SLOTS):
+            sev = int(limb_damage.get(limb_key, 0) or 0)
+            if sev <= 0:
+                continue
+            label = limb_labels.get(limb_key, limb_key)
+            destroyed = any(
+                limb_key in (i.get("limb_damage") or {}) and i.get("fracture_destroyed")
+                for i in (target.db.injuries or [])
+            )
+            word = f"{MC['arrest']}UNSALVAGEABLE{_N}" if destroyed else severity_words.get(min(sev, 3), "injured")
+            lparts.append(f"{_CRIT}{label}{_N}: {word}")
+        if lparts:
+            lines.append(f"  {_LABEL_COLOR}Limbs:{_N} " + "; ".join(lparts))
  
     fractures = target.db.fractures or []
     splinted = target.db.splinted_bones or []

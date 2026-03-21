@@ -20,6 +20,7 @@ from world.medical.injuries import (
     compute_effective_bleed_level,
     rebuild_derived_trauma_views,
 )
+from world.medical.limb_trauma import is_limb_destroyed, LIMB_INFO, LIMB_SLOTS
 from world.theme_colors import COMBAT_COLORS as CC, MEDICAL_COLORS as MC
  
 # ── Visual constants ─────────────────────────────────────────────────────────
@@ -419,6 +420,17 @@ def get_scanner_readout(target):
         lines.append(_section("ORGAN REPLACEMENT REQUIRED"))
         for label, name in destroyed:
             lines.append(f"  {_W}{label}{_N}: {MC['arrest']}non-viable — chrome replacement indicated{_N}")
+
+    destroyed_limbs = []
+    for limb_key in LIMB_SLOTS:
+        if int((target.db.limb_damage or {}).get(limb_key, 0) or 0) < 3:
+            continue
+        if is_limb_destroyed(target, limb_key):
+            destroyed_limbs.append(LIMB_INFO.get(limb_key, (limb_key,))[0])
+    if destroyed_limbs:
+        lines.append(_section("LIMB REPLACEMENT REQUIRED"))
+        for name in destroyed_limbs:
+            lines.append(f"  {_W}{name}{_N}: {MC['arrest']}non-viable — prosthetic replacement indicated{_N}")
  
     # ── Footer ───────────────────────────────────────────────────────────
     lines.append("")

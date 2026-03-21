@@ -69,6 +69,9 @@ class Handset(NetworkedItem):
         # Per-handset group chats (decentralized; keyed by group id).
         if not getattr(self.db, "group_chats", None):
             self.db.group_chats = {}
+        # Primary group for "hs group msg <text>" shortcut (no group name needed).
+        if not hasattr(self.db, "primary_group_id"):
+            self.db.primary_group_id = None
 
         # Per-handset photo album (list of dicts). Stored ONLY on this handset.
         if not getattr(self.db, "photos", None):
@@ -79,7 +82,7 @@ class Handset(NetworkedItem):
         # NOTE: Handset player command (`hs`) is now a global Character command
         # to avoid cmdset ambiguity when multiple handsets exist in scope.
 
-        # Register device commands (used by operate / device interface).
+        # Register device commands (used by use / operate / device interface).
         self._ensure_handset_device_commands()
 
     def at_cmdset_get(self, **kwargs):
@@ -749,7 +752,7 @@ class Handset(NetworkedItem):
         self.db.call_log = log[-20:]
 
     def handle_call_history(self, caller, *args):
-        """Show recent call history (device menu / operate)."""
+        """Show recent call history (device menu / use)."""
         log = self.get_call_log()
         if not log:
             caller.msg("No recent calls logged on this handset.")

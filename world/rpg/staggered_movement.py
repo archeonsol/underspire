@@ -4,9 +4,13 @@ Staggered movement: walking and driving take a few seconds before the move compl
 from evennia.utils import delay
 from evennia.utils.search import search_object
 
-# Seconds before the move actually happens
+# Seconds before the move actually happens (RP pacing)
 WALK_DELAY = 3.5
-CRAWL_DELAY = 7.0   # When exhausted (0 stamina), you crawl slowly
+# Crawling is always slower than walking. Two tiers: exhaustion vs leg injury.
+CRAWL_DELAY_EXHAUSTED = 8.5   # 0 stamina — slow crawl
+CRAWL_DELAY_LEG_TRAUMA = 16.0  # Missing leg or limb unsalvageable — drag/crawl; must exceed walk + exhausted crawl
+# Backwards compatibility (older imports)
+CRAWL_DELAY = CRAWL_DELAY_EXHAUSTED
 DRIVE_DELAY = 2.0
 
 

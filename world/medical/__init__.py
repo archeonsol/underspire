@@ -26,7 +26,7 @@ BODY_PARTS = [
     "groin", "neck", "left ear", "right ear", "face", "left eye", "right eye", "head",
 ]
 
-# Display order: head to feet (for describe_bodypart usage and body listing)
+# Display order: head to feet (for @body usage and body listing)
 BODY_PARTS_HEAD_TO_FEET = [
     "head", "face", "left eye", "right eye", "left ear", "right ear", "neck",
     "left shoulder", "right shoulder", "torso", "back", "abdomen",
@@ -34,7 +34,7 @@ BODY_PARTS_HEAD_TO_FEET = [
     "groin", "left thigh", "right thigh", "left foot", "right foot",
 ]
 
-# Short aliases for describe_bodypart (alias -> full name)
+# Short aliases for @body (alias -> full name)
 BODY_PART_ALIASES = {
     "lfoot": "left foot", "rfoot": "right foot",
     "lhand": "left hand", "rhand": "right hand",
@@ -613,8 +613,27 @@ def apply_trauma(character, body_part, damage, is_critical=False, weapon_key="fi
         fracture_chance *= 0.6
     if bones and damage >= 10 and random.random() < fracture_chance:
         bone = random.choice(bones)
+        from world.medical.limb_trauma import body_part_to_limb_slot
+        limb_slot = body_part_to_limb_slot(body_part or "")
         if wound:
             wound["fracture"] = bone
+            if limb_slot:
+                ld = dict(wound.get("limb_damage") or {})
+                current_sev = int(ld.get(limb_slot, 0) or 0)
+                severity_roll = random.random()
+                if existing_fracture_here:
+                    step = 2 if (is_critical or damage >= 18) else 1
+                    new_sev = min(3, current_sev + step)
+                elif is_critical and damage >= 20:
+                    new_sev = min(3, current_sev + 2)
+                elif damage >= 15:
+                    new_sev = min(3, current_sev + (2 if severity_roll > 0.5 else 1))
+                else:
+                    new_sev = min(3, current_sev + 1)
+                ld[limb_slot] = new_sev
+                wound["limb_damage"] = ld
+                if new_sev >= 3 and current_sev >= 3:
+                    wound["fracture_destroyed"] = True
         elif bone not in character.db.fractures:
             character.db.fractures.append(bone)
         result["fracture"] = bone
@@ -818,6 +837,7 @@ def reset_medical(character):
     character.db.injuries = []
     character.db.bandaged_body_parts = []
     character.db.organ_damage = {}
+    character.db.limb_damage = {}
     character.db.fractures = []
     character.db.bleeding_level = 0
     character.db.splinted_bones = []

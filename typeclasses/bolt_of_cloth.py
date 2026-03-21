@@ -62,6 +62,8 @@ def resolve_coverage_args(args_list):
         a = a.strip().lower()
         if a in BODY_PARTS:
             valid.append(a)
+        elif a == "tail":
+            valid.append("tail")
         elif a in BODY_PART_ALIASES:
             valid.append(BODY_PART_ALIASES[a])
         else:

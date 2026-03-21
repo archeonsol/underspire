@@ -1,5 +1,6 @@
 """
-Medical commands: CmdHt, CmdPatient, CmdUse, CmdApply, CmdStabilize, CmdSedate, CmdSurgery, CmdDefib.
+Medical commands: CmdHt, CmdPatient, CmdApply, CmdStabilize, CmdSedate, CmdSurgery, CmdDefib.
+(CmdUse is in use_cmds.py as global use command.)
 """
 
 from commands.base_cmds import Command
@@ -113,101 +114,6 @@ class CmdPatient(Command):
             return
         from world.medical.medical_menu import start_medical_menu
         start_medical_menu(caller, target)
-
-
-class CmdUse(Command):
-    """
-    Use a medical tool on a target. The tool must be held in your hands (wield it first).
-
-    Usage:
-      use <tool> on <target>
-      use <tool>
-
-    Examples:
-      wield scanner
-      use scanner on Bob   - run bioscanner readout on Bob (detect damage type)
-      wield bandage
-      apply bandage to Bob  - then use apply to treat (after scanning)
-
-    Scanner gives a readout only; treat with the correct tool using |wapply <item> to <target>|n.
-    """
-    key = "use"
-    locks = "cmd:all()"
-    help_category = "General"
-
-    def func(self):
-        caller = self.caller
-        args = (self.args or "").strip()
-        if not args:
-            caller.msg("Usage: use <tool> [on <target>]")
-            return
-        # Parse "tool on target" or "tool"
-        parts = args.split(None, 2)
-        tool_name = parts[0]
-        target = caller
-        if len(parts) >= 3 and parts[1].lower() == "on":
-            target = _resolve_medical_target(caller, parts[2], location=caller.location)
-            if not target:
-                return
-            if not hasattr(target, "db"):
-                caller.msg("You cannot use that on them.")
-                return
-
-        try:
-            from typeclasses.medical_tools import MedicalTool, Bioscanner, get_medical_tools_from_inventory
-        except ImportError as e:
-            logger.log_trace("medical_cmds.CmdUse import medical_tools: %s" % e)
-            caller.msg("That is not a medical tool.")
-            return
-        tool = caller.search(tool_name, location=caller)
-        if not tool:
-            return
-        # Item must be held in either hand to use
-        if not _obj_in_hands(caller, tool):
-            caller.msg("You need to hold that in your hands to use it. Wield it first (|wwield %s|n)." % tool_name)
-            return
-        from typeclasses.medical_tools import Defibrillator
-        if isinstance(tool, Defibrillator):
-            if not target or target == caller:
-                caller.msg("Use the defibrillator on who? Usage: use defibrillator on <target>")
-                return
-            if getattr(target, "hp", 1) > 0:
-                caller.msg("They are not in arrest. The defibrillator is for the dead.")
-                return
-            from world.medical.medical_defib import start_defib_sequence
-            started, err = start_defib_sequence(caller, target, tool)
-            if not started:
-                caller.msg(err or "You cannot do that right now.")
-            return
-
-        if not isinstance(tool, MedicalTool):
-            caller.msg("You can't use that for medical procedures.")
-            return
-        if getattr(tool.db, "uses_remaining", 1) is not None and (tool.db.uses_remaining or 0) <= 0:
-            caller.msg(f"{tool.get_display_name(caller)} is used up.")
-            return
-
-        if isinstance(tool, Bioscanner):
-            success, out = tool.use_for_scan(caller, target)
-            if not success:
-                caller.msg(out if isinstance(out, str) else "Scan failed.")
-                return
-            if isinstance(out, dict) and out.get("formatted"):
-                caller.msg(out["formatted"])
-            elif isinstance(out, dict):
-                caller.msg(out.get("detail", "No readout."))
-            else:
-                caller.msg(out)
-            if target != caller:
-                target.msg(f"{(caller.get_display_name(target) if hasattr(caller, 'get_display_name') else caller.name)} runs a scanner over you.")
-            return
-
-        # Other medical tools: treatment is done via "apply <item> to <target>" with tool wielded
-        caller.msg("To treat, keep the tool in your hands and use: |wapply to %s|n (e.g. apply bandage to %s, apply splint to %s arm)." % (
-            target.key if hasattr(target, "key") else target.name,
-            target.key if hasattr(target, "key") else target.name,
-            target.key if hasattr(target, "key") else target.name,
-        ))
 
 
 class CmdSedate(Command):
@@ -512,8 +418,9 @@ class CmdSurgery(Command):
     Perform surgical procedures on a patient on an operating table.
 
     This command covers standard trauma surgery and cyberware procedures.
-    Place the patient on the operating table first, then use one of the
-    forms below.
+    Place the patient on the operating table first (they use |wlie on operating table|n),
+    then use one of the forms below. All surgery including |wreplace|n requires that table,
+    a patient on it, and you in the room — there is no field chrome install for replacement limbs/organs.
 
     Usage:
       surgery <organ|bone>
@@ -529,6 +436,7 @@ class CmdSurgery(Command):
       surgery install chrome arm on Vex
       surgery remove chrome arm from Vex
       surgery replace heart on Vex
+      surgery replace left arm on Vex
       surgery repair chrome arm on Vex
       surgery list Vex
     """
@@ -657,8 +565,13 @@ class CmdSurgery(Command):
                     return
                 organ_arg = left.strip().lower()
                 normalized = organ_arg.replace(" ", "_")
-                organ_key = ORGAN_ALIASES.get(organ_arg, ORGAN_ALIASES.get(normalized, normalized))
-                started, err = start_cybersurgery_replace(caller, target, table, organ_key)
+                from world.medical.limb_trauma import LIMB_ALIASES
+                limb_key = LIMB_ALIASES.get(organ_arg) or LIMB_ALIASES.get(normalized)
+                if limb_key:
+                    rep_key = limb_key
+                else:
+                    rep_key = ORGAN_ALIASES.get(organ_arg, ORGAN_ALIASES.get(normalized, normalized))
+                started, err = start_cybersurgery_replace(caller, target, table, rep_key)
                 if not started:
                     caller.msg(err or "You cannot perform that surgery now.")
                 return

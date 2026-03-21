@@ -230,6 +230,15 @@ def _surgery_finish(ids, organ_key):
 
     injuries = getattr(target.db, "injuries", None) or []
     if is_bone_case:
+        from world.medical.limb_trauma import body_part_to_limb_slot, is_limb_destroyed
+        for inj in injuries:
+            if inj.get("fracture") != organ_key or (inj.get("hp_occupied", 0) or 0) <= 0:
+                continue
+            slot = body_part_to_limb_slot((inj.get("body_part") or "").strip())
+            if slot and is_limb_destroyed(target, slot):
+                caller.msg(f"{MC['critical']}The bone won't hold hardware. The limb is pulp. They need chrome — not plates.|n")
+                return
+            break
         target.db.fractures = [b for b in fractures if b != organ_key]
         target.db.splinted_bones = [b for b in (target.db.splinted_bones or []) if b != organ_key]
         for i in injuries:
@@ -294,11 +303,20 @@ def start_surgery_sequence(caller, target, table, organ_key):
     if caller.location != table.location:
         return False, "You must be at the operating table to perform surgery."
     from world.medical import rebuild_derived_trauma_views
+    from world.medical.limb_trauma import body_part_to_limb_slot, is_limb_destroyed
     rebuild_derived_trauma_views(target)
     organ_damage = target.db.organ_damage or {}
     fractures = target.db.fractures or []
     if organ_damage.get(organ_key, 0) <= 0 and organ_key not in fractures:
         return False, "That target does not require surgery."
+    if organ_key in fractures:
+        for inj in (target.db.injuries or []):
+            if inj.get("fracture") != organ_key or (inj.get("hp_occupied", 0) or 0) <= 0:
+                continue
+            slot = body_part_to_limb_slot((inj.get("body_part") or "").strip())
+            if slot and is_limb_destroyed(target, slot):
+                return False, "That limb is shattered beyond repair. They need a chrome replacement, not pinning."
+            break
     from world.medical.medical_treatment import ORGAN_INFO
     if organ_key not in ORGAN_SURGERY_NARRATIVES and organ_key not in BONE_SURGERY_NARRATIVES:
         return False, "No surgical procedure for that organ."

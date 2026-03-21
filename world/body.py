@@ -18,6 +18,7 @@ from world.medical import (
     BODY_PART_BONES,
     BODY_PART_ORGANS,
 )
+from world.races import get_race_body_parts
 
 # Re-export so consumers can import everything body-related from one place.
 __all__ = [
@@ -31,6 +32,11 @@ __all__ = [
     "LOWER_BODY",
     "BODY_PART_GROUPS",
     "UPPER_BODY_PARTS",
+    "get_character_body_parts",
+    "preview_body_parts_for_cyberware_install",
+    "commit_adds_body_parts",
+    "cleanup_adds_body_parts_on_remove",
+    "body_part_groups_for_character",
     "is_part_present",
     "is_part_chrome",
     "is_part_augmented",
@@ -41,6 +47,83 @@ __all__ = [
     "get_missing_parts",
     "get_cyberware_for_part",
 ]
+
+
+def get_character_body_parts(character):
+    """
+    Return the full body part list for this character: race anatomy plus any
+    character-specific parts from cyberware (db.extra_body_parts).
+    """
+    if character is None:
+        from world.medical import BODY_PARTS as _BP
+
+        return list(_BP)
+    race = getattr(getattr(character, "db", None), "race", None) or "human"
+    parts = list(get_race_body_parts(race))
+    seen = set(parts)
+    for part in getattr(getattr(character, "db", None), "extra_body_parts", None) or []:
+        if part not in seen:
+            parts.append(part)
+            seen.add(part)
+    return parts
+
+
+def preview_body_parts_for_cyberware_install(character, cyberware_obj):
+    """
+    Union of current anatomy and adds_body_parts on the installing object.
+    Used to validate body_mods before committing extra_body_parts.
+    """
+    preview = set(get_character_body_parts(character))
+    for part in getattr(cyberware_obj, "adds_body_parts", None) or []:
+        preview.add(part)
+    return preview
+
+
+def commit_adds_body_parts(character, cyberware_obj):
+    """
+    Append race-missing parts from adds_body_parts to db.extra_body_parts.
+    No-op for parts already present from race or extras.
+    """
+    adds = list(getattr(cyberware_obj, "adds_body_parts", None) or [])
+    if not adds:
+        return
+    race = getattr(getattr(character, "db", None), "race", None) or "human"
+    race_parts = set(get_race_body_parts(race))
+    extras = list(getattr(character.db, "extra_body_parts", None) or [])
+    changed = False
+    for part in adds:
+        if part in race_parts:
+            continue
+        if part not in extras:
+            extras.append(part)
+            changed = True
+    if changed:
+        character.db.extra_body_parts = extras
+
+
+def cleanup_adds_body_parts_on_remove(character, removed_cyberware_obj, remaining_installed):
+    """
+    After uninstall: if no other installed cyberware still adds a part, remove it
+    from extra_body_parts and drop body_descriptions for that part.
+    """
+    adds = list(getattr(removed_cyberware_obj, "adds_body_parts", None) or [])
+    if not adds:
+        return
+    for part in adds:
+        other_adds = any(
+            part in (getattr(cw, "adds_body_parts", None) or [])
+            for cw in remaining_installed
+        )
+        if other_adds:
+            continue
+        extras = list(getattr(character.db, "extra_body_parts", None) or [])
+        if part in extras:
+            extras.remove(part)
+            character.db.extra_body_parts = extras
+        descs = dict(getattr(character.db, "body_descriptions", None) or {})
+        if part in descs:
+            del descs[part]
+            character.db.body_descriptions = descs
 
 # ── Display groupings (canonical, defined once) ──────────────────────────
 HEAD_FACE = ("head", "face", "left eye", "right eye", "left ear", "right ear", "neck")
@@ -60,6 +143,23 @@ BODY_PART_GROUPS = (HEAD_FACE, UPPER_BODY, LOWER_BODY)
 
 # Alias used by sdesc to detect naked/topless state.
 UPPER_BODY_PARTS = UPPER_BODY
+
+
+def body_part_groups_for_character(character):
+    """
+    Display groups for look/appearance: tail is shown immediately after abdomen when present.
+    """
+    if not character:
+        return BODY_PART_GROUPS
+    parts = get_character_body_parts(character)
+    if "tail" not in parts:
+        return BODY_PART_GROUPS
+    up = list(UPPER_BODY)
+    if "abdomen" in up:
+        up.insert(up.index("abdomen") + 1, "tail")
+    else:
+        up.append("tail")
+    return (HEAD_FACE, tuple(up), LOWER_BODY)
 
 
 # ── State queries ────────────────────────────────────────────────────────

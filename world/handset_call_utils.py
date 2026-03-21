@@ -10,6 +10,23 @@ from evennia.utils import delay
 
 RING_TIMEOUT = 30.0
 RING_ECHO_INTERVAL = 3.5
+RINGTONE_MAX_LEN = 20
+
+
+def ringtone_suffix(handset) -> str:
+    """
+    Return ', <text>' for custom ringtone, or '' for default.
+    Stored on handset.db.ringtone (None or empty = default).
+    """
+    raw = getattr(getattr(handset, "db", None), "ringtone", None)
+    if raw is None:
+        return ""
+    s = str(raw).strip().replace("\r", " ").replace("\n", " ")
+    if len(s) > RINGTONE_MAX_LEN:
+        s = s[:RINGTONE_MAX_LEN].rstrip()
+    if not s:
+        return ""
+    return f", {s}"
 
 
 def get_call_peer(handset):
@@ -94,7 +111,15 @@ def ring_echo_callback(handset_id, session_id):
         return
     holder = h.get_authenticated_user() if hasattr(h, "get_authenticated_user") else None
     if holder:
-        holder.msg("|yYour handset is still ringing.|n")
+        suf = ringtone_suffix(h)
+        holder.msg(f"|yYour handset is still ringing{suf}.|n")
+        room = getattr(holder, "location", None)
+        if room:
+            hname = holder.get_display_name(holder) if hasattr(holder, "get_display_name") else holder.key
+            try:
+                room.msg_contents(f"|y{hname}'s handset is still ringing{suf}.|n", exclude=holder)
+            except Exception:
+                pass
     delay(RING_ECHO_INTERVAL, ring_echo_callback, handset_id, session_id)
 
 

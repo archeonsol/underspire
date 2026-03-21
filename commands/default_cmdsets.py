@@ -116,7 +116,7 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         """
         super().at_cmdset_creation()
 
-        from commands.base_cmds import CmdLook, CmdExamine, CmdGet, CmdPut, CmdStopWalking, CmdOperate
+        from commands.base_cmds import CmdLook, CmdExamine, CmdGet, CmdPut, CmdStopWalking
         from commands.matrix_cmds import CmdMacl
         from commands.combat_cmds import (
             CmdAttack,
@@ -132,17 +132,17 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         from commands.cover_commands import CmdCover, CmdLeaveCover, CmdPeek, CmdSuppress
         from commands.scavenge_cmds import CmdScavenge, CmdSkin, CmdButcher, CmdSever, CmdLoot
         from commands.salvage_cmds import CmdSalvage
-        from commands.medical_cmds import CmdHt, CmdPatient, CmdUse, CmdApply, CmdStabilize, CmdSedate, CmdWakePatient, CmdSurgery, CmdDefib
+        from commands.medical_cmds import CmdHt, CmdPatient, CmdApply, CmdStabilize, CmdSedate, CmdWakePatient, CmdSurgery, CmdDefib
+        from commands.use_cmds import CmdUse
+        from commands.door_cmds import CmdOpenDoor, CmdCloseDoor, CmdUnlockDoor, CmdLockDoor, CmdVerify
         from commands.survival_cmds import CmdEat, CmdDrink
         from commands.inventory_cmds import CmdWield, CmdUnwield, CmdFreehands, CmdInventory, CmdReload, CmdUnload, CmdCheckAmmo, CmdWear, CmdRemove, CmdStrip, CmdFrisk
         from commands.crafting_cmds import CmdSurvey, CmdRepairArmor, CmdTailor
         from commands.media_cmds import CmdCamera, CmdTuneTelevision, CmdLabel
-        from commands.roleplay_cmds import CmdTease, CmdDescribeBodypart, CmdDescribeMeAs, CmdBody, CmdVoice, CmdSmellSet, CmdLanguage, CmdSdesc, CmdPending, CmdLookPlace, CmdTempPlace, CmdSleepPlace, CmdWakeMsg, CmdFlatlineMsg, CmdSetPlace, CmdPose, CmdPronoun, CmdEmote, CmdNoMatch, CmdCount, CmdRecog, CmdMemorize, CmdMemory, CmdSmell
+        from commands.roleplay_cmds import CmdTease, CmdDescribeMeAs, CmdBody, CmdVoice, CmdSmellSet, CmdLanguage, CmdSdesc, CmdPending, CmdLookPlace, CmdTempPlace, CmdSleepPlace, CmdWakeMsg, CmdFlatlineMsg, CmdSetPlace, CmdPose, CmdPronoun, CmdEmote, CmdNoMatch, CmdCount, CmdRecog, CmdMemorize, CmdMemory, CmdSmell
         from commands.skintone_cmd import CmdSkintone
-        from commands.chromework_cmd import CmdChromework
         from commands.roleplay_cmds import CmdSit, CmdLieOnTable, CmdGetOffTable
         from commands.performance_cmds import CmdPerformance
-        from typeclasses.perfume import CmdUsePerfume
         from commands.death_cmds import CmdGoOOC, CmdReturnIC, CmdEnterPod, CmdLeavePod, CmdSplinterMe
         from commands.vehicle_cmds import CmdEnterVehicle, CmdExitVehicle, CmdStartEngine, CmdStopEngine, CmdShutoffEngine, CmdDrive, CmdVehicleStatus, CmdRepairPart
         from commands.matrix_cmds import CmdJackIn, CmdJackOut, CmdRoute
@@ -151,18 +151,19 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         from commands.cyberware_cmds import CmdCyberware, CmdSkinWeave, CmdSurge, CmdClaws
         from commands.staff_cmds import (
             CmdGiveXp, CmdStaffSheet, CmdStaffSetStat, CmdStaffSetSkill,
-            CmdCreateItem, CmdTypeclasses, CmdSpawnItem, CmdSpawnArmor, CmdSpawnVehicle, CmdSpawnMedical, CmdSpawnOR,
+            CmdCreateItem, CmdTypeclasses, CmdSpawnItem, CmdSpawnArmor, CmdSpawnVehicle, CmdSpawnMedical, CmdSpawnOR, CmdSpawnCyberwareStation,
             CmdSpawnCreature, CmdCreatureSet, CmdDespawn, CmdNpc, CmdMakeNpc, CmdNpcSet, CmdSpawnPerfume, CmdBadSmellRoom,
             CmdGoto, CmdGotoRoom, CmdSummon, CmdSetVoid, CmdVoid, CmdRelease, CmdBoot, CmdFind, CmdAnnounce, CmdRestore, CmdDebugKill,
             CmdSpawnSeat, CmdSpawnBed, CmdSpawnPod, CmdSpawnDiveRig, CmdSpawnCamera, CmdSpawnTelevision,
             CmdEmoteDebug, CmdDamageVehicle, CmdMusic
         )
+        from commands.rpg.faction_cmds import CmdFaction
         from commands.sheet_cmds import CmdStats
         from commands.player_cmds import CmdXp
         from commands.notes_cmds import CmdAddNote, CmdNotes, CmdNoteSearch
         from commands.builder_commands import (
             CmdTag, CmdHere, CmdListCmds, CmdCloneSpawn, CmdDig, CmdMatrixDig, CmdDesc,
-            CmdSetAttr, CmdName, CmdOpen, CmdDestroy, CmdMatrixLink,
+            CmdSetAttr, CmdName, CmdOpen, CmdDestroy, CmdMatrixLink, CmdDoor, CmdDoorPair,
         )
         try:
             from evennia.commands.default.general import CmdGet as DefaultCmdGet
@@ -235,19 +236,15 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
             self.remove(DefaultCmdGet)
             self.add(CmdGet())
         self.add(CmdPut())
-        self.add(CmdOperate())
         self.add(CmdHandset())
         self.add(CmdMacl())
         self.add(CmdCamera())
         self.add(CmdTuneTelevision())
         self.add(CmdTailor())
         self.add(CmdTease())
-        self.add(CmdUsePerfume())
         self.add(CmdXp())
-        self.add(CmdDescribeBodypart())
         self.add(CmdDescribeMeAs())
         self.add(CmdSkintone())
-        self.add(CmdChromework())
         self.add(CmdBody())
         self.add(CmdVoice())
         self.add(CmdSmellSet())
@@ -285,6 +282,8 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdOpen())
         self.add(CmdDestroy())
         self.add(CmdMatrixLink())
+        self.add(CmdDoor())
+        self.add(CmdDoorPair())
         self.add(CmdEnterPod())
         self.add(CmdSplinterMe())
         self.add(SplinterPodCmdSet())  # CmdLeavePod here so it beats exits (priority 110)
@@ -321,6 +320,7 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdDamageVehicle())
         self.add(CmdSpawnMedical())
         self.add(CmdSpawnOR())
+        self.add(CmdSpawnCyberwareStation())
         self.add(CmdSpawnPerfume())
         self.add(CmdStaffSheet())
         self.add(CmdStaffSetStat())
@@ -350,6 +350,7 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdCreatureSet())
         self.add(CmdMusic())
         self.add(CmdCyberware())
+        self.add(CmdFaction())
 
 class AccountCmdSet(default_cmds.AccountCmdSet):
     """

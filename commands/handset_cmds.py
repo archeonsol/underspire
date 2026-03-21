@@ -8,8 +8,10 @@ import shlex
 from commands.base_cmds import Command
 import world.matrix_groups as mg
 from world.handset_call_utils import (
+    RINGTONE_MAX_LEN,
     clear_call as _clear_call,
     get_call_peer as _get_peer,
+    ringtone_suffix,
     schedule_call_ring_timers,
 )
 
@@ -79,9 +81,15 @@ def _beep_text_message(receiver_handset, sender_id: str, msg: str, msg_kind: str
         if msg_kind:
             entry["kind"] = msg_kind
         receiver_handset.db.texts = list(getattr(receiver_handset.db, "texts", []) or []) + [entry]
-    holder, _room = _holder_and_room(receiver_handset)
+    holder, room = _holder_and_room(receiver_handset)
     if holder:
         holder.msg("Your handset beeps.")
+        if room:
+            hname = holder.get_display_name(holder) if hasattr(holder, "get_display_name") else holder.key
+            try:
+                room.msg_contents(f"{hname}'s handset beeps.", exclude=holder)
+            except Exception:
+                pass
         tag = " [voicemail]" if (msg_kind or "").lower() == "voicemail" else ""
         holder.msg(f"[{ts}]{tag}{display}: {msg}")
 
@@ -136,7 +144,8 @@ class CmdHandset(Command):
       hs remove <alias>
       hs text <ID|alias> <message>
       hs voicemail <message>
-      hs group create | invite | accept | decline | msg | list | view | leave | rename | kick | promote | members | mute | unmute ...
+      hs group <name>  (set primary) | create | invite | msg | list | view | leave | ...
+      hs ringtone <text>   — custom ring line (|whs ringtone|n alone clears)
     """
 
     key = "hs"
@@ -258,9 +267,15 @@ class CmdHandset(Command):
                 )
             except Exception:
                 pass
-        holder, _room = _holder_and_room(target_handset)
+        holder, room = _holder_and_room(target_handset)
         if holder:
             holder.msg("Your handset beeps.")
+            if room:
+                hname = holder.get_display_name(holder) if hasattr(holder, "get_display_name") else holder.key
+                try:
+                    room.msg_contents(f"{hname}'s handset beeps.", exclude=holder)
+                except Exception:
+                    pass
             if kind == "photo":
                 holder.msg(
                     f"|gYou receive a photo|n: {title}" + (f" |x(stored as photo #{photo_id})|n" if photo_id else "")
@@ -334,10 +349,29 @@ class CmdHandset(Command):
         if action == "group":
             self._do_group(handset, rest)
             return
+        if action == "ringtone":
+            self._do_ringtone(handset, rest)
+            return
 
         caller.msg(
-            "|rUnknown handset command.|n Usage: hs call, redial, contacts, group, photo, selfie, speak, hangup, decline, save, remove, text, voicemail ..."
+            "|rUnknown handset command.|n Usage: hs call, redial, contacts, group, ringtone, photo, selfie, speak, hangup, decline, save, remove, text, voicemail ..."
         )
+
+    def _do_ringtone(self, handset, rest: str):
+        """Set or clear custom ring line after 'Your handset rings, …'."""
+        caller = self.caller
+        text = (rest or "").strip()
+        if not text:
+            handset.db.ringtone = None
+            caller.msg("|wRingtone cleared.|n Default: |xYour handset rings.|n")
+            return
+        text = " ".join(text.replace("\r", " ").replace("\n", " ").split())
+        if len(text) > RINGTONE_MAX_LEN:
+            text = text[:RINGTONE_MAX_LEN].rstrip()
+            caller.msg(f"|y(Truncated to {RINGTONE_MAX_LEN} characters.)|n")
+        handset.db.ringtone = text
+        suf = ringtone_suffix(handset)
+        caller.msg(f"|wRingtone set.|n Incoming calls will show: |xYour handset rings, {suf}.|n")
 
     def _do_save(self, handset, rest: str):
         caller = self.caller
@@ -712,14 +746,27 @@ class CmdHandset(Command):
         rest = (rest or "").strip()
         if not rest:
             caller.msg(
-                "|yUsage:|n hs group create <name> | invite <group> <contact|ID> | accept <id> | decline <id> | "
-                "msg <group> <message> | list | view <group> | leave <group> | rename <group> = <new> | "
-                "kick <group> <contact|ID> | promote <group> <contact|ID> | members <group> | mute <group> | unmute <group>"
+                "|yUsage:|n hs group <name>  (set primary) | create <name> | invite <group> <contact|ID> | "
+                "accept <id> | decline <id> | msg <message>  (to primary) | msg <group> <message> | "
+                "list | view <group> | leave <group> | rename <group> = <new> | kick/promote/members/mute/unmute ..."
             )
             return
         sub, _, tail = rest.partition(" ")
         sub = sub.strip().lower()
         tail = tail.strip()
+
+        # Known subcommands
+        KNOWN_SUBS = frozenset(
+            {"create", "invite", "accept", "decline", "msg", "message", "list", "view",
+             "leave", "rename", "kick", "promote", "members", "mute", "unmute"}
+        )
+        if sub not in KNOWN_SUBS:
+            # Not a subcommand: treat full rest as group name to set as primary
+            self._do_group_set_primary(handset, rest.strip())
+            return
+
+        if sub == "message":
+            sub = "msg"
         if sub == "create":
             self._do_group_create(handset, tail)
         elif sub == "invite":
@@ -750,6 +797,25 @@ class CmdHandset(Command):
             self._do_group_mute(handset, tail, False)
         else:
             caller.msg("|rUnknown hs group subcommand.|n")
+
+    def _do_group_set_primary(self, handset, rest: str):
+        """Set primary group by name or ID (accepts names with spaces)."""
+        caller = self.caller
+        name = (rest or "").strip()
+        if not name:
+            caller.msg("Usage: hs group <group name|ID>  (sets primary group for hs group msg)")
+            return
+        # Try by ID first if it looks like a 6-char group ID
+        if len(name) == 6 and name.upper().isalnum():
+            gid, data, err = mg.resolve_group_by_id(handset, name)
+        else:
+            gid, data, err = mg.resolve_group_by_name(handset, name)
+        if err:
+            caller.msg(f"|r{err}|n")
+            return
+        handset.db.primary_group_id = gid
+        gname = (data or {}).get("name", gid)
+        caller.msg(f"Primary group set to |w{gname}|n ({gid}).")
 
     def _do_group_create(self, handset, rest: str):
         caller = self.caller
@@ -806,24 +872,49 @@ class CmdHandset(Command):
     def _do_group_msg(self, handset, rest: str):
         caller = self.caller
         if not rest.strip():
-            caller.msg('Usage: hs group msg <group name> <message>  (quote multi-word names)')
+            caller.msg(
+                'Usage: hs group msg <message>  (uses primary group)\n'
+                '       hs group msg <group name> <message>  (or specify group; quote multi-word names)'
+            )
             return
+        primary_gid = getattr(handset.db, "primary_group_id", None)
         try:
             parts = shlex.split(rest)
         except ValueError:
             caller.msg("|rInvalid quoting.|n")
             return
-        if len(parts) < 2:
-            caller.msg('Usage: hs group msg <group name> <message>')
-            return
-        gq = parts[0]
-        message = " ".join(parts[1:])
-        gid, _d, err = mg.resolve_group_by_name(handset, gq)
-        if err:
-            caller.msg(f"|r{err}|n")
+        if len(parts) >= 2:
+            # Try first token as group name; if it fails and we have a primary, send full line to primary
+            gq = parts[0]
+            message = " ".join(parts[1:])
+            gid, _d, err = mg.resolve_group_by_name(handset, gq)
+            if err and primary_gid:
+                gid, _d, err = mg.resolve_group_by_id(handset, primary_gid)
+                if err:
+                    handset.db.primary_group_id = None
+                    caller.msg(f"|r{err}|n Set a primary group with |whs group <name>|n.")
+                    return
+                message = rest.strip()
+            elif err:
+                caller.msg(f"|r{err}|n")
+                return
+        elif primary_gid:
+            # Use primary group; rest is the message
+            gid, _d, err = mg.resolve_group_by_id(handset, primary_gid)
+            if err:
+                handset.db.primary_group_id = None
+                caller.msg(f"|r{err}|n Set a primary group with |whs group <name>|n.")
+                return
+            message = rest.strip()
+        else:
+            caller.msg(
+                "|rSet a primary group first with |whs group <name>|n, "
+                "or use |whs group msg <group name> <message>|n"
+            )
             return
         d, tot = mg.send_group_message(handset, gid, message)
-        caller.msg(f"|gSent|n |x({d}/{tot} online)|n.")
+        # d = handsets that received the line; tot = roster size (includes you)
+        caller.msg(f"|gSent|n |x({d}/{tot} members)|n.")
 
     def _do_group_list(self, handset):
         caller = self.caller
@@ -874,6 +965,8 @@ class CmdHandset(Command):
         if err:
             caller.msg(f"|r{err}|n")
             return
+        if getattr(handset.db, "primary_group_id", None) == gid:
+            handset.db.primary_group_id = None
         ok, msg = mg.leave_group(handset, gid)
         caller.msg(msg)
 

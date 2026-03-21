@@ -1,6 +1,11 @@
 """
 Clone / splinter system: soul-shard stored in a pod; on permanent death you may
-return in a vat-grown body from the shard. Snapshot = stats, skills, appearance only (no items).
+return in a vat-grown body from the shard.
+
+The shard records your natural baseline only: no cyberware, no cyberware-added
+body parts, no implant overlays. Body descriptions are limited to racial
+anatomy (see build_clone_snapshot). Awakening applies a fresh, healthy body
+(see apply_clone_snapshot).
 """
 import time
 from evennia.utils.search import search_object
@@ -35,36 +40,70 @@ AWAKENING_NARRATIVE = [
 ]
 
 
+def _remove_db_attr(character, name):
+    try:
+        if hasattr(character.db, name):
+            character.attributes.remove(name)
+    except KeyError:
+        pass
+
+
 def build_clone_snapshot(character):
     """
-    Build a snapshot of the character for cloning: stats, skills, appearance, background.
-    No inventory, no wounds, no worn gear. Returns a dict that apply_clone_snapshot can restore.
+    Build a snapshot for the soul-shard: stats, skills, identity, and *natural*
+    appearance only. Omits cyberware, implant-added anatomy, and locked/appended
+    chrome text — the vat body is grown without chrome. Body description keys
+    are limited to racial anatomy (world.races.get_race_body_parts).
     """
     if not character or not getattr(character, "db", None):
         return None
-    from world.medical import BODY_PARTS
+    from world.races import get_race_body_parts
+
+    race = getattr(character.db, "race", "human") or "human"
+    natural_parts = get_race_body_parts(race)
+    raw_desc = dict(getattr(character.db, "body_descriptions", None) or {})
+    body_descriptions = {part: (raw_desc.get(part) or "") for part in natural_parts}
+    from world.rpg.factions import get_character_factions
+
     snapshot = {
         "key": character.key,
         "stats": dict(getattr(character.db, "stats", {}) or {}),
         "skills": dict(getattr(character.db, "skills", {}) or {}),
-        "body_descriptions": dict(getattr(character.db, "body_descriptions", {}) or {}),
-        "background": getattr(character.db, "background", "Unknown"),
+        "body_descriptions": body_descriptions,
+        "race": race,
+        "splicer_animal": getattr(character.db, "splicer_animal", None),
         "traits": list(getattr(character.db, "traits", []) or []),
         "pronoun": getattr(character.db, "pronoun", "neutral"),
         "xp": int(getattr(character.db, "xp", 0) or 0),
         "fragmented_at": time.time(),
+        "skin_tone": getattr(character.db, "skin_tone", None),
+        "skin_tone_code": getattr(character.db, "skin_tone_code", None),
+        "skin_tone_set": getattr(character.db, "skin_tone_set", False),
+        "gender": getattr(character.db, "gender", None),
+        "height_cm": getattr(character.db, "height_cm", None),
+        "weight_kg": getattr(character.db, "weight_kg", None),
+        "height_category": getattr(character.db, "height_category", None),
+        "weight_category": getattr(character.db, "weight_category", None),
+        "age_years": getattr(character.db, "age_years", None),
     }
-    # Ensure body_descriptions has all parts (fill missing with empty)
-    for part in BODY_PARTS:
-        if part not in snapshot["body_descriptions"]:
-            snapshot["body_descriptions"][part] = ""
+    snapshot["factions"] = {}
+    for fdata in get_character_factions(character):
+        faction_key = fdata["key"]
+        rank = (character.db.faction_ranks or {}).get(faction_key, 1)
+        joined = (character.db.faction_joined or {}).get(faction_key)
+        snapshot["factions"][faction_key] = {
+            "rank": rank,
+            "joined": joined,
+        }
+    snapshot["faction_pay_collected"] = dict(getattr(character.db, "faction_pay_collected", None) or {})
     return snapshot
 
 
 def apply_clone_snapshot(character, snapshot):
     """
-    Apply a clone snapshot to a character. Overwrites stats, skills, body_descriptions,
-    background, traits, pronoun. Does not touch inventory, wounds, or worn.
+    Apply a clone snapshot to a vat-grown body: stats, skills, natural body text,
+    race, traits, pronoun. Always clears cyberware state and trauma — the shard
+    never carried chrome; the new body is whole and healthy.
     """
     if not character or not snapshot:
         return
@@ -75,30 +114,118 @@ def apply_clone_snapshot(character, snapshot):
         character.db.skills = dict(snapshot["skills"])
     if "body_descriptions" in snapshot:
         character.db.body_descriptions = dict(snapshot["body_descriptions"])
-    if "background" in snapshot:
-        character.db.background = snapshot["background"]
+    if "race" in snapshot:
+        character.db.race = snapshot.get("race") or "human"
+    if "splicer_animal" in snapshot:
+        character.db.splicer_animal = snapshot.get("splicer_animal")
     if "traits" in snapshot:
         character.db.traits = list(snapshot["traits"])
     if "pronoun" in snapshot:
         character.db.pronoun = snapshot["pronoun"]
     if "xp" in snapshot:
         character.db.xp = int(snapshot["xp"])
+    if "skin_tone" in snapshot:
+        character.db.skin_tone = snapshot.get("skin_tone")
+    if "skin_tone_code" in snapshot:
+        character.db.skin_tone_code = snapshot.get("skin_tone_code")
+    if "skin_tone_set" in snapshot:
+        character.db.skin_tone_set = bool(snapshot.get("skin_tone_set"))
+    if "gender" in snapshot and snapshot.get("gender") is not None:
+        character.db.gender = snapshot.get("gender")
+    if "height_cm" in snapshot:
+        character.db.height_cm = snapshot.get("height_cm")
+    if "weight_kg" in snapshot:
+        character.db.weight_kg = snapshot.get("weight_kg")
+    if "height_category" in snapshot:
+        character.db.height_category = snapshot.get("height_category")
+    if "weight_category" in snapshot:
+        character.db.weight_category = snapshot.get("weight_category")
+    if "age_years" in snapshot:
+        character.db.age_years = snapshot.get("age_years")
+
+    faction_data = snapshot.get("factions") or {}
+    if faction_data:
+        from world.rpg.factions import get_faction
+
+        faction_ranks = {}
+        faction_joined = {}
+        for faction_key, finfo in faction_data.items():
+            fdata = get_faction(faction_key)
+            if not fdata:
+                continue
+            character.tags.add(fdata["tag"], category=fdata["tag_category"])
+            faction_ranks[faction_key] = finfo.get("rank", fdata.get("default_rank", 1))
+            faction_joined[faction_key] = finfo.get("joined")
+        character.db.faction_ranks = faction_ranks
+        character.db.faction_joined = faction_joined
+    character.db.faction_pay_collected = dict(snapshot.get("faction_pay_collected") or {})
+
     character.db.needs_chargen = False
-    # Fresh body: full HP/stamina, no trauma
+    # Restrict stored naked descriptions to racial anatomy (legacy shards may have extra keys).
+    from world.races import get_race_body_parts
+
+    _race = getattr(character.db, "race", "human") or "human"
+    _natural = get_race_body_parts(_race)
+    _bd = dict(getattr(character.db, "body_descriptions", None) or {})
+    character.db.body_descriptions = {p: _bd.get(p, "") for p in _natural}
+    # No cyberware on a shard-grown body (snapshot never stored implants).
+    character.db.extra_body_parts = []
+    character.db.cyberware = []
+    character.db.locked_descriptions = {}
+    character.db.appended_descriptions = {}
+    # Fresh body: full HP/stamina, intact limbs and organs, no wounds
     if hasattr(character, "max_hp"):
         character.db.current_hp = character.max_hp
     if hasattr(character, "max_stamina"):
         character.db.current_stamina = character.max_stamina
-    for attr in ("organ_damage", "fractures", "bleeding_level", "injuries",
-                 "stabilized_organs", "splinted_bones", "bandaged_body_parts",
-                 "tourniquet_applied", "tourniquet_ticks", "bleeding_hemostatic_stabilized"):
-        if hasattr(character.db, attr):
-            try:
-                del character.db[attr]
-            except Exception:
-                pass
+    character.db.missing_body_parts = []
+    character.db.organ_damage = {}
+    character.db.limb_damage = {}
+    character.db.fractures = []
+    character.db.injuries = []
+    character.db.bleeding_level = 0
+    character.db.stabilized_organs = {}
+    character.db.splinted_bones = []
+    character.db.bandaged_body_parts = []
+    character.db.surgery_in_progress = False
+    for attr in (
+        "tourniquet_applied",
+        "tourniquet_ticks",
+        "bleeding_hemostatic_stabilized",
+        "bleeding_hemostatic_at",
+        "tourniquet_at",
+        "flatline_at",
+    ):
+        _remove_db_attr(character, attr)
+
+    try:
+        from world.combat.tickers import remove_both_combat_tickers
+
+        remove_both_combat_tickers(character, None)
+    except Exception:
+        pass
+
+    character.db.combat_ranges = {}
+    character.db.grappling = None
+    character.db.grappled_by = None
+    character.db.combat_target = None
+    character.db.sedated_until = 0.0
+
+    try:
+        from world.combat.cover import clear_cover_state
+
+        clear_cover_state(character, reset_pose=False)
+    except Exception:
+        character.db.in_cover = False
+        character.db.cover_hp = 0
+
     character.db.room_pose = "standing here"
     character.db.death_state = None
+
+    try:
+        character.ndb._medical_session_log = None
+    except Exception:
+        pass
 
 
 def _splinter_narrative_step(character_id, step_index):
@@ -134,6 +261,7 @@ def _awakening_narrative_step(account_id, step_index, clone_char_id, spawn_room_
     if step_index < len(AWAKENING_NARRATIVE):
         try:
             from evennia.accounts.accounts import AccountDB
+
             acc = AccountDB.objects.get(id=account_id)
             if acc and hasattr(acc, "msg"):
                 acc.msg(AWAKENING_NARRATIVE[step_index])
@@ -152,6 +280,7 @@ def _awakening_narrative_step(account_id, step_index, clone_char_id, spawn_room_
         if spawn_room and clone_char.location != spawn_room:
             clone_char.move_to(spawn_room)
         from evennia.accounts.accounts import AccountDB
+
         acc = AccountDB.objects.get(id=account_id)
         if acc and hasattr(acc, "sessions") and hasattr(acc, "puppet_object"):
             # Suppress "You become X" for clone awakening (handled in Character.at_post_puppet)
@@ -159,19 +288,21 @@ def _awakening_narrative_step(account_id, step_index, clone_char_id, spawn_room_
                 clone_char.db._suppress_become_message = True
             except Exception:
                 pass
-            for session in (acc.sessions.get() or []):
+            for session in acc.sessions.get() or []:
                 try:
                     acc.puppet_object(session, clone_char)
                 except Exception:
                     pass
-        # Clear death-lobby state (shard is consumed from corpse in CmdGoShard)
+        # Clear death-lobby state (shard consumed in CmdGoShard)
         if acc and hasattr(acc, "db"):
-            for key in ("dead_character_name", "dead_character_corpse"):
-                if hasattr(acc.db, key):
-                    try:
-                        del acc.db[key]
-                    except Exception:
-                        pass
+            for key in ("dead_character_name", "dead_character_corpse", "clone_snapshot_backup"):
+                try:
+                    if hasattr(acc.db, key):
+                        acc.attributes.remove(key)
+                except KeyError:
+                    pass
+                except Exception:
+                    pass
     except Exception:
         pass
 
@@ -181,15 +312,21 @@ def run_awakening_sequence(account, clone_character, spawn_room):
     if not account or not clone_character:
         return
     account.msg(AWAKENING_NARRATIVE[0])
-    delay(2.2, _awakening_narrative_step,
-          account.id, 1,
-          clone_character.id, spawn_room.id if spawn_room else None)
+    delay(
+        2.2,
+        _awakening_narrative_step,
+        account.id,
+        1,
+        clone_character.id,
+        spawn_room.id if spawn_room else None,
+    )
 
 
 def get_clone_spawn_room():
     """Return the room where clones awaken (tagged 'clone_spawn'). Creates one if missing.
     Builders: stand in a room and type |wbuclone_spawn|n to tag it, or |wbutag here = clone_spawn|n."""
     from evennia.utils.search import search_tag
+
     rooms = search_tag(key="clone_spawn")
     if rooms:
         return rooms[0]
@@ -205,4 +342,3 @@ def get_clone_spawn_room():
             "antiseptic and something older, coppery. This is where the shards wake."
         )
     return room
-

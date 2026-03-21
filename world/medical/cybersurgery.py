@@ -9,6 +9,7 @@ from evennia.utils import delay
 from world.body import get_cyberware_for_part
 from world.theme_colors import COMBAT_COLORS as CC, MEDICAL_COLORS as MC
 from world.medical import add_injury, rebuild_derived_trauma_views, ORGAN_INFO
+from world.medical.limb_trauma import LIMB_SLOTS
 from world.medical.medical_surgery import ORGAN_SURGERY_NARRATIVES
 from world.medical.cybersurgery_narratives import (
     get_install_narrative,
@@ -422,17 +423,23 @@ def is_organ_destroyed(target, organ_key):
     return False
 
 
-def start_cybersurgery_replace(caller, target, table, organ_key):
+def start_cybersurgery_replace(caller, target, table, replacement_key):
     if caller.location != table.location or table.get_patient() != target:
         return False, "Patient must be on the operating table with you present."
-    if not is_organ_destroyed(target, organ_key):
-        return False, "That organ is damaged but salvageable. Use regular surgery first."
-    cw = find_chrome_replacement_in_inventory(caller, organ_key)
+    if replacement_key in LIMB_SLOTS:
+        from world.medical.limb_trauma import is_limb_destroyed
+        if not is_limb_destroyed(target, replacement_key):
+            return False, "That limb is damaged but salvageable. Use regular surgery first."
+    else:
+        if not is_organ_destroyed(target, replacement_key):
+            return False, "That organ is damaged but salvageable. Use regular surgery first."
+    cw = find_chrome_replacement_in_inventory(caller, replacement_key)
     if not cw:
-        return False, "You need a chrome replacement organ. You don't have one."
+        need = "chrome replacement limb" if replacement_key in LIMB_SLOTS else "chrome replacement organ"
+        return False, f"You need a {need}. You don't have one."
     phases = _phase_names_for(cw)
     phase_count = len(phases)
-    organ_open_narratives = ORGAN_SURGERY_NARRATIVES.get(organ_key) or []
+    organ_open_narratives = ORGAN_SURGERY_NARRATIVES.get(replacement_key) or []
     chrome_narratives = get_install_narrative(_cwattr(cw, "surgery_narrative_key", None))
     if organ_open_narratives:
         open_count = min(2, max(1, phase_count - 1))
@@ -443,15 +450,32 @@ def start_cybersurgery_replace(caller, target, table, organ_key):
     ok, err = start_cybersurgery_install(caller, target, table, cw, narrative_override=install_narratives)
     if not ok:
         return ok, err
-    # Organ cleanup happens at end of installation through polling wound on finish hook:
-    # keep lightweight delayed clear to avoid coupling internals.
-    def _clear_organ():
-        od = dict(target.db.organ_damage or {})
-        if organ_key in od:
-            del od[organ_key]
-        target.db.organ_damage = od
+
+    def _clear_replacement():
+        if replacement_key in LIMB_SLOTS:
+            ld = dict(target.db.limb_damage or {})
+            if replacement_key in ld:
+                del ld[replacement_key]
+            target.db.limb_damage = ld
+            injuries = target.db.injuries or []
+            for i in injuries:
+                i_ld = dict(i.get("limb_damage") or {})
+                if replacement_key not in i_ld:
+                    continue
+                del i_ld[replacement_key]
+                i["limb_damage"] = i_ld
+                i.pop("fracture_destroyed", None)
+                if not i.get("limb_damage"):
+                    i["fracture"] = None
+            target.db.injuries = injuries
+        else:
+            od = dict(target.db.organ_damage or {})
+            if replacement_key in od:
+                del od[replacement_key]
+            target.db.organ_damage = od
         rebuild_derived_trauma_views(target)
-    delay(PHASE_DELTA * 8, _clear_organ)
+
+    delay(PHASE_DELTA * 8, _clear_replacement)
     return True, None
 
 

@@ -9,6 +9,7 @@ from evennia.utils import delay
 from evennia.utils.create import create_object
 from evennia.utils.search import search_object
 
+from world.body import cleanup_adds_body_parts_on_remove
 from world.medical import add_injury
 from world.theme_colors import MEDICAL_COLORS as MC
 
@@ -377,6 +378,7 @@ def _finish_extraction(caller_id, corpse_id, cyberware_id, scalpel_id, start_roo
 
     _safe_on_uninstall(cyberware_obj, corpse)
     _remove_cyberware_from_corpse(corpse, cyberware_obj)
+    cleanup_adds_body_parts_on_remove(corpse, cyberware_obj, _corpse_cyberware(corpse))
 
     if tier == 3:
         cyberware_obj.location = caller
