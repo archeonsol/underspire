@@ -2191,7 +2191,6 @@ class CmdProfiling(Command):
         import sys
         from world.profiling import get_cmd_rate_1min, get_p95, BUDGETS
         from world.ui_utils import fade_rule
-        from evennia.utils.evtable import EvTable
 
         timing = bool(script.ndb.timing_enabled)
         start_time = script.ndb.start_time or time.time()
@@ -2283,10 +2282,8 @@ class CmdProfiling(Command):
             if not counts:
                 caller.msg("  |yNo data yet — run some commands first.|n")
             else:
-                t = EvTable(
-                    "cmd", "calls", "avg_ms", "p95_ms", "max_ms", "queries", "status",
-                    border="none", pad_width=1,
-                )
+                header = f"  {'cmd':<22} {'calls':>5} {'avg_ms':>7} {'p95_ms':>7} {'max_ms':>7} {'queries':>7}  status"
+                caller.msg(header)
                 for cmd_key, entry in sorted(counts.items(), key=lambda x: -x[1]["calls"]):
                     calls = entry["calls"]
                     avg_ms = entry["total_ms"] / calls if calls else 0.0
@@ -2299,12 +2296,10 @@ class CmdProfiling(Command):
                         st = "|yWARN|n"
                     else:
                         st = "|gOK|n"
-                    t.add_row(
-                        cmd_key, calls,
-                        f"{avg_ms:.1f}", f"{p95_ms:.1f}", f"{max_ms:.1f}",
-                        f"{avg_q:.1f}", st,
+                    caller.msg(
+                        f"  {cmd_key:<22} {calls:>5} {avg_ms:>7.1f} {p95_ms:>7.1f}"
+                        f" {max_ms:>7.1f} {avg_q:>7.1f}  {st}"
                     )
-                caller.msg(str(t))
 
         caller.msg(rule)
 
