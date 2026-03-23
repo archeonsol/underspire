@@ -121,8 +121,18 @@ def is_character_multi_puppeted(character):
 
 def is_character_logged_off(character):
     """True if character has no connected sessions (player is logged off / sleeping).
-    NPCs and multi-puppeted characters are always treated as present (never logged off)."""
-    if not character or not getattr(character, "sessions", None):
+    NPCs and multi-puppeted characters are always treated as present (never logged off).
+    Objects that are not Characters (vehicles, items, rooms, etc.) are never "logged off."""
+    if not character:
+        return True
+    try:
+        from typeclasses.characters import Character
+
+        if not isinstance(character, Character):
+            return False
+    except ImportError:
+        pass
+    if not getattr(character, "sessions", None):
         return True
     if getattr(character.db, "is_npc", False):
         return False  # NPCs act like they are always logged on

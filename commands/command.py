@@ -31,12 +31,6 @@ from commands.combat_cmds import (
     CmdExecute,
 )
 
-from commands.range_cmds import (
-    CmdAdvance,
-    CmdRetreat,
-    CmdRange,
-)
-
 from commands.cover_commands import (
     CmdCover,
     CmdLeaveCover,
@@ -100,6 +94,9 @@ from commands.survival_cmds import (
     CmdDrink,
 )
 
+# lock_cmds
+from commands.lock_cmds import CmdLock, CmdUnlock
+
 # vehicle_cmds
 from commands.vehicle_cmds import (
     _get_vehicle_from_caller,
@@ -107,8 +104,6 @@ from commands.vehicle_cmds import (
     CmdExitVehicle,
     CmdMount,
     CmdDismount,
-    CmdLockVehicle,
-    CmdUnlockVehicle,
     CmdControlVehicle,
     CmdReleaseControls,
     CmdStopDriving,
@@ -120,7 +115,7 @@ from commands.vehicle_cmds import (
     CmdFly,
     CmdTakeoff,
     CmdLand,
-    CmdVehicleStatus,
+    CmdEvaluateVehicle,
     CmdRepairPart,
 )
 from commands.tunnel_cmds import CmdAutopilot
@@ -298,9 +293,6 @@ __all__ = [
     "CmdLetGo",
     "CmdResist",
     "CmdExecute",
-    "CmdAdvance",
-    "CmdRetreat",
-    "CmdRange",
     "CmdCover",
     "CmdLeaveCover",
     "CmdPeek",
@@ -337,8 +329,8 @@ __all__ = [
     "CmdExitVehicle",
     "CmdMount",
     "CmdDismount",
-    "CmdLockVehicle",
-    "CmdUnlockVehicle",
+    "CmdLock",
+    "CmdUnlock",
     "CmdControlVehicle",
     "CmdReleaseControls",
     "CmdStopDriving",
@@ -350,7 +342,7 @@ __all__ = [
     "CmdFly",
     "CmdTakeoff",
     "CmdLand",
-    "CmdVehicleStatus",
+    "CmdEvaluateVehicle",
     "CmdRepairPart",
     "CmdAutopilot",
     "CmdPose",

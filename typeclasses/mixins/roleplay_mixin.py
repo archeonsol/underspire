@@ -285,3 +285,18 @@ class RoleplayMixin:
             viewer.msg(text=(line, {"type": msg_type}), from_obj=self)
 
         _feed_room_cameras(location, self, message, improvise)
+        try:
+            from world.rp_features import get_display_name_for_viewer
+            from world.skin_tones import format_ic_character_name
+            plain_neutral = get_display_name_for_viewer(self, None)
+            obj_neutral = format_ic_character_name(self, None, plain_neutral)
+            if voice_phrase:
+                relay_line = '%s says in a %s, "*speaking in a %s* %s"' % (obj_neutral, voice_phrase, voice_phrase, message)
+            else:
+                relay_line = '%s says, "%s"' % (obj_neutral, message)
+            if improvise:
+                relay_line = "|w%s|n" % relay_line
+            from typeclasses.vehicles import relay_to_parked_vehicle_interiors
+            relay_to_parked_vehicle_interiors(location, relay_line)
+        except Exception:
+            pass

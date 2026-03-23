@@ -51,13 +51,49 @@ class CmdCyberware(Command):
         else:
             caller.msg("Usage: @cyberware/install, /remove, or /list")
 
+    def _find_char(self, char_name):
+        """
+        Resolve char_name to a character object.
+
+        Tries global key/alias search first, then falls back to the caller's
+        recog map. Returns the character, or None if not found or ambiguous
+        (error message already sent to caller in those cases).
+        """
+        caller = self.caller
+        char = caller.search(char_name, global_search=True, quiet=True)
+        if char:
+            return char
+        try:
+            from world.rp_features import RecogHandler
+            recog_map = RecogHandler(caller).all()
+            name_lower = char_name.lower()
+            exact = [obj for rname, obj in recog_map.items() if (rname or "").strip().lower() == name_lower]
+            if len(exact) == 1:
+                return exact[0]
+            if len(exact) > 1:
+                caller.msg(f"Multiple characters recog'd as '{char_name}'. Use #dbref instead.")
+                return None
+            prefix = [obj for rname, obj in recog_map.items() if (rname or "").strip().lower().startswith(name_lower)]
+            if len(prefix) == 1:
+                return prefix[0]
+            if len(prefix) > 1:
+                names = ", ".join(
+                    sorted(rname for rname, obj in recog_map.items() if (rname or "").strip().lower().startswith(name_lower))
+                )
+                caller.msg(f"Ambiguous name '{char_name}' matches: {names}. Be more specific or use #dbref.")
+                return None
+        except Exception:
+            pass
+        caller.msg(f"Could not find '{char_name}'.")
+        return None
+
     def _parse_char_and_arg(self):
         """Parse 'character = arg' from self.args. Returns (character, arg) or (None, None)."""
         if "=" not in self.args:
             self.caller.msg("Usage: @cyberware/<switch> <character> = <object or name>")
             return None, None
         char_name, _, arg = self.args.partition("=")
-        char = self.caller.search(char_name.strip(), global_search=True)
+        char = self._find_char(char_name.strip())
         return char, arg.strip()
 
     def _do_list(self):
@@ -66,7 +102,7 @@ class CmdCyberware(Command):
         if not char_name:
             caller.msg("Usage: @cyberware/list <character>")
             return
-        char = caller.search(char_name, global_search=True)
+        char = self._find_char(char_name)
         if not char:
             return
         cyberware = char.get_cyberware() if hasattr(char, "get_cyberware") else []

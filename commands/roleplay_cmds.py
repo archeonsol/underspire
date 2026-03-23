@@ -293,6 +293,11 @@ def _run_emote(caller, text, improvise=False):
             feed_cameras_in_location(location, room_line)
         except Exception as e:
             logger.log_trace("roleplay_cmds._run_emote feed_cameras: %s" % e)
+        try:
+            from typeclasses.vehicles import relay_to_parked_vehicle_interiors
+            relay_to_parked_vehicle_interiors(location, room_line)
+        except Exception as e:
+            logger.log_trace("roleplay_cmds._run_emote relay_vehicle: %s" % e)
 
     if improvise and location:
         try:

@@ -362,10 +362,10 @@ class CmdSetAttr(Command):
             return
         if "=" in args:
             left, right = args.split("=", 1)
-            parts = left.strip().split(None, 1)
+            parts = left.strip().rsplit(None, 1)
             right = right.strip()
         else:
-            parts = args.strip().split(None, 1)
+            parts = args.strip().rsplit(None, 1)
             right = None
         if len(parts) < 2 and right is None:
             caller.msg("Usage: |wbusetattr <obj> <attr> [= value]|n")
@@ -387,20 +387,21 @@ class CmdSetAttr(Command):
             return
         if right == "" or right == "#":
             try:
-                del obj.db[attr]
+                delattr(obj.db, attr)
                 caller.msg("Cleared %s on %s." % (attr, obj.get_display_name(caller)))
             except Exception as e:
                 caller.msg("Could not clear: %s" % e)
             return
+        parsed = right
         if right.isdigit():
-            obj.db[attr] = int(right)
+            parsed = int(right)
         elif right.lower() in ("true", "false"):
-            obj.db[attr] = right.lower() == "true"
+            parsed = right.lower() == "true"
         else:
             if (right.startswith('"') and right.endswith('"')) or (right.startswith("'") and right.endswith("'")):
-                right = right[1:-1]
-            obj.db[attr] = right
-        caller.msg("Set %s.%s = %s" % (obj.get_display_name(caller), attr, repr(obj.db[attr])))
+                parsed = right[1:-1]
+        setattr(obj.db, attr, parsed)
+        caller.msg("Set %s.%s = %s" % (obj.get_display_name(caller), attr, repr(getattr(obj.db, attr, None))))
 
 
 class CmdName(Command):

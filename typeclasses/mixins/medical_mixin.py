@@ -69,6 +69,12 @@ class MedicalMixin:
             except Exception:
                 pass
             try:
+                from world.combat.mounted_combat import biker_hit_splash
+
+                biker_hit_splash(self, dmg, weapon_key)
+            except Exception:
+                pass
+            try:
                 from world.rpg.staggered_movement import interrupt_staggered_walk
 
                 interrupt_staggered_walk(

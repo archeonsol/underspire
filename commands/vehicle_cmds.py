@@ -56,14 +56,32 @@ def _broadcast_engine_stop(vehicle, caller, loc):
         loc.msg_contents(msg, exclude=caller)
 
 
+def _sync_stale_in_vehicle(caller):
+    """Clear db.in_vehicle if we're not actually inside that vehicle's cabin."""
+    iv = getattr(caller.db, "in_vehicle", None)
+    if not iv:
+        return
+    try:
+        interior = getattr(iv, "interior", None)
+        loc = caller.location
+        if not interior or loc != interior:
+            caller.db.in_vehicle = None
+    except Exception:
+        caller.db.in_vehicle = None
+
+
 def _get_vehicle_from_caller(caller):
     """Vehicle if caller is inside an interior, or mounted on a motorcycle."""
+    _sync_stale_in_vehicle(caller)
     loc = caller.location
     if not loc:
-        return None
+        return getattr(caller.db, "mounted_on", None) or getattr(caller.db, "in_vehicle", None)
     v = getattr(loc.db, "vehicle", None)
     if v:
         return v
+    iv = getattr(caller.db, "in_vehicle", None)
+    if iv:
+        return iv
     return getattr(caller.db, "mounted_on", None)
 
 
@@ -133,17 +151,32 @@ class CmdEnterVehicle(Command):
         if not (hasattr(vehicle, "interior") and vehicle.interior):
             caller.msg("That is not a vehicle you can enter.")
             return
-        if getattr(vehicle.db, "locked", False):
-            caller.msg(f"{getattr(vehicle.db, 'vehicle_name', None) or vehicle.key} is locked.")
+        try:
+            from world.vehicles.vehicle_security import check_vehicle_permission
+
+            # Physical entry matches door state: anyone can get into an *unlocked* vehicle (like an
+            # open car). When *locked*, you need permission to open it (same as lock/unlock commands).
+            if getattr(vehicle.db, "security_locked", False) and not check_vehicle_permission(
+                vehicle, caller, "unlock"
+            ):
+                caller.msg(f"{getattr(vehicle.db, 'vehicle_name', None) or vehicle.key} is locked.")
+                return
+        except ImportError:
+            pass
+        interior = vehicle.interior
+        if not interior:
+            caller.msg("That is not a vehicle you can enter.")
             return
-        vlabel = vehicle_label(vehicle)
-        caller.move_to(vehicle.interior, quiet=True)
+        # Normal move_type "move" is blocked by FurnitureMixin when sitting/lying; entering a
+        # cabin is not walking through an exit — use teleport so hooks still clear seat state.
+        if not caller.move_to(interior, quiet=True, move_type="teleport"):
+            caller.msg("You couldn't get into the vehicle. (Try standing up if you are seated.)")
+            return
         caller.db.in_vehicle = vehicle
         if not getattr(vehicle.db, "driver", None):
             vehicle.db.driver = caller
-        caller.msg(
-            f"You enter {vlabel}."
-        )
+        vlabel = vehicle_label(vehicle)
+        caller.msg(f"You enter {vlabel}.")
         exterior = getattr(vehicle, "location", None)
         if exterior and msg_room_with_character_display:
             msg_room_with_character_display(
@@ -184,11 +217,13 @@ class CmdExitVehicle(Command):
         if not dest:
             caller.msg("The vehicle is nowhere. You can't exit.")
             return
+        vlabel = vehicle_label(vehicle)
+        if not caller.move_to(dest, quiet=True, move_type="teleport"):
+            caller.msg("You couldn't get out of the vehicle.")
+            return
         if getattr(vehicle.db, "driver", None) == caller:
             vehicle.db.driver = None
         caller.db.in_vehicle = None
-        vlabel = vehicle_label(vehicle)
-        caller.move_to(dest, quiet=True)
         caller.msg(f"You open the door and climb out of {vlabel}.")
         if dest and msg_room_with_character_display:
             msg_room_with_character_display(
@@ -271,98 +306,6 @@ class CmdDismount(Command):
         force_dismount(caller, bike, reason="")
 
 
-class CmdLockVehicle(Command):
-    """Lock a vehicle (requires matching key tag on an item)."""
-
-    key = "lockvehicle"
-    aliases = ["vlock", "lockcar"]
-    locks = "cmd:all()"
-    help_category = "Vehicles"
-
-    def func(self):
-        caller = self.caller
-        loc = caller.location
-        if not loc:
-            return
-        if not self.args:
-            caller.msg("Lock what? Usage: |wlockvehicle <vehicle>|n")
-            return
-        target = caller.search(self.args.strip(), location=loc)
-        if not target:
-            return
-        try:
-            from typeclasses.vehicles import Vehicle
-        except ImportError:
-            return
-        if not isinstance(target, Vehicle):
-            caller.msg("That's not a vehicle.")
-            return
-        tag = getattr(target.db, "lock_key_tag", None) or ""
-        if not tag:
-            caller.msg("This vehicle has no lock.")
-            return
-        from world.rpg.factions.doors import has_key
-
-        if not has_key(caller, tag):
-            caller.msg("You don't have the key.")
-            return
-        target.db.locked = True
-        caller.msg("Locked.")
-
-
-class CmdUnlockVehicle(Command):
-    """Unlock a vehicle."""
-
-    key = "unlockvehicle"
-    aliases = ["vunlock", "unlockcar"]
-    locks = "cmd:all()"
-    help_category = "Vehicles"
-
-    def func(self):
-        caller = self.caller
-        loc = caller.location
-        if not loc:
-            return
-        try:
-            from typeclasses.vehicles import Vehicle, VehicleInterior
-        except ImportError:
-            return
-
-        target = None
-        if isinstance(loc, VehicleInterior):
-            v = getattr(loc.db, "vehicle", None)
-            if v and isinstance(v, Vehicle):
-                if not self.args:
-                    target = v
-                else:
-                    arg = self.args.strip().lower()
-                    lab = vehicle_label(v).lower()
-                    if arg in lab or arg in (v.key or "").lower():
-                        target = v
-        if not target:
-            if not self.args:
-                caller.msg("Unlock what? Usage: |wunlockvehicle <vehicle>|n")
-                return
-            target = caller.search(self.args.strip(), location=loc)
-        if not target:
-            return
-        if not isinstance(target, Vehicle):
-            caller.msg("That's not a vehicle.")
-            return
-        tag = getattr(target.db, "lock_key_tag", None) or ""
-        if not tag:
-            caller.msg("This vehicle has no lock.")
-            return
-        from world.rpg.factions.doors import has_key
-
-        if not has_key(caller, tag):
-            caller.msg("You don't have the key.")
-            return
-        target.db.locked = False
-        lab = vehicle_label(target)
-        caller.msg(f"You lean over and flick a switch, unlocking the doors on {lab}.")
-
-
 class CmdControlVehicle(Command):
     """Take the driver seat in an enclosed vehicle."""
 
@@ -384,9 +327,16 @@ class CmdControlVehicle(Command):
             caller.msg("Use |wmount|n / |wdismount|n for motorcycles.")
             return
         cur = getattr(vehicle.db, "driver", None)
+        if cur == caller:
+            caller.msg("You are already at the controls.")
+            return
         if cur and cur != caller:
             caller.msg("Someone else is at the wheel.")
             return
+        # Leave the gunner station if currently on the guns
+        if getattr(vehicle.db, "gunner", None) == caller:
+            vehicle.db.gunner = None
+            vehicle.db.gunner_mount = None
         vehicle.db.driver = caller
         caller.msg("You take the controls.")
 
@@ -412,11 +362,18 @@ class CmdReleaseControls(Command):
         if isinstance(vehicle, Motorcycle) or getattr(vehicle.db, "vehicle_type", None) == "motorcycle":
             caller.msg("Use |wdismount|n.")
             return
-        if getattr(vehicle.db, "driver", None) != caller:
-            caller.msg("You're not driving.")
+        is_driver = getattr(vehicle.db, "driver", None) == caller
+        is_gunner = getattr(vehicle.db, "gunner", None) == caller
+        if not is_driver and not is_gunner:
+            caller.msg("You're not at the controls or a weapon station.")
             return
-        vehicle.db.driver = None
-        caller.msg("You take your hands off the wheel. Someone else can |wcontrol|n.")
+        if is_driver:
+            vehicle.db.driver = None
+            caller.msg("You take your hands off the wheel. Someone else can |wcontrol|n.")
+        else:
+            vehicle.db.gunner = None
+            vehicle.db.gunner_mount = None
+            caller.msg("You step away from the weapon station.")
 
 
 # Backward-compatible name for imports
@@ -444,7 +401,17 @@ class CmdHaltVehicleMovement(Command):
         if not vehicle:
             caller.msg("You're not in or on a vehicle.")
             return
-        if getattr(vehicle.db, "driver", None) and vehicle.db.driver != caller:
+        try:
+            from typeclasses.vehicles import Motorcycle, VehicleInterior
+        except ImportError:
+            return
+        if isinstance(caller.location, VehicleInterior) and not (
+            isinstance(vehicle, Motorcycle) or getattr(vehicle.db, "vehicle_type", None) == "motorcycle"
+        ):
+            if getattr(vehicle.db, "driver", None) != caller:
+                caller.msg("You're not driving.")
+                return
+        elif getattr(vehicle.db, "driver", None) and vehicle.db.driver != caller:
             caller.msg("You're not driving.")
             return
         vdb = getattr(vehicle, "db", None)
@@ -558,7 +525,9 @@ class CmdStartEngine(Command):
             return
         loc = caller.location
         if isinstance(loc, VehicleInterior):
-            pass
+            if getattr(vehicle.db, "driver", None) != caller:
+                caller.msg("You're not at the controls. Use |wcontrol|n to take the driver's seat.")
+                return
         elif isinstance(vehicle, Motorcycle) or getattr(vehicle.db, "vehicle_type", None) == "motorcycle":
             if getattr(caller.db, "mounted_on", None) != vehicle:
                 caller.msg("You need to be on the bike.")
@@ -569,6 +538,17 @@ class CmdStartEngine(Command):
         if vehicle.engine_running:
             caller.msg("The engine is already running.")
             return
+        try:
+            from world.vehicles.vehicle_security import check_vehicle_permission
+
+            if getattr(vehicle.db, "security_locked", False):
+                caller.msg("The vehicle is locked.")
+                return
+            if not check_vehicle_permission(vehicle, caller, "start"):
+                caller.msg("The ignition bioscan rejects you. Not authorized to start this vehicle.")
+                return
+        except ImportError:
+            pass
         ok, err = vehicle.start_engine()
         if not ok:
             caller.msg(f"|r{err}|n")
@@ -617,7 +597,9 @@ class CmdStopEngine(Command):
             return
         loc = caller.location
         if isinstance(loc, VehicleInterior):
-            pass
+            if getattr(vehicle.db, "driver", None) != caller:
+                caller.msg("You're not at the controls. Use |wcontrol|n to take the driver's seat.")
+                return
         elif isinstance(vehicle, Motorcycle) or getattr(vehicle.db, "vehicle_type", None) == "motorcycle":
             if getattr(caller.db, "mounted_on", None) != vehicle:
                 caller.msg("You need to be on the bike.")
@@ -731,7 +713,7 @@ class CmdDrive(Command):
     def func(self):
         from evennia.utils import delay
         from typeclasses.vehicles import _can_vehicle_enter
-        from world.rpg.staggered_movement import DRIVE_DELAY
+        from world.rpg.staggered_movement import DRIVE_DELAY, get_drive_delay
         from world.vehicle_movement import (
             bump_drive_session,
             clear_drive_queue_state,
@@ -754,9 +736,33 @@ class CmdDrive(Command):
         if getattr(vehicle.db, "driver", None) and vehicle.db.driver != caller:
             caller.msg("You're not driving.")
             return
+        try:
+            from world.vehicles.vehicle_security import check_vehicle_permission
+
+            if not check_vehicle_permission(vehicle, caller, "drive"):
+                caller.msg("The drive controls won't respond. You are not authorized to operate this vehicle.")
+                return
+        except ImportError:
+            pass
         if not vehicle.engine_running:
             caller.msg("Start the engine first.")
             return
+        try:
+            from world.combat.vehicle_combat import vehicle_drive_movement_blocked
+
+            _blocked = vehicle_drive_movement_blocked(vehicle)
+            if _blocked:
+                caller.msg(f"|r{_blocked}|n")
+                return
+        except Exception:
+            pass
+        try:
+            import time
+
+            if float(getattr(vehicle.db, "entangled_until", 0) or 0) > time.time():
+                caller.msg("|yThe net tangles the wheels. Handling is compromised.|n")
+        except Exception:
+            pass
         if is_vehicle_drive_active(vehicle):
             caller.msg(
                 "The vehicle is already in motion. Wait until you reach your destination "
@@ -811,8 +817,10 @@ class CmdDrive(Command):
             set_drive_chain_active(vehicle)
             dir_display = normalize_direction(first_dir) or first_dir
             caller.msg(f"You begin driving {dir_display}.")
-            delay(DRIVE_DELAY, staggered_drive_complete, vehicle.id, dest.id, first_dir, sid)
+            delay(get_drive_delay(vehicle), staggered_drive_complete, vehicle.id, dest.id, first_dir, sid)
         else:
+            if not vehicle_leg_roll_or_abort(vehicle, dest_room=dest):
+                return
             execute_vehicle_move(vehicle, caller, dest, first_dir)
 
 
@@ -833,7 +841,7 @@ class CmdFly(Command):
     def func(self):
         from evennia.utils import delay
         from typeclasses.vehicles import AerialVehicle, _can_vehicle_enter
-        from world.rpg.staggered_movement import DRIVE_DELAY
+        from world.rpg.staggered_movement import DRIVE_DELAY, get_drive_delay
         from world.movement.aerial import fly_vertical
         from world.movement.falling import process_fall
         from world.vehicle_movement import (
@@ -858,12 +866,36 @@ class CmdFly(Command):
         if getattr(vehicle.db, "driver", None) and vehicle.db.driver != caller:
             caller.msg("You're not at the controls.")
             return
+        try:
+            from world.vehicles.vehicle_security import check_vehicle_permission
+
+            if not check_vehicle_permission(vehicle, caller, "drive"):
+                caller.msg("The flight controls won't respond. You are not authorized.")
+                return
+        except ImportError:
+            pass
         if not vehicle.engine_running:
             caller.msg("Start the engines first.")
             return
         if not getattr(vehicle.db, "airborne", False):
             caller.msg("You need to |wtakeoff|n before you can fly.")
             return
+        try:
+            from world.combat.vehicle_combat import vehicle_drive_movement_blocked
+
+            _blocked = vehicle_drive_movement_blocked(vehicle)
+            if _blocked:
+                caller.msg(f"|r{_blocked}|n")
+                return
+        except Exception:
+            pass
+        try:
+            import time
+
+            if float(getattr(vehicle.db, "entangled_until", 0) or 0) > time.time():
+                caller.msg("|yThe net tangles the wheels. Handling is compromised.|n")
+        except Exception:
+            pass
         if is_vehicle_drive_active(vehicle):
             caller.msg(
                 "The vehicle is already in motion. Wait until you reach your destination "
@@ -936,66 +968,75 @@ class CmdFly(Command):
             set_drive_chain_active(vehicle)
             dir_display = normalize_direction(first_dir) or first_dir
             caller.msg(f"You vector {dir_display}.")
-            delay(DRIVE_DELAY, staggered_drive_complete, vehicle.id, dest.id, first_dir, sid)
+            delay(get_drive_delay(vehicle), staggered_drive_complete, vehicle.id, dest.id, first_dir, sid)
         else:
-            if not vehicle_leg_roll_or_abort(vehicle):
+            if not vehicle_leg_roll_or_abort(vehicle, dest_room=dest):
                 return
             execute_vehicle_move(vehicle, caller, dest, first_dir, is_vertical=False)
 
 
-class CmdVehicleStatus(Command):
-    """Mechanic inspection of a vehicle."""
+class CmdEvaluateVehicle(Command):
+    """Mechanic evaluation of a vehicle (class-specific parts)."""
 
-    key = "vehicle status"
-    aliases = ["vehiclestatus", "inspect vehicle", "vstatus"]
+    key = "evaluate"
+    aliases = []
     locks = "cmd:all()"
     help_category = "Vehicles"
+    usage_hint = "|wevaluate <vehicle>|n"
 
     def func(self):
         caller = self.caller
         loc = caller.location
-        arg = self.args.strip()
-        vehicle = None
+        arg = (self.args or "").strip()
+        if not arg:
+            caller.msg("Usage: |wevaluate <vehicle>|n")
+            return
+        if not loc:
+            caller.msg("You are not anywhere.")
+            return
         try:
             from evennia.utils import delay
-            from typeclasses.vehicles import Vehicle
+            from typeclasses.vehicles import Vehicle, VehicleInterior
             from world.vehicle_parts import (
-                INSPECT_DURATION_SECONDS,
-                INSPECT_MECHANICS_MIN_LEVEL,
-                INSPECT_FLAVOR_MESSAGES,
-                _vehicle_inspect_flavor_callback,
-                _vehicle_inspect_final_callback,
-                default_part_types,
+                EVALUATE_FLAVOR_MESSAGES,
+                EVALUATE_MECHANICS_MIN_LEVEL,
+                _vehicle_evaluate_flavor_callback,
+                _vehicle_evaluate_final_callback,
+                get_vehicle_type,
             )
         except ImportError:
             caller.msg("Vehicle system is not available.")
             return
-        vehicle = _get_vehicle_from_caller(caller)
-        if not vehicle and loc:
-            if arg:
+
+        candidates = [o for o in (loc.contents or []) if isinstance(o, Vehicle)]
+        if isinstance(loc, VehicleInterior):
+            v = getattr(loc.db, "vehicle", None)
+            if v and v not in candidates:
+                candidates.append(v)
+        if candidates:
+            vehicle = caller.search(arg, candidates=candidates)
+        else:
                 vehicle = caller.search(arg, location=loc)
-            if not vehicle and loc.contents:
-                for obj in loc.contents:
-                    if isinstance(obj, Vehicle):
-                        vehicle = obj
-                        break
-        if not vehicle or not isinstance(vehicle, Vehicle):
-            caller.msg("Inspect which vehicle? Usage: |wvehicle status [vehicle]|n")
+        if not vehicle:
+            return
+        if not isinstance(vehicle, Vehicle):
+            caller.msg("That's not a vehicle.")
             return
         level = getattr(caller, "get_skill_level", lambda s: 0)("mechanical_engineering")
-        if level < INSPECT_MECHANICS_MIN_LEVEL:
-            caller.msg("You don't know enough about mechanics to inspect the vehicle properly.")
+        if level < EVALUATE_MECHANICS_MIN_LEVEL:
+            caller.msg("You don't know enough about mechanics to evaluate the vehicle properly.")
             return
-        if not getattr(vehicle.db, "vehicle_part_types", None):
-            vehicle.db.vehicle_part_types = default_part_types()
-        caller.msg("You walk around the vehicle and begin a proper inspection.")
-        for i, (part_id, message) in enumerate(INSPECT_FLAVOR_MESSAGES):
-            delay(2 * (i + 1), _vehicle_inspect_flavor_callback, caller.id, message)
-        delay(INSPECT_DURATION_SECONDS, _vehicle_inspect_final_callback, caller.id, vehicle.id)
+        vt = get_vehicle_type(vehicle)
+        flavor = EVALUATE_FLAVOR_MESSAGES.get(vt) or EVALUATE_FLAVOR_MESSAGES["ground"]
+        caller.msg("You walk around the vehicle and begin a proper evaluation.")
+        for i, (_part_id, message) in enumerate(flavor):
+            delay(2 * (i + 1), _vehicle_evaluate_flavor_callback, caller.id, message)
+        # Last flavor line is at 2 * len(flavor) s; final readout must run after that (was EVALUATE_DURATION_SECONDS=18).
+        delay(2 * len(flavor) + 1, _vehicle_evaluate_final_callback, caller.id, vehicle.id)
 
 
 class CmdRepairPart(Command):
-    """Repair a vehicle part."""
+    """Repair a vehicle part (garage + tools + mechanical engineering)."""
 
     key = "repair"
     aliases = ["repair part", "fix vehicle"]
@@ -1003,6 +1044,8 @@ class CmdRepairPart(Command):
     help_category = "Vehicles"
 
     def func(self):
+        from evennia.utils import delay
+
         caller = self.caller
         loc = caller.location
         if not loc:
@@ -1014,25 +1057,49 @@ class CmdRepairPart(Command):
             return
         try:
             from typeclasses.vehicles import Vehicle
-            from world.vehicle_parts import VEHICLE_PART_IDS, PART_DISPLAY_NAMES
+            from world.vehicle_parts import (
+                REPAIR_CAPS,
+                REPAIR_FLAVOR,
+                calculate_repair_duration,
+                get_part_display_name,
+                get_part_ids,
+                is_garage_room,
+                _repair_tool_tag_from_inventory,
+            )
             from world.skills import SKILL_STATS
+            from world.vehicles.vehicle_security import check_vehicle_permission
         except ImportError:
             caller.msg("Vehicle or skill system not available.")
+            return
+        if not is_garage_room(loc):
+            caller.msg("You need a proper shop. Find a |wgarage|n.")
             return
         vehicle_name, part_id = args[0], args[1].lower().replace(" ", "_")
         vehicle = caller.search(vehicle_name, location=loc)
         if not vehicle or not isinstance(vehicle, Vehicle):
             caller.msg("No such vehicle here.")
             return
-        if part_id not in VEHICLE_PART_IDS:
-            caller.msg(f"Unknown part. Valid: {', '.join(VEHICLE_PART_IDS)}")
+        if not check_vehicle_permission(vehicle, caller, "modify"):
+            caller.msg("The maintenance interlock won't disengage. Not authorized.")
+            return
+        valid = get_part_ids(vehicle)
+        if part_id not in valid:
+            caller.msg(f"Unknown part for this vehicle. Valid: {', '.join(valid)}")
             return
         current = vehicle.get_part_condition(part_id)
         if current >= 100:
-            caller.msg(f"The {PART_DISPLAY_NAMES.get(part_id, part_id)} is already in good shape.")
+            caller.msg(f"The {get_part_display_name(part_id)} is already in good shape.")
+            return
+        tool_tag = _repair_tool_tag_from_inventory(caller)
+        if not tool_tag:
+            caller.msg("You need a toolkit (basic, mechanic, or master) in your inventory.")
+            return
+        cap = REPAIR_CAPS.get(tool_tag, 50)
+        if current >= cap:
+            caller.msg(f"Your {tool_tag.replace('_', ' ')} can't improve this part further. Use better tools.")
             return
         stats = SKILL_STATS.get("mechanical_engineering", ["intelligence", "strength"])
-        level, _ = caller.roll_check(stats, "mechanical_engineering")
+        level, _ = caller.roll_check(stats, "mechanical_engineering", difficulty=15)
         repair_amount = 0
         if level == "Critical Success":
             repair_amount = 25
@@ -1043,16 +1110,290 @@ class CmdRepairPart(Command):
         if repair_amount <= 0:
             caller.msg("You work on it but don't manage to improve the condition.")
             return
-        new_cond = vehicle.repair_part(part_id, repair_amount)
-        part_name = PART_DISPLAY_NAMES.get(part_id, part_id)
-        caller.msg(f"You repair the {part_name}. Condition now |w{new_cond}%|n (was {current}%).")
-        vlab = vehicle_label(vehicle)
-        if msg_room_with_character_display:
-            msg_room_with_character_display(
-                loc,
-                caller,
-                lambda _v, display: f"{display} works on {vlab}'s {part_name}.",
-                exclude=[caller],
-            )
+        new_target = min(cap, current + repair_amount)
+        add_amt = new_target - current
+        dur = calculate_repair_duration(vehicle, part_id, tool_tag)
+        part_name = get_part_display_name(part_id)
+        flavor = REPAIR_FLAVOR.get(part_id) or REPAIR_FLAVOR["default"]
+        caller.msg(f"You set up for a ~{dur}s job on {vehicle_label(vehicle)}'s {part_name}.")
+
+        def _finish(caller_id, vid, pid, amount):
+            from evennia.utils.search import search_object
+
+            from world.vehicle_parts import get_part_display_name
+
+            cr = search_object(f"#{caller_id}")
+            vr = search_object(f"#{vid}")
+            if not cr or not vr:
+                return
+            c, v = cr[0], vr[0]
+            nc = v.repair_part(pid, amount)
+            c.msg(f"You finish. The {get_part_display_name(pid)} is now |w{nc}%|n.")
+
+        delay(dur, _finish, caller.id, vehicle.id, part_id, add_amt)
+        for i, line in enumerate(flavor[:3]):
+            delay(1 + i * 2, _repair_flavor_msg, caller.id, line)
+
+
+def _repair_flavor_msg(caller_id, message):
+    from evennia.utils.search import search_object
+
+    try:
+        o = search_object(f"#{caller_id}")
+        if o:
+            o[0].msg(f"|x{message}|n")
+    except Exception:
+        pass
+
+
+class CmdRefuel(Command):
+    key = "refuel"
+    aliases = ["fuel", "gas up"]
+    locks = "cmd:all()"
+    help_category = "Vehicles"
+
+    def func(self):
+        from evennia.utils import delay
+
+        caller = self.caller
+        loc = caller.location
+        if not loc:
+            return
+        args = (self.args or "").strip().split()
+        if not args:
+            caller.msg("Usage: refuel <vehicle> | refuel <vehicle> with <can>")
+            return
+        try:
+            from typeclasses.vehicles import Vehicle
+            from world.vehicle_parts import is_fuel_station_room
+        except ImportError:
+            return
+        with_can = False
+        if len(args) >= 3 and args[1].lower() == "with":
+            veh_name, with_can = " ".join(args[:1]), True
+            can_query = " ".join(args[2:])
         else:
-            loc.msg_contents(f"{caller.key} works on {vlab}'s {part_name}.", exclude=caller)
+            veh_name = " ".join(args)
+            can_query = None
+        vehicle = caller.search(veh_name, location=loc)
+        if not vehicle or not isinstance(vehicle, Vehicle):
+            return
+        cap = float(getattr(vehicle.db, "fuel_capacity", 100) or 100)
+        cur = float(getattr(vehicle.db, "fuel_level", 0) or 0)
+        if cur >= cap - 0.01:
+            caller.msg("The tank is already full.")
+            return
+        if with_can:
+            can_obj = caller.search(can_query, location=caller)
+            if not can_obj:
+                return
+            amt = float(getattr(can_obj.db, "fuel_amount", 0) or 0)
+            if amt <= 0:
+                caller.msg("That container is empty.")
+                return
+            need = cap - cur
+            take = min(need, amt)
+            vehicle.db.fuel_level = cur + take
+            can_obj.db.fuel_amount = amt - take
+            if can_obj.db.fuel_amount <= 0:
+                can_obj.delete()
+            caller.msg(f"You top up the tank from the can (+{take:.1f}).")
+            return
+        if not is_fuel_station_room(loc):
+            caller.msg("You need to be at a fuel station or use a fuel can (|wrefuel <v> with <can>|n).")
+            return
+
+        def _done(cid, vid):
+            from evennia.utils.search import search_object
+
+            from world.vehicle_parts import invalidate_perf_cache
+
+            c = search_object(f"#{cid}")
+            v = search_object(f"#{vid}")
+            if not c or not v:
+                return
+            veh = v[0]
+            cap2 = float(getattr(veh.db, "fuel_capacity", 100) or 100)
+            veh.db.fuel_level = cap2
+            invalidate_perf_cache(veh)
+            c[0].msg("|gTank filled.|n")
+
+        caller.msg("You start refueling (10s)...")
+        delay(10, _done, caller.id, vehicle.id)
+
+
+class CmdSwapVehiclePart(Command):
+    key = "swap"
+    locks = "cmd:all()"
+    help_category = "Vehicles"
+
+    def func(self):
+        caller = self.caller
+        loc = caller.location
+        if not loc:
+            return
+        parts = (self.args or "").strip().split()
+        if len(parts) < 3:
+            caller.msg("Usage: swap <vehicle> <part_slot> <type_id>")
+            return
+        try:
+            from typeclasses.vehicles import Vehicle
+            from world.vehicle_parts import (
+                SWAP_DIFFICULTY,
+                get_part_display_name,
+                get_part_ids,
+                is_garage_room,
+                set_part_type_id,
+            )
+            from world.vehicles.vehicle_security import check_vehicle_permission
+        except ImportError:
+            return
+        if not is_garage_room(loc):
+            caller.msg("You need a |wgarage|n to swap parts.")
+            return
+        vname, slot, type_id = parts[0], parts[1].lower(), parts[2].lower()
+        vehicle = caller.search(vname, location=loc)
+        if not vehicle or not isinstance(vehicle, Vehicle):
+            return
+        if not check_vehicle_permission(vehicle, caller, "modify"):
+            caller.msg("Not authorized to modify this vehicle.")
+            return
+        if slot not in get_part_ids(vehicle):
+            caller.msg("Invalid part slot.")
+            return
+        diff = SWAP_DIFFICULTY.get(slot, 25)
+        from world.skills import SKILL_STATS
+
+        stats = SKILL_STATS.get("mechanical_engineering", ["intelligence", "strength"])
+        tier, _ = caller.roll_check(stats, "mechanical_engineering", difficulty=diff)
+        if tier not in ("Critical Success", "Full Success", "Marginal Success"):
+            caller.msg("Installation fails.")
+            return
+        if not set_part_type_id(vehicle, slot, type_id):
+            caller.msg("That part type doesn't exist for this slot.")
+            return
+        qual = 100 if tier == "Critical Success" else (90 if tier == "Full Success" else 75)
+        vehicle.set_part_condition(slot, qual)
+        caller.msg(f"You install {type_id} on the {get_part_display_name(slot)} (condition ~{qual}%).")
+
+
+class CmdPaintVehicle(Command):
+    key = "paint"
+    locks = "cmd:all()"
+    help_category = "Vehicles"
+
+    def func(self):
+        caller = self.caller
+        loc = caller.location
+        if not loc:
+            return
+        try:
+            from typeclasses.vehicles import Vehicle
+            from world.vehicle_parts import PAINT_COLORS, is_garage_room
+            from world.skills import SKILL_STATS
+            from world.vehicles.vehicle_security import check_vehicle_permission
+        except ImportError:
+            return
+        if not is_garage_room(loc):
+            caller.msg("You need a |wgarage|n to paint.")
+            return
+        args = (self.args or "").strip().split()
+        if len(args) < 2:
+            caller.msg("Usage: paint <vehicle> <color_key>")
+            return
+        vehicle = caller.search(args[0], location=loc)
+        if not vehicle or not isinstance(vehicle, Vehicle):
+            return
+        if not check_vehicle_permission(vehicle, caller, "modify"):
+            caller.msg("Not authorized.")
+            return
+        ckey = args[1].lower()
+        data = PAINT_COLORS.get(ckey)
+        if not data:
+            caller.msg(f"Unknown color. Try: {', '.join(PAINT_COLORS.keys())}")
+            return
+        has_can = any(getattr(o.db, "paint_can_color", None) == ckey for o in caller.contents)
+        if not has_can:
+            caller.msg("You need a matching paint can in inventory.")
+            return
+        stats = SKILL_STATS.get("mechanical_engineering", ["intelligence", "strength"])
+        tier, _ = caller.roll_check(stats, "mechanical_engineering", difficulty=20)
+        pq = 100 if tier == "Critical Success" else (80 if tier == "Full Success" else (50 if tier == "Marginal Success" else 0))
+        if pq <= 0:
+            caller.msg("The job goes wrong.")
+            return
+        vehicle.db.paint_color = ckey
+        vehicle.db.paint_color_code = data["code"]
+        vehicle.db.custom_desc_prefix = data["desc_prefix"]
+        vehicle.db.paint_quality = float(pq)
+        for o in list(caller.contents):
+            if getattr(o.db, "paint_can_color", None) == ckey:
+                o.delete()
+                break
+        caller.msg(f"You lay down {data['name']}. Quality ~{pq}%.")
+
+
+class CmdCustomizeVehicle(Command):
+    key = "customize"
+    locks = "cmd:all()"
+    help_category = "Vehicles"
+
+    def func(self):
+        caller = self.caller
+        loc = caller.location
+        if not loc:
+            return
+        try:
+            from typeclasses.vehicles import Vehicle
+            from world.vehicle_parts import is_garage_room
+            from world.vehicles.vehicle_security import check_vehicle_permission
+        except ImportError:
+            return
+        if not is_garage_room(loc):
+            caller.msg("You need a |wgarage|n.")
+            return
+        raw = (self.args or "").strip()
+        if not raw:
+            caller.msg("Usage: customize <vehicle> add decal <text> | customize <vehicle> list | customize <vehicle> remove <n>")
+            return
+        toks = raw.split(None, 2)
+        vehicle = caller.search(toks[0], location=loc)
+        if not vehicle or not isinstance(vehicle, Vehicle):
+            return
+        if not check_vehicle_permission(vehicle, caller, "modify"):
+            caller.msg("Not authorized.")
+            return
+        if len(toks) >= 2 and toks[1].lower() == "list":
+            vm = getattr(vehicle.db, "visual_mods", None) or []
+            if not vm:
+                caller.msg("No visual mods.")
+                return
+            for i, e in enumerate(vm, 1):
+                caller.msg(f"  {i}. {e.get('desc', '')}")
+            return
+        if len(toks) >= 2 and toks[1].lower() == "remove":
+            try:
+                n = int(toks[2].strip())
+            except (ValueError, IndexError):
+                caller.msg("Usage: customize <vehicle> remove <number>")
+                return
+            vm = list(getattr(vehicle.db, "visual_mods", None) or [])
+            if 1 <= n <= len(vm):
+                vm.pop(n - 1)
+                vehicle.db.visual_mods = vm
+                caller.msg("Removed.")
+            else:
+                caller.msg("Invalid index.")
+            return
+        if len(toks) >= 3 and toks[1].lower() == "add":
+            rest = toks[2].split(None, 1)
+            if len(rest) < 2:
+                caller.msg("Usage: customize <vehicle> add decal <description>")
+                return
+            kind, desc = rest[0].lower(), rest[1].strip()
+            vm = list(getattr(vehicle.db, "visual_mods", None) or [])
+            vm.append({"type": kind, "desc": desc, "applied_by": caller.key})
+            vehicle.db.visual_mods = vm
+            caller.msg("Visual mod added.")
+            return
+        caller.msg("See help customize.")

@@ -10,13 +10,6 @@ from evennia import TICKER_HANDLER as ticker
 
 from world.combat.utils import combat_display_name as _combat_display_name
 from world.combat.engine import _body_part_and_multiplier
-from world.combat.range_system import (
-    get_combat_range,
-    is_weapon_optimal,
-    get_weapon_optimal_ranges,
-    attempt_advance,
-    attempt_retreat,
-)
 from world.combat.cover import try_take_cover, clear_cover_state, set_suppressed
 from world.ammo import is_ranged_weapon
 from world.theme_colors import COMBAT_COLORS as CC
@@ -30,17 +23,7 @@ CREATURE_AI_COOLDOWN = 4.0
 
 
 def creature_range_decision(creature, target, weapon_key):
-    current = get_combat_range(creature, target)
-    if is_weapon_optimal(weapon_key, current):
-        return "attack"
-    optimal = get_weapon_optimal_ranges(weapon_key)
-    if not optimal:
-        return "attack"
-    nearest_optimal = min(optimal, key=lambda r: abs(r - current))
-    if nearest_optimal < current:
-        return "advance"
-    if nearest_optimal > current:
-        return "retreat"
+    # Positional advance/retreat removed; room size handles spacing.
     return "attack"
 
 
@@ -447,13 +430,7 @@ def creature_ai_tick(creature):
         return
     if cover_action == "leave_cover":
         clear_cover_state(creature, reset_pose=True)
-    range_action = creature_range_decision(creature, target, weapon_key)
-    if range_action == "advance":
-        attempt_advance(creature, target)
-        return
-    if range_action == "retreat":
-        attempt_retreat(creature, target)
-        return
+    creature_range_decision(creature, target, weapon_key)
     if weapon_key == "automatic" and int(getattr(target.db, "cover_quality", 0) or 0) >= 2:
         set_suppressed(target)
         loc = getattr(creature, "location", None)

@@ -16,13 +16,36 @@ COMBAT_DEFENDER_COLOR = "|Y"
 
 
 def combat_display_name(char, viewer):
+    """
+    Viewer-relative combat names: vehicle label, then rp_features (mask, recog, sdesc) for others.
+    When viewer is the character, returns object key (first-person lines use "You" in templates).
+    """
     if char is None:
         return "Someone"
-    if viewer is not None and hasattr(char, "get_display_name"):
-        out = char.get_display_name(viewer)
-        if out:
-            return out
-    return getattr(char, "name", None) or getattr(char, "key", None) or "Someone"
+    try:
+        from typeclasses.vehicles import Vehicle, vehicle_label as _vehicle_label
+
+        if isinstance(char, Vehicle):
+            return _vehicle_label(char)
+    except ImportError:
+        pass
+    if viewer is None:
+        return getattr(char, "name", None) or getattr(char, "key", None) or "Someone"
+    if viewer != char:
+        try:
+            from world.rp_features import get_display_name_for_viewer
+
+            out = get_display_name_for_viewer(char, viewer)
+            if out:
+                return out
+        except Exception:
+            pass
+        if hasattr(char, "get_display_name"):
+            out = char.get_display_name(viewer)
+            if out:
+                return out
+        return getattr(char, "name", None) or getattr(char, "key", None) or "Someone"
+    return getattr(char, "key", None) or getattr(char, "name", None) or "Someone"
 
 
 def combat_role_name(char, viewer, role="neutral"):
@@ -32,6 +55,50 @@ def combat_role_name(char, viewer, role="neutral"):
     if role == "defender":
         return f"{COMBAT_DEFENDER_COLOR}{name}|n"
     return name
+
+
+def combat_role_name_attacker_party(attacker, viewer, role="attacker"):
+    """
+    Third-party combat lines: when this character is fighting with a vehicle-mounted weapon,
+    show the vehicle (hull) as the aggressor, not the driver's sdesc.
+    """
+    if not attacker:
+        return combat_role_name(attacker, viewer, role=role)
+    try:
+        from world.combat.vehicle_combat import get_attacker_vehicle_weapon_context
+
+        ctx = get_attacker_vehicle_weapon_context(attacker)
+        if ctx:
+            return combat_role_name(ctx[0], viewer, role=role)
+    except ImportError:
+        pass
+    return combat_role_name(attacker, viewer, role=role)
+
+
+def relay_combat_room_msg(loc, attacker, defender, room_tpl, **extra_names):
+    """
+    After a per-viewer combat observer loop, relay the same message to occupants of any enclosed
+    vehicles parked in `loc`.  Names are resolved against `None` (neutral third-person) so cabin
+    crew see the same sdesc/label as an anonymous bystander would.
+
+    `room_tpl` should be a format string with at least {attacker} and {defender} slots.
+    Pass additional keyword args for any extra slots (e.g. effective_defender=, loc=).
+    """
+    if not loc:
+        return
+    try:
+        from typeclasses.vehicles import relay_to_parked_vehicle_interiors
+    except ImportError:
+        return
+    atk_n = combat_role_name_attacker_party(attacker, None, role="attacker")
+    def_n = combat_role_name(defender, None, role="defender")
+    fmt_kwargs = {"attacker": atk_n, "defender": def_n}
+    fmt_kwargs.update(extra_names)
+    try:
+        msg = room_tpl.format(**fmt_kwargs)
+    except (KeyError, IndexError):
+        return
+    relay_to_parked_vehicle_interiors(loc, combat_text(msg))
 
 
 def combat_text(line):
@@ -82,6 +149,87 @@ def resolve_combat_objects(attacker, defender, kwargs):
     if defender is None and defender_id is not None:
         defender = get_object_by_id(defender_id)
     return attacker, defender
+
+
+def get_combat_external_location(caller):
+    """
+    Room used for resolving attack targets (line of sight).
+    When the caller is inside an enclosed vehicle cabin, targets are in the vehicle's exterior room.
+    """
+    if not caller:
+        return None
+    v = getattr(caller.db, "in_vehicle", None)
+    if v and getattr(v, "location", None):
+        return v.location
+    return caller.location
+
+
+def is_vehicle_interior_room(room):
+    """True when this room is an enclosed vehicle cabin (not the outside street)."""
+    if not room or not getattr(room, "db", None):
+        return False
+    return bool(getattr(room.db, "vehicle", None))
+
+
+def melee_brawl_blocked_in_vehicle_cabin(caller, target):
+    """
+    No fist-fighting another person inside the same enclosed vehicle cabin.
+    Attack from the cabin toward targets in the outside room (field of fire) is allowed.
+    Returns a user-facing message if blocked, otherwise None.
+    """
+    if not caller or not target:
+        return None
+    cloc = getattr(caller, "location", None)
+    if not is_vehicle_interior_room(cloc):
+        return None
+    try:
+        from typeclasses.characters import Character
+    except ImportError:
+        return None
+    if not isinstance(target, Character):
+        return None
+    if getattr(target, "location", None) != cloc:
+        return None
+    return (
+        "You can't brawl with someone inside the cabin. "
+        "Use |wattack <target>|n on someone outside, or the vehicle's mounted weapons."
+    )
+
+
+def melee_target_blocked_enclosed_cabin(caller, target, exterior_room):
+    """
+    Foot combat from the outside field-of-fire cannot target someone who only exists
+    inside an enclosed vehicle cabin. Motorcycle riders are in the room and are allowed.
+    Returns a user-facing message if blocked, otherwise None.
+    """
+    if not caller or not target or not exterior_room:
+        return None
+    try:
+        from typeclasses.characters import Character
+    except ImportError:
+        return None
+    if not isinstance(target, Character):
+        return None
+    iv = getattr(target.db, "in_vehicle", None)
+    if not iv:
+        return None
+    try:
+        from typeclasses.vehicles import Vehicle, vehicle_label as _vehicle_label
+    except ImportError:
+        return None
+    if not isinstance(iv, Vehicle) or getattr(iv.db, "vehicle_destroyed", False):
+        return None
+    if getattr(iv.db, "vehicle_type", None) == "motorcycle":
+        return None
+    if not getattr(iv.db, "has_interior", True):
+        return None
+    if getattr(target, "location", None) == exterior_room:
+        return None
+    lab = _vehicle_label(iv)
+    return (
+        f"You can't reach them — they're inside {lab}. "
+        f"Attack the vehicle: |wattack {lab}|n (or that vehicle's name)."
+    )
 
 
 def get_combat_target(caller):

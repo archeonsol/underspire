@@ -7,6 +7,7 @@ Each enclosed vehicle has exactly ONE persistent interior. Items dropped inside 
 """
 import re
 
+from typeclasses.matrix.mixins.matrix_id import MatrixIdMixin
 from typeclasses.objects import Object
 from evennia.utils.create import create_object
 from evennia.utils.search import search_tag, search_object
@@ -22,20 +23,38 @@ try:
     from world.vehicle_parts import (
         default_parts,
         default_part_types,
+        get_cool_part_id,
+        get_fuel_part_id,
         get_part_condition as _get_part_condition,
+        get_part_ids,
         set_part_condition as _set_part_condition,
         damage_part as _damage_part,
         repair_part as _repair_part,
         can_start_engine,
         roll_stall_chance,
         drive_failure_modifier,
-        VEHICLE_PART_IDS,
+        drive_check_modifier,
+        tires_ok_for_offroad,
         PART_DISPLAY_NAMES,
         condition_description as _condition_description,
+        invalidate_perf_cache,
     )
 except ImportError:
-    default_parts = lambda: {}
-    default_part_types = lambda: {}
+    default_parts = lambda v=None: {}
+    default_part_types = lambda v=None: {}
+
+    def get_part_ids(v):
+        return []
+
+    def get_fuel_part_id(v):
+        return "fuel_pump"
+
+    def get_cool_part_id(v):
+        return "radiator"
+
+    def tires_ok_for_offroad(v):
+        return True
+
     _get_part_condition = lambda v, p: 100
     _set_part_condition = lambda v, p, x: None
     _damage_part = lambda v, p, a: 100
@@ -43,7 +62,8 @@ except ImportError:
     can_start_engine = lambda v: (True, "")
     roll_stall_chance = lambda v: False
     drive_failure_modifier = lambda v: 0.0
-    VEHICLE_PART_IDS = []
+    drive_check_modifier = lambda v, m="normal": 0
+    invalidate_perf_cache = lambda v: None
     PART_DISPLAY_NAMES = {}
     _condition_description = lambda c: "ok"
 
@@ -60,19 +80,85 @@ def vehicle_label(vehicle):
     return (getattr(vehicle.db, "vehicle_name", None) or getattr(vehicle, "key", None) or "vehicle").strip()
 
 
+def _msg_all_vehicle_occupants(vehicle, message):
+    """Send a message to everyone in/on the vehicle."""
+    if not vehicle:
+        return
+    if getattr(vehicle.db, "vehicle_type", None) == "motorcycle":
+        rider = getattr(vehicle.db, "rider", None)
+        if rider:
+            rider.msg(message)
+        return
+    if getattr(vehicle.db, "has_interior", True) and vehicle.db.interior:
+        interior = vehicle.db.interior
+        if interior:
+            interior.msg_contents(message)
+
+
+def relay_to_parked_vehicle_interiors(room, text):
+    """
+    Relay a plain-text exterior room message to occupants of any enclosed vehicles parked in `room`.
+
+    Each cabin occupant receives the message prefixed with a windscreen/window intro line so it
+    reads as something overheard or glimpsed from inside the vehicle.  Motorcycles are skipped
+    because their riders are in the exterior room already and receive the message normally.
+
+    Call this from Room.msg_contents (and from any per-viewer broadcast loop that bypasses
+    msg_contents, e.g. at_say and _run_emote) so that cabin crew never miss exterior activity.
+    """
+    if not room or not text:
+        return
+    try:
+        vehicles_here = [
+            obj for obj in room.contents
+            if hasattr(obj, "db")
+            and getattr(obj.db, "has_interior", False)
+            and getattr(obj.db, "vehicle_type", None) not in (None, "motorcycle")
+            and getattr(obj.db, "interior", None)
+        ]
+    except Exception:
+        return
+    for vehicle in vehicles_here:
+        interior = vehicle.db.interior
+        if not interior:
+            continue
+        try:
+            occupants = list(interior.contents_get(content_type="character"))
+        except Exception:
+            continue
+        if not occupants:
+            continue
+        vt = getattr(vehicle.db, "vehicle_type", None) or "ground"
+        if vt == "aerial":
+            prefix = "|wThrough the closed windows you see:|n "
+        else:
+            prefix = "|wThrough the windscreen you see:|n "
+        relayed = prefix + text
+        for occ in occupants:
+            try:
+                occ.msg(relayed)
+            except Exception:
+                pass
+
+
 def _room_allows_vehicle_tags(room) -> bool:
     if not room or not hasattr(room, "tags"):
         return False
     t = room.tags
-    return t.has("street", category=VEHICLE_ACCESS_CAT) or t.has(
-        "tunnel", category=VEHICLE_ACCESS_CAT
-    ) or t.has("aerial", category=VEHICLE_ACCESS_CAT)
+    return (
+        t.has("street", category=VEHICLE_ACCESS_CAT)
+        or t.has("tunnel", category=VEHICLE_ACCESS_CAT)
+        or t.has("aerial", category=VEHICLE_ACCESS_CAT)
+        or t.has("offroad", category=VEHICLE_ACCESS_CAT)
+    )
 
 
 def _can_vehicle_enter(vehicle, destination):
     """Check if a vehicle type is allowed in the destination room. Returns (allowed: bool, reason: str).
 
-    Drivable surfaces use tags with category ``vehicle_access`` only (e.g. ``street``, ``tunnel``, ``aerial``).
+    Tags use category ``vehicle_access`` (e.g. ``street``, ``tunnel``, ``aerial``, ``offroad``).
+    Street/tunnel are universal for ground/motorcycle. Offroad-only cells need off-road tire mods.
+    Aerial vehicles may use street, aerial, or offroad surfaces (no tire check).
     """
     if not destination:
         return False, "There is nowhere to go."
@@ -81,20 +167,30 @@ def _can_vehicle_enter(vehicle, destination):
         return False, "You can't drive there."
 
     vehicle_type = getattr(vehicle.db, "vehicle_type", None) or "ground"
-
-    if vehicle_type in ("ground", "motorcycle"):
-        if destination.tags.has("street", category=VEHICLE_ACCESS_CAT) or destination.tags.has(
-            "tunnel", category=VEHICLE_ACCESS_CAT
-        ):
-            return True, ""
-        return False, "You can't drive there — no road."
+    has_street = destination.tags.has("street", category=VEHICLE_ACCESS_CAT)
+    has_tunnel = destination.tags.has("tunnel", category=VEHICLE_ACCESS_CAT)
+    has_offroad = destination.tags.has("offroad", category=VEHICLE_ACCESS_CAT)
+    has_aerial = destination.tags.has("aerial", category=VEHICLE_ACCESS_CAT)
 
     if vehicle_type == "aerial":
-        if destination.tags.has("aerial", category=VEHICLE_ACCESS_CAT) or destination.tags.has(
-            "street", category=VEHICLE_ACCESS_CAT
-        ):
+        if has_aerial or has_street or has_offroad:
             return True, ""
         return False, "You can't fly there."
+
+    if vehicle_type in ("ground", "motorcycle"):
+        if has_street or has_tunnel:
+            return True, ""
+        if has_offroad and not (has_street or has_tunnel):
+            try:
+                if tires_ok_for_offroad(vehicle):
+                    return True, ""
+            except Exception:
+                pass
+            return (
+                False,
+                "This terrain needs off-road rated tires or mud treads — yours aren't up to it.",
+            )
+        return False, "You can't drive there — no road."
 
     return False, "Unknown vehicle type."
 
@@ -113,7 +209,7 @@ class VehicleInterior(Room):
     """
 
     default_description = (
-        "Worn upholstery, a faint smell of oil and old vinyl. The steering column and dash sit in front of you; "
+        "Worn upholstery, a faint smell of oil and old vinyl. The steering column and dash sit in front of you. "
     )
 
     def _exterior_room(self):
@@ -150,7 +246,9 @@ class VehicleInterior(Room):
         """
         if not room:
             return ""
-        kw = dict(kwargs)
+        # Strip include_looker before forwarding — it's our own flag and must not leak into
+        # arbitrary object methods (e.g. OperatingTable.get_display_name) that don't accept it.
+        kw = {k: v for k, v in kwargs.items() if k != "include_looker"}
         kw["include_looker"] = False
         try:
             if hasattr(room, "return_appearance"):
@@ -207,29 +305,17 @@ class VehicleInterior(Room):
         airborne = bool(getattr(vehicle.db, "airborne", False))
         parts = getattr(vehicle.db, "vehicle_parts", None) or {}
 
-        part_abbrev = {
-            "engine": "ENG",
-            "transmission": "TRN",
-            "brakes": "BRK",
-            "suspension": "SUS",
-            "tires": "TIR",
-            "battery": "BAT",
-            "fuel_system": "FUEL",
-            "cooling_system": "COOL",
-            "electrical": "ELC",
-        }
-
         bad = []
         try:
-            from world.vehicle_parts import VEHICLE_PART_IDS
-
-            bad = [p for p in VEHICLE_PART_IDS if (parts.get(p, 100) or 100) < 50]
-        except ImportError:
+            bad = [p for p in get_part_ids(vehicle) if (parts.get(p, 100) or 100) < 50]
+        except Exception:
             pass
 
-        fuel_v = parts.get("fuel_system", 100) or 100
-        cool_v = parts.get("cooling_system", 100) or 100
-        fuel_bar = self._hud_bar(fuel_v)
+        cap = float(getattr(vehicle.db, "fuel_capacity", 100) or 100)
+        fl = float(getattr(vehicle.db, "fuel_level", cap) or 0)
+        fuel_pct = int(round(100.0 * fl / max(cap, 1.0)))
+        cool_v = parts.get(get_cool_part_id(vehicle), 100) or 100
+        fuel_bar = self._hud_bar(fuel_pct)
         cool_bar = self._hud_bar(cool_v)
 
         pwr = "|050●RUN|n" if running else "|x○STB|n"
@@ -245,7 +331,8 @@ class VehicleInterior(Room):
 
         fault_bits = []
         for pid in bad[:6]:
-            fault_bits.append(f"|550●{part_abbrev.get(pid, pid[:3].upper())}|n")
+            ab = PART_DISPLAY_NAMES.get(pid, pid)[:3].upper()
+            fault_bits.append(f"|550●{ab}|n")
 
         top = "|025╭── |530◇|n |025 LINK ────────────────────────────────╮|n"
         row1 = (
@@ -262,8 +349,142 @@ class VehicleInterior(Room):
         lines.append(bot)
         return "\n".join(lines)
 
-    def _dashboard_block(self, vehicle):
-        return self._vehicle_status_panel(vehicle)
+    @staticmethod
+    def _weapon_ammo_bar(current, capacity, width=8):
+        """Ammo bar: green when full, amber below half, red when critical (≤10%)."""
+        if capacity <= 0:
+            return "|025∞∞∞∞∞∞∞∞|n"
+        pct = max(0, min(100, int(round(100.0 * current / capacity))))
+        filled = max(0, min(width, round(width * pct / 100.0)))
+        empty = width - filled
+        if pct <= 10:
+            col = "|500"
+        elif pct < 50:
+            col = "|550"
+        else:
+            col = "|050"
+        return f"{col}{'█' * filled}{'░' * empty}|n"
+
+    def _weapon_panel_row(self, weapon, mount_id, vehicle):
+        """Single weapon row — left-bordered, no right border."""
+        if not weapon or not getattr(weapon, "db", None):
+            return f"|025│|n  |025{mount_id}|n  |x(empty)|n"
+
+        wname = (getattr(weapon.db, "weapon_name", None) or weapon.key or "weapon").strip()
+        wkey = (getattr(weapon.db, "weapon_key", None) or "").strip()
+        cap = int(getattr(weapon.db, "ammo_capacity", 0) or 0)
+        cur = int(getattr(weapon.db, "ammo_current", 0) or 0)
+        fr = int(getattr(weapon.db, "fire_rate", 1) or 1)
+
+        if "cannon" in wkey or "cannon" in wname.lower():
+            tag = "|530CAN|n"
+        elif "rocket" in wkey or "missile" in wkey:
+            tag = "|500RKT|n"
+        elif "machinegun" in wkey or "minigun" in wkey or "mg" in wkey:
+            tag = "|050MG |n"
+        elif "laser" in wkey:
+            tag = "|055LSR|n"
+        elif "net" in wkey or "harpoon" in wkey:
+            tag = "|025SPL|n"
+        else:
+            tag = "|025WPN|n"
+
+        from world.combat.vehicle_combat import _get_mount_type
+        mtype = _get_mount_type(vehicle, mount_id)
+        if mtype == "fixed_forward":
+            mlabel = "|025FWD|n"
+        elif mtype == "turret":
+            mlabel = "|025TUR|n"
+        elif mtype == "rear":
+            mlabel = "|025RER|n"
+        else:
+            mlabel = "|025MNT|n"
+
+        wname_trunc = wname[:18]
+        if cap > 0:
+            ammo_bar = self._weapon_ammo_bar(cur, cap)
+            fr_str = f"  |xROF×{fr}|n" if fr > 1 else ""
+            return f"|025│|n  {mlabel} |w{wname_trunc}|n  {tag}  {ammo_bar}  |x{cur}/{cap}|n{fr_str}"
+        else:
+            return f"|025│|n  {mlabel} |w{wname_trunc}|n  {tag}  |025∞|n |xunlimited|n"
+
+    def _driver_weapon_panel(self, vehicle):
+        """Compact ammo panel for the driver — forward-mount weapons only."""
+        mounts = getattr(vehicle.db, "weapon_mounts", None) or {}
+        mount_types = getattr(vehicle.db, "weapon_mount_types", None) or {}
+        fwd_mounts = [
+            mid for mid in sorted(mounts.keys())
+            if mount_types.get(mid, "fixed_forward") == "fixed_forward" and mounts.get(mid)
+        ]
+        if not fwd_mounts:
+            return ""
+
+        rows = ["|025╭── |530◈|n |025 WEAPONS|n"]
+        for mid in fwd_mounts:
+            rows.append(self._weapon_panel_row(mounts[mid], mid, vehicle))
+        rows.append("|025╰─────────────────────────────────────────────|n")
+        return "\n".join(rows)
+
+    def _gunner_panel(self, vehicle, gunner):
+        """Full gunner HUD: hull status strip + weapon rows."""
+        mounts = getattr(vehicle.db, "weapon_mounts", None) or {}
+        mount_types = getattr(vehicle.db, "weapon_mount_types", None) or {}
+        gunner_mount = getattr(vehicle.db, "gunner_mount", None)
+
+        gunner_mids = []
+        if gunner_mount and gunner_mount in mounts:
+            gunner_mids.append(gunner_mount)
+        for mid in sorted(mounts.keys()):
+            if mid not in gunner_mids and mount_types.get(mid, "fixed_forward") in ("turret", "rear", "underbelly"):
+                gunner_mids.append(mid)
+
+        running = getattr(vehicle.db, "engine_running", False)
+        hp = int(getattr(vehicle.db, "vehicle_hp", 100) or 100)
+        max_hp = int(getattr(vehicle.db, "vehicle_max_hp", 100) or 100)
+        pwr = "|050●RUN|n" if running else "|x○STB|n"
+        hull_bar = self._hud_bar(int(round(100.0 * hp / max(max_hp, 1))))
+
+        rows = ["|025╭── |530◈|n |025 GUNNER|n"]
+        rows.append(f"|025│|n  {pwr}  |xHULL|n {hull_bar}  |x{hp}/{max_hp}|n")
+
+        if gunner_mids:
+            rows.append("|025│|n")
+            for mid in gunner_mids:
+                marker = "|050► |n" if mid == gunner_mount else "  "
+                # Strip the leading │ from _weapon_panel_row and re-add with marker
+                wrow = self._weapon_panel_row(mounts.get(mid), mid, vehicle)
+                inner = wrow[len("|025│|n"):]
+                rows.append(f"|025│|n {marker}{inner}")
+        else:
+            rows.append("|025│|n  |xNo weapons on this station.|n")
+
+        rows.append("|025╰─────────────────────────────────────────────|n")
+        return "\n".join(rows)
+
+    def _dashboard_block(self, vehicle, looker=None):
+        """
+        Return the appropriate dashboard panel(s) for the looker:
+        - Gunner: gunner HUD (weapon status + hull strip)
+        - Driver: base LINK panel + forward-weapon ammo panel if applicable
+        - Passenger/none: base LINK panel only
+        """
+        base = self._vehicle_status_panel(vehicle)
+        if looker is None:
+            return base
+
+        gunner = getattr(vehicle.db, "gunner", None)
+        driver = getattr(vehicle.db, "driver", None)
+
+        if looker is gunner:
+            return self._gunner_panel(vehicle, looker)
+
+        if looker is driver:
+            weapon_panel = self._driver_weapon_panel(vehicle)
+            if weapon_panel:
+                return base + "\n" + weapon_panel
+            return base
+
+        return base
 
     def get_display_desc(self, looker, **kwargs):
         """
@@ -295,7 +516,7 @@ class VehicleInterior(Room):
         characters = self.get_display_characters(looker, **kwargs)
         footer = self.get_display_footer(looker, **kwargs)
         vehicle = self.db.vehicle
-        dashboard = self._dashboard_block(vehicle) if vehicle else ""
+        dashboard = self._dashboard_block(vehicle, looker=looker) if vehicle else ""
 
         if self._is_street_mode():
             ambient = ""
@@ -377,10 +598,17 @@ class VehicleInterior(Room):
         except Exception:
             pass
 
+        # Include the char being described even if filter_visible excluded them (e.g. the looker).
+        all_present = set(chars) | {char}
         driver = getattr(vehicle.db, "driver", None)
-        if driver is not None and driver not in chars:
+        if driver is not None and driver not in all_present:
             driver = None
-        passengers = [c for c in chars if driver is None or c is not driver]
+        gunner = getattr(vehicle.db, "gunner", None)
+        if gunner is not None and gunner not in all_present:
+            gunner = None
+        gunner_mount = getattr(vehicle.db, "gunner_mount", None) or ""
+        occupied = {c for c in (driver, gunner) if c}
+        passengers = [c for c in chars if c not in occupied]
         try:
             passengers.sort(key=lambda x: getattr(x, "id", 0) or 0)
         except Exception:
@@ -390,18 +618,23 @@ class VehicleInterior(Room):
         pilot_word = "pilot" if vt == "aerial" else "driver"
         front_passenger = "the co-pilot seat" if vt == "aerial" else "the passenger seat"
 
-        if driver:
-            if char is driver:
-                if char is looker:
-                    return f"You are sitting in the {pilot_word}'s seat."
-                return f"{_ic_room_char_name(char, looker, **kwargs)} is sitting in the {pilot_word}'s seat."
-            if char not in passengers:
-                return None
-            idx = passengers.index(char)
-            place = front_passenger if idx == 0 else "the back"
+        # Determine gunner station label from mount id
+        if gunner_mount in ("m0", "m1"):
+            gun_station = "the turret"
+        elif gunner_mount == "m2":
+            gun_station = "the rear gun"
+        else:
+            gun_station = "the gunner station"
+
+        if char is driver:
             if char is looker:
-                return f"You are sitting in {place}."
-            return f"{_ic_room_char_name(char, looker, **kwargs)} is sitting in {place}."
+                return f"You are sitting in the {pilot_word}'s seat."
+            return f"{_ic_room_char_name(char, looker, **kwargs)} is sitting in the {pilot_word}'s seat."
+
+        if char is gunner:
+            if char is looker:
+                return f"You are manning {gun_station}."
+            return f"{_ic_room_char_name(char, looker, **kwargs)} is manning {gun_station}."
 
         if char not in passengers:
             return None
@@ -412,7 +645,7 @@ class VehicleInterior(Room):
         return f"{_ic_room_char_name(char, looker, **kwargs)} is sitting in {place}."
 
 
-class Vehicle(Object):
+class Vehicle(MatrixIdMixin, Object):
     """
     Base class for all vehicles. Subclassed by enclosed ground vehicles, motorcycles, and aerial vehicles.
 
@@ -432,11 +665,29 @@ class Vehicle(Object):
         self.db.max_passengers = 4
         self.db.driving_skill = getattr(self.db, "driving_skill", None) or "driving"
         self.db.vehicle_name = getattr(self.db, "vehicle_name", None) or "vehicle"
-        self.db.vehicle_parts = default_parts()
-        self.db.vehicle_part_types = default_part_types()
+        self.db.vehicle_parts = default_parts(self)
+        self.db.vehicle_part_types = default_part_types(self)
         self.db.speed_class = getattr(self.db, "speed_class", None) or "normal"
-        self.db.locked = bool(getattr(self.db, "locked", False))
-        self.db.lock_key_tag = getattr(self.db, "lock_key_tag", None) or ""
+        cap = float(getattr(self.db, "fuel_capacity", None) or 100)
+        self.db.fuel_capacity = cap
+        self.db.fuel_level = float(getattr(self.db, "fuel_level", None) if getattr(self.db, "fuel_level", None) is not None else cap)
+        self.db.fuel_type = getattr(self.db, "fuel_type", None) or "standard"
+        self.db.heat_level = float(getattr(self.db, "heat_level", None) or 0)
+        self.db.overheat_threshold = float(getattr(self.db, "overheat_threshold", None) or 100)
+        self.db.security_tier = int(getattr(self.db, "security_tier", None) or 1)
+        self.db.security_owner = getattr(self.db, "security_owner", None)
+        self.db.security_authorizations = getattr(self.db, "security_authorizations", None) or {}
+        self.db.security_locked = bool(getattr(self.db, "security_locked", True))
+        self.db.security_hotwired = bool(getattr(self.db, "security_hotwired", False))
+        self.db.security_alarm_active = bool(getattr(self.db, "security_alarm_active", False))
+        self.db.security_alarm_until = float(getattr(self.db, "security_alarm_until", None) or 0)
+        self.db.security_failed_attempts = int(getattr(self.db, "security_failed_attempts", None) or 0)
+        self.db.security_lockout_until = float(getattr(self.db, "security_lockout_until", None) or 0)
+        self.db.paint_color = getattr(self.db, "paint_color", None)
+        self.db.paint_color_code = getattr(self.db, "paint_color_code", None) or ""
+        self.db.paint_quality = getattr(self.db, "paint_quality", None)
+        self.db.custom_desc_prefix = getattr(self.db, "custom_desc_prefix", None) or ""
+        self.db.visual_mods = getattr(self.db, "visual_mods", None) or []
         self.db.autopilot_active = False
         self.db.autopilot_route = []
         self.db.autopilot_step = 0
@@ -445,6 +696,53 @@ class Vehicle(Object):
             self.locks.add("get:false()")
         except Exception:
             pass
+        self.db.vehicle_destroyed = bool(getattr(self.db, "vehicle_destroyed", False))
+        self.db.weapon_mounts = getattr(self.db, "weapon_mounts", None) or {}
+        self.db.gunner = getattr(self.db, "gunner", None)
+        self.db.gunner_mount = getattr(self.db, "gunner_mount", None)
+        self.db.tethered_to = getattr(self.db, "tethered_to", None)
+        self.db.tethered_by = getattr(self.db, "tethered_by", None)
+        try:
+            from world.combat.vehicle_combat import VEHICLE_MOUNT_CONFIGS, init_vehicle_hp_for_type
+
+            vt = getattr(self.db, "vehicle_type", None) or "ground"
+            vcfg = VEHICLE_MOUNT_CONFIGS.get(vt, VEHICLE_MOUNT_CONFIGS["ground"])
+            if getattr(self.db, "max_weapon_mounts", None) is None:
+                self.db.max_weapon_mounts = vcfg["max_mounts"]
+            init_vehicle_hp_for_type(self)
+        except Exception:
+            if getattr(self.db, "vehicle_hp", None) is None:
+                self.db.vehicle_hp = 100
+            if getattr(self.db, "vehicle_max_hp", None) is None:
+                self.db.vehicle_max_hp = 100
+            if getattr(self.db, "max_weapon_mounts", None) is None:
+                self.db.max_weapon_mounts = 2
+        if getattr(self.db, "vehicle_armor", None) is None:
+            self.db.vehicle_armor = 0
+        try:
+            from world.vehicle_parts import refresh_vehicle_armor
+
+            refresh_vehicle_armor(self)
+        except Exception:
+            pass
+        try:
+            from world.combat.vehicle_combat import VEHICLE_MOUNT_CONFIGS
+
+            vt = getattr(self.db, "vehicle_type", None) or "ground"
+            vcfg = VEHICLE_MOUNT_CONFIGS.get(vt, VEHICLE_MOUNT_CONFIGS["ground"])
+            if not getattr(self.db, "weapon_mount_types", None):
+                meta = {}
+                for i, mtype in enumerate(vcfg["mount_types"][: int(self.db.max_weapon_mounts or 2)]):
+                    meta[f"m{i}"] = mtype
+                self.db.weapon_mount_types = meta
+        except Exception:
+            pass
+        try:
+            mid = self.get_matrix_id()
+            if mid:
+                self.db.matrix_id = mid
+        except Exception:
+            self.db.matrix_id = getattr(self.db, "matrix_id", None) or ""
         if self.has_interior_default:
             self._ensure_interior()
 
@@ -563,12 +861,43 @@ class Vehicle(Object):
             self.move_to(source_location, quiet=True)
 
     def return_appearance(self, looker, **kwargs):
-        name = self.get_display_name(looker)
         desc = self.db.desc or "A vehicle."
-        parts = [desc]
+        pq = getattr(self.db, "paint_quality", None)
+        pcolor = getattr(self.db, "paint_color", None)
+        prefix = (getattr(self.db, "custom_desc_prefix", None) or "").strip()
+        if pcolor and (pq is None or float(pq) > 20) and prefix:
+            code = getattr(self.db, "paint_color_code", None) or ""
+            header = f"{code}{prefix} {self.key}|n"
+        else:
+            header = self.get_display_name(looker)
+        parts_out = [header, desc]
+        plate = None
+        try:
+            plate = self.get_matrix_id()
+        except Exception:
+            plate = None
+        if not plate:
+            plate = getattr(self.db, "matrix_id", None) or ""
+        elif getattr(self.db, "matrix_id", None) != plate:
+            self.db.matrix_id = plate
+        if plate:
+            parts_out.append(f"|mPlate:|n {plate}")
+        vm = getattr(self.db, "visual_mods", None) or []
+        for entry in vm:
+            if isinstance(entry, dict) and entry.get("desc"):
+                parts_out.append(str(entry["desc"]))
         if getattr(self.db, "engine_running", False):
-            parts.append("\n|yEngine running.|n")
-        return "\n".join(parts)
+            parts_out.append("|yEngine running.|n")
+        mounts = getattr(self.db, "weapon_mounts", None) or {}
+        weapon_descs = []
+        for _mid, wobj in mounts.items():
+            if wobj and getattr(wobj, "db", None):
+                addon = getattr(wobj.db, "desc_addon", None) or ""
+                if addon:
+                    weapon_descs.append(addon)
+        if weapon_descs:
+            parts_out.append("\n".join(weapon_descs))
+        return "\n\n".join(p for p in parts_out if p)
 
     def damage_part(self, part_id, amount):
         try:
@@ -596,6 +925,12 @@ class Vehicle(Object):
                 _tunnels.cancel_autopilot(self, reason="Engine stopped.")
         except Exception:
             pass
+        try:
+            from world.vehicle_parts import schedule_vehicle_cooldown
+
+            schedule_vehicle_cooldown(self)
+        except Exception:
+            pass
 
     @property
     def engine_running(self):
@@ -612,6 +947,9 @@ class Vehicle(Object):
 
     def drive_failure_modifier(self):
         return drive_failure_modifier(self)
+
+    def get_drive_check_modifier(self, maneuver="normal"):
+        return drive_check_modifier(self, maneuver)
 
     def roll_stall_chance(self):
         return roll_stall_chance(self)
@@ -663,6 +1001,8 @@ class Motorcycle(Vehicle):
     has_interior_default = False
 
     def at_object_creation(self):
+        self.db.vehicle_type = "motorcycle"
+        self.db.has_interior = False
         super().at_object_creation()
         self.db.vehicle_type = "motorcycle"
         self.db.has_interior = False
@@ -682,8 +1022,8 @@ class AerialVehicle(Vehicle):
     """Flying vehicle; uses piloting; can use aerial corridors and shafts."""
 
     def at_object_creation(self):
-        super().at_object_creation()
         self.db.vehicle_type = "aerial"
+        super().at_object_creation()
         self.db.has_interior = True
         self.db.driving_skill = "piloting"
         self.db.speed_class = getattr(self.db, "speed_class", None) or "fast"
@@ -691,6 +1031,16 @@ class AerialVehicle(Vehicle):
         self.db.altitude_z = None
 
     def stop_engine(self):
+        was_air = bool(getattr(self.db, "airborne", False))
+        loc = getattr(self, "location", None)
         super().stop_engine()
-        if getattr(self.db, "airborne", False):
-            self.db.airborne = False
+        self.db.airborne = False
+        if was_air and loc and getattr(getattr(loc, "db", None), "is_air", False):
+            _msg_all_vehicle_occupants(self, "|R[ENGINE] Power loss. Losing altitude.|n")
+            try:
+                from evennia.utils import delay
+                from world.movement.falling import process_fall
+
+                delay(1.0, process_fall, self.id, loc.id)
+            except Exception:
+                pass

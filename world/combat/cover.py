@@ -9,8 +9,6 @@ import time
 
 from world.theme_colors import COMBAT_COLORS as CC
 
-RANGED_COVER_DAMAGE_TYPES = {"penetrating", "burn", "freeze", "arc", "void"}
-
 COVER_EXPOSED = 0
 COVER_LIGHT = 1
 COVER_HEAVY = 2
@@ -66,16 +64,6 @@ def _room_cover_default_flavors(quality):
     if quality >= COVER_HEAVY:
         return ["solid cover nearby"]
     return ["whatever cover is available"]
-
-
-def _display_name(char, viewer):
-    if char is None:
-        return "Someone"
-    if viewer is not None and hasattr(char, "get_display_name"):
-        out = char.get_display_name(viewer)
-        if out:
-            return out
-    return getattr(char, "name", None) or getattr(char, "key", None) or "Someone"
 
 
 def _iter_room_characters(room):
@@ -273,23 +261,14 @@ def is_pinned_by_suppression(character):
     return is_suppressed(character) and not getattr(character.db, "in_cover", False)
 
 
-def get_cover_defense_bonus(defender, weapon_key, damage_type, current_range):
+def get_cover_defense_bonus(defender, weapon_key):
+    """Defense bonus from cover quality only (no nominal range or damage-type split)."""
     if not defender or not getattr(defender.db, "in_cover", False):
         return 0
     quality = _clamp_quality(getattr(defender.db, "cover_quality", COVER_EXPOSED))
     if quality <= COVER_EXPOSED:
         return 0
-    if damage_type not in RANGED_COVER_DAMAGE_TYPES:
-        # Melee attacks don't gain cover benefit in tight distances.
-        if current_range <= 1:
-            return 0
-        # Partial cover benefit at extended range.
-        if current_range == 2:
-            base = int(COVER_DEFENSE_BONUS[quality] * 0.5)
-        else:
-            return 0
-    else:
-        base = COVER_DEFENSE_BONUS[quality]
+    base = COVER_DEFENSE_BONUS[quality]
     if weapon_key == "automatic":
         base += COVER_AUTOMATIC_DEFENSE_BONUS[quality]
     if is_suppressed(defender):

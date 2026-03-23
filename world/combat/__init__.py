@@ -18,6 +18,8 @@ from .utils import (  # noqa
     get_combat_target,
     set_combat_target,
     combat_display_name,
+    combat_role_name_attacker_party,
+    relay_combat_room_msg,
     is_attacking_target,
 )
 

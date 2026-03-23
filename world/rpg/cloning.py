@@ -220,7 +220,6 @@ def apply_clone_snapshot(character, snapshot):
     except Exception:
         pass
 
-    character.db.combat_ranges = {}
     character.db.grappling = None
     character.db.grappled_by = None
     try:

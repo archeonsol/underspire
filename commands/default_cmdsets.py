@@ -154,13 +154,11 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
             CmdLetGo,
             CmdResist,
         )
-        from commands.range_cmds import CmdAdvance, CmdRetreat, CmdRange
         from commands.cover_commands import CmdCover, CmdLeaveCover, CmdPeek, CmdSuppress
         from commands.scavenge_cmds import CmdScavenge, CmdSkin, CmdButcher, CmdSever, CmdLoot
         from commands.salvage_cmds import CmdSalvage
         from commands.medical_cmds import CmdHt, CmdPatient, CmdApply, CmdStabilize, CmdSedate, CmdWakePatient, CmdSurgery, CmdDefib
         from commands.use_cmds import CmdUse
-        from commands.door_cmds import CmdOpenDoor, CmdCloseDoor, CmdUnlockDoor, CmdLockDoor, CmdVerify
         from commands.survival_cmds import CmdEat, CmdDrink
         from commands.inventory_cmds import CmdWield, CmdUnwield, CmdFreehands, CmdInventory, CmdReload, CmdUnload, CmdCheckAmmo, CmdWear, CmdRemove, CmdStrip, CmdFrisk
         from commands.crafting_cmds import CmdSurvey, CmdRepairArmor, CmdTailor
@@ -182,13 +180,12 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         from commands.roleplay_cmds import CmdSit, CmdLieOnTable, CmdGetOffTable
         from commands.performance_cmds import CmdPerformance
         from commands.death_cmds import CmdGoOOC, CmdReturnIC, CmdEnterPod, CmdLeavePod, CmdSplinterMe
+        from commands.lock_cmds import CmdLock, CmdUnlock
         from commands.vehicle_cmds import (
             CmdEnterVehicle,
             CmdExitVehicle,
             CmdMount,
             CmdDismount,
-            CmdLockVehicle,
-            CmdUnlockVehicle,
             CmdControlVehicle,
             CmdReleaseControls,
             CmdHaltVehicleMovement,
@@ -199,8 +196,31 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
             CmdFly,
             CmdTakeoff,
             CmdLand,
-            CmdVehicleStatus,
+            CmdEvaluateVehicle,
             CmdRepairPart,
+            CmdRefuel,
+            CmdSwapVehiclePart,
+            CmdPaintVehicle,
+            CmdCustomizeVehicle,
+        )
+        from commands.vehicle_security_cmds import (
+            CmdAuthorize,
+            CmdDeauthorize,
+            CmdAuthorizations,
+            CmdTransferVehicle,
+            CmdBreakIn,
+            CmdHotwire,
+        )
+        from commands.vehicle_combat_cmds import (
+            CmdFire,
+            CmdRam,
+            CmdManGunner,
+            CmdLeaveGunner,
+            CmdEject,
+            CmdInstallVehicleWeapon,
+            CmdUninstallVehicleWeapon,
+            CmdReloadVehicleWeapon,
+            CmdDislodgeHarpoon,
         )
         from commands.tunnel_cmds import CmdAutopilot
         from commands.matrix_cmds import CmdJackIn, CmdJackOut, CmdRoute
@@ -214,6 +234,14 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
             CmdGoto, CmdGotoRoom, CmdSummon, CmdSetVoid, CmdVoid, CmdRelease, CmdBoot, CmdFind, CmdAnnounce, CmdRestore, CmdDebugKill,
             CmdSpawnSeat, CmdSpawnBed, CmdSpawnPod, CmdSpawnDiveRig, CmdSpawnCamera, CmdSpawnTelevision,
             CmdEmoteDebug, CmdDamageVehicle, CmdMusic, CmdProfiling, CmdBuffDebug, CmdClimate
+        )
+        from commands.staff_vehicle_cmds import (
+            CmdVmod,
+            CmdVmodtypes,
+            CmdVrepair,
+            CmdVweaponInstall,
+            CmdVweaponKeys,
+            CmdVweaponRemove,
         )
         from commands.rpg.faction_cmds import CmdFaction
         from commands.sheet_cmds import CmdStats
@@ -273,9 +301,6 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdGrapple())
         self.add(CmdLetGo())
         self.add(CmdResist())
-        self.add(CmdAdvance())
-        self.add(CmdRetreat())
-        self.add(CmdRange())
         self.add(CmdCover())
         self.add(CmdLeaveCover())
         self.add(CmdPeek())
@@ -376,8 +401,8 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdExitVehicle())
         self.add(CmdMount())
         self.add(CmdDismount())
-        self.add(CmdLockVehicle())
-        self.add(CmdUnlockVehicle())
+        self.add(CmdLock())
+        self.add(CmdUnlock())
         self.add(CmdControlVehicle())
         self.add(CmdReleaseControls())
         self.add(CmdHaltVehicleMovement())
@@ -389,8 +414,27 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdTakeoff())
         self.add(CmdLand())
         self.add(CmdAutopilot())
-        self.add(CmdVehicleStatus())
+        self.add(CmdEvaluateVehicle())
         self.add(CmdRepairPart())
+        self.add(CmdRefuel())
+        self.add(CmdSwapVehiclePart())
+        self.add(CmdPaintVehicle())
+        self.add(CmdCustomizeVehicle())
+        self.add(CmdAuthorize())
+        self.add(CmdDeauthorize())
+        self.add(CmdAuthorizations())
+        self.add(CmdTransferVehicle())
+        self.add(CmdBreakIn())
+        self.add(CmdHotwire())
+        self.add(CmdFire())
+        self.add(CmdRam())
+        self.add(CmdManGunner())
+        self.add(CmdLeaveGunner())
+        self.add(CmdEject())
+        self.add(CmdInstallVehicleWeapon())
+        self.add(CmdUninstallVehicleWeapon())
+        self.add(CmdReloadVehicleWeapon())
+        self.add(CmdDislodgeHarpoon())
         self.add(CmdJackIn())
         self.add(CmdJackOut())
         self.add(CmdNetworkWho())
@@ -413,6 +457,12 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdSpawnArmor())
         self.add(CmdSpawnVehicle())
         self.add(CmdDamageVehicle())
+        self.add(CmdVweaponKeys())
+        self.add(CmdVweaponInstall())
+        self.add(CmdVweaponRemove())
+        self.add(CmdVmod())
+        self.add(CmdVmodtypes())
+        self.add(CmdVrepair())
         self.add(CmdSpawnMedical())
         self.add(CmdSpawnOR())
         self.add(CmdSpawnCyberwareStation())

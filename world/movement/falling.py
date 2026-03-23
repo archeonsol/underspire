@@ -174,7 +174,13 @@ def _process_vehicle_fall(vehicle, air_room):
         dest.msg_contents(f"{vname} slams into the ground from above.")
 
     part_damage = max(5, min(40, damage // 4))
-    for part_id in ("engine", "suspension", "electrical"):
+    try:
+        from world.vehicle_parts import get_part_ids
+
+        pids = get_part_ids(vehicle)[:5]
+    except Exception:
+        pids = ("engine", "suspension", "wiring")
+    for part_id in pids:
         try:
             vehicle.damage_part(part_id, part_damage)
         except Exception:

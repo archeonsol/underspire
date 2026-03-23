@@ -277,6 +277,18 @@ class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, F
         self.db.stealth_roll_result = 0
         self.db.stealth_spotted_by = []
 
+    def at_pre_move(self, destination, **kwargs):
+        if getattr(self.ndb, "_break_in_started", False):
+            self.ndb._break_in_started = False
+            self.ndb._break_in_vehicle = None
+            self.msg("|rBreak-in attempt interrupted.|n")
+        if getattr(self.ndb, "_hotwire_started", False):
+            self.ndb._hotwire_started = False
+            self.ndb._hotwire_vehicle = None
+            self.msg("|rHotwire attempt interrupted.|n")
+        # Evennia: move_to aborts if `not at_pre_move(...)` — implicit None is falsy and blocks all moves.
+        return super().at_pre_move(destination, **kwargs)
+
     def search(self, searchdata, **kwargs):
         """Exclude hidden characters the searcher has not spotted."""
         skip_stealth = kwargs.pop("skip_stealth_filter", False)

@@ -189,7 +189,7 @@ class WiredReflexesBuff(_CyberBuff):
     name = "Wired Reflexes"
     flavor = "Neural latency reduction."
     stat_mods = {"agility": 6}
-    skill_mods = {"evasion": 5, "footwork": 3}
+    skill_mods = {"evasion": 5, "gunnery": 3}
     vulnerabilities = {"arc": 0.18}
 
 

@@ -161,6 +161,11 @@ class Room(MatrixIdMixin, ObjectParent, DefaultRoom):
                 feed_cameras_in_location(self, raw)
             except Exception:
                 pass
+            try:
+                from typeclasses.vehicles import relay_to_parked_vehicle_interiors
+                relay_to_parked_vehicle_interiors(self, raw)
+            except Exception:
+                pass
 
     def filter_visible(self, obj_list, looker, **kwargs):
         """Hide unspotted sneaking characters from look; staff see everyone."""
@@ -438,9 +443,9 @@ class Room(MatrixIdMixin, ObjectParent, DefaultRoom):
 
         exits = self.get_display_exits(looker, **kwargs)
         # Format with intentional paragraph breaks:
-        # - Always: header + desc (no blank line between), optional ambient, blank line, things
-        # - If furniture exists: blank line before and after furniture
-        # - Characters and exits remain tightly grouped (no blank line between them)
+        # - Header + desc (no blank line between), optional ambient, then major sections
+        #   joined with blank lines (\n\n): things, furniture (if any), then characters/exits/footer.
+        # - Characters, exits, footer stay in one sub-block (single newlines inside tail).
         head = "\n".join([p for p in (header, desc) if p])
         parts = [head]
         if ambient:
@@ -453,11 +458,7 @@ class Room(MatrixIdMixin, ObjectParent, DefaultRoom):
 
         tail = "\n".join([p for p in (characters, exits, footer) if p])
         if tail:
-            if furniture:
-                parts.append(tail)  # will be separated by blank line via join below
-            else:
-                # No furniture: keep a tight join from things -> characters/exits.
-                parts[-1] = "\n".join([parts[-1], tail]) if parts[-1] else tail
+            parts.append(tail)
 
         # Use blank lines between major sections.
         appearance = "\n\n".join([p for p in parts if p])
@@ -500,6 +501,9 @@ class Room(MatrixIdMixin, ObjectParent, DefaultRoom):
         then "A X is <pose>." for set-place objects; then "X is parked/idling here." for vehicles.
         No characters or furniture in this section.
         """
+        # include_looker is a room-level flag; strip it before forwarding to object methods
+        # that don't accept it (e.g. OperatingTable.get_display_name).
+        kwargs = {k: v for k, v in kwargs.items() if k != "include_looker"}
         characters = self.filter_visible(
             self.contents_get(content_type="character"), looker, **kwargs
         )
@@ -830,6 +834,9 @@ class Room(MatrixIdMixin, ObjectParent, DefaultRoom):
         Delegates to each furniture object's get_room_appearance() method when available,
         and also shows patients lying on operating tables.
         """
+        # include_looker is a room-level flag; strip it before forwarding to object methods
+        # that don't accept it (e.g. OperatingTable.get_display_name).
+        kwargs = {k: v for k, v in kwargs.items() if k != "include_looker"}
         lines = []
 
         # Operating tables: show "X is lying on <table>." here so it groups with dive rigs/seats.

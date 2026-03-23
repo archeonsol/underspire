@@ -11,12 +11,7 @@ from evennia.utils import delay
 from evennia.utils.search import search_object
 from evennia import TICKER_HANDLER as ticker
 from world.combat.utils import combat_display_name as _combat_display_name
-from world.combat.range_system import (
-    validate_grapple_range,
-    RANGE_CLINCH,
-    RANGE_CLOSE,
-    set_combat_range,
-)
+from world.combat.range_system import validate_grapple_range
 from world.combat.cover import force_leave_cover
 
 from world.theme_colors import COMBAT_COLORS as CC
@@ -224,7 +219,6 @@ def apply_grapple_lock(grappler, victim):
     victim.db.grappled_by = grappler
     grappler.db.grappling = victim
     _apply_grappling_cmdset(grappler)
-    set_combat_range(grappler, victim, RANGE_CLINCH)
     force_leave_cover(victim, reason_msg="" + CC["miss"] + "You're pulled from cover!|n")
     str_display = getattr(grappler, "get_display_stat", lambda x: 0)("strength") or 0
     victim.db.grapple_hold_strength = HOLD_STRENGTH_BASE + (str_display * HOLD_STRENGTH_PER_STR // 10)
@@ -585,7 +579,6 @@ def attempt_grapple_third_party(third_party, victim):
     victim.db.grappled_by = third_party
     third_party.db.grappling = victim
     _apply_grappling_cmdset(third_party)
-    set_combat_range(third_party, victim, RANGE_CLINCH)
     force_leave_cover(victim, reason_msg="" + CC["miss"] + "You're pulled from cover!|n")
     str_display = getattr(third_party, "get_display_stat", lambda x: 0)("strength") or 0
     victim.db.grapple_hold_strength = HOLD_STRENGTH_BASE + (str_display * HOLD_STRENGTH_PER_STR // 10)
@@ -610,7 +603,6 @@ def release_grapple(grappler):
         if hasattr(victim.db, key):
             victim.attributes.remove(key)
     _clear_grappled_cmdset(victim)
-    set_combat_range(grappler, victim, RANGE_CLOSE)
     return True, "You release {}.".format(_combat_display_name(victim, grappler))
 
 
@@ -632,7 +624,6 @@ def release_grapple_forced(grappler, room_message=None):
         if hasattr(victim.db, key):
             victim.attributes.remove(key)
     _clear_grappled_cmdset(victim)
-    set_combat_range(grappler, victim, RANGE_CLOSE)
     if room_message and grappler.location:
         loc = grappler.location
         if hasattr(loc, "contents_get"):
@@ -689,7 +680,6 @@ def attempt_resist(victim):
             if hasattr(victim.db, key):
                 victim.attributes.remove(key)
         _clear_grappled_cmdset(victim)
-        set_combat_range(grappler, victim, RANGE_CLOSE)
         return True, "You wrench free of {}'s grasp!".format(_combat_display_name(grappler, victim)), "{} breaks free of your grasp!".format(_combat_display_name(victim, grappler))
     return False, "You strain but cannot break free yet. Your efforts weaken their hold.", "{} struggles but you keep hold.".format(_combat_display_name(victim, grappler))
 

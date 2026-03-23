@@ -14,7 +14,6 @@ from world.combat.cover import (
     get_cover_status_text,
     set_suppressed,
 )
-from world.combat.range_system import get_combat_range, RANGE_EXTENDED
 from world.skills import WEAPON_KEY_TO_SKILL
 
 
@@ -49,11 +48,8 @@ class CmdCover(Command):
                 "Wait until after your next combat turn.|n"
             )
             return
-        if getattr(caller.db, "grappled_by", None):
+        if getattr(caller.db, "grappled_by", None) or getattr(caller.db, "grappling", None):
             combat_msg(caller, "You're locked in a grapple.")
-            return
-        if opponent and get_combat_range(caller, opponent) <= -1:
-            combat_msg(caller, "You're in clinch range; there's no space to take cover.")
             return
         if opponent:
             caller.db.combat_skip_next_turn = True
@@ -131,10 +127,6 @@ class CmdSuppress(Command):
         if weapon_key != "automatic":
             combat_msg(caller, "You need an automatic weapon to lay down suppressing fire.")
             return
-        current_range = get_combat_range(caller, target)
-        if current_range < RANGE_EXTENDED:
-            combat_msg(caller, "You need extended or ranged distance to suppress effectively.")
-            return
         if wielded_obj and hasattr(wielded_obj, "db"):
             ammo = int(wielded_obj.db.ammo_current or 0)
             if ammo < 2:
@@ -145,7 +137,7 @@ class CmdSuppress(Command):
         atk_skill = WEAPON_KEY_TO_SKILL.get(weapon_key, "automatics")
         _a, atk_val = caller.roll_check(["agility", "perception"], atk_skill, modifier=0)
         # No explicit willpower stat in this codebase; endurance is used as resistance proxy.
-        _t, tgt_val = target.roll_check(["endurance"], "footwork", modifier=0)
+        _t, tgt_val = target.roll_check(["endurance"], "evasion", modifier=0)
         success = int(atk_val or 0) > int(tgt_val or 0)
         combat_msg(caller, f"|rYou lay down fire on {_combat_display_name(target, caller)}'s position.|n")
         if success:

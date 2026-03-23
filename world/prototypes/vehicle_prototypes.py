@@ -22,6 +22,8 @@ GROUND_VEHICLE_PROTOTYPES = {
             ("speed_class", "normal"),
             ("driving_skill", "driving"),
             ("has_interior", True),
+            ("vehicle_max_hp", 100),
+            ("vehicle_hp", 100),
             (
                 "desc",
                 "A dented four-door sedan held together by rust, prayer, and welding slag. The paint is three colours, "
@@ -42,6 +44,8 @@ GROUND_VEHICLE_PROTOTYPES = {
             ("speed_class", "slow"),
             ("driving_skill", "driving"),
             ("has_interior", True),
+            ("vehicle_max_hp", 150),
+            ("vehicle_hp", 150),
             (
                 "desc",
                 "A heavy-framed utility vehicle with a flatbed bolted to the chassis. Built for moving freight through "
@@ -62,6 +66,8 @@ GROUND_VEHICLE_PROTOTYPES = {
             ("speed_class", "fast"),
             ("driving_skill", "driving"),
             ("has_interior", True),
+            ("vehicle_max_hp", 120),
+            ("vehicle_hp", 120),
             (
                 "desc",
                 "Matte black, armoured, silent engine. The Imperium Guard's patrol vehicle. Reinforced ram bar on the "
@@ -82,6 +88,8 @@ MOTORCYCLE_PROTOTYPES = {
             ("vehicle_name", "a ratbike"),
             ("speed_class", "fast"),
             ("max_passengers", 1),
+            ("vehicle_max_hp", 30),
+            ("vehicle_hp", 30),
             (
                 "desc",
                 "A stripped-down frame with an oversized engine bolted to it. No fairings, no paint, no pretence. "

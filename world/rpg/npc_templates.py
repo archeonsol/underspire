@@ -35,8 +35,8 @@ def _random_in_letter_range(lo_letter, hi_letter, max_level):
     return random.randint(lo, hi) if lo <= hi else lo
 
 
-# Combat: unarmed, short_blades, long_blades, blunt_weaponry, sidearms, longarms, automatics, evasion, footwork, stealth
-COMBAT_SKILLS = ["unarmed", "short_blades", "long_blades", "blunt_weaponry", "sidearms", "longarms", "automatics", "evasion", "footwork", "stealth"]
+# Combat: unarmed, short_blades, long_blades, blunt_weaponry, sidearms, longarms, automatics, evasion, gunnery, stealth
+COMBAT_SKILLS = ["unarmed", "short_blades", "long_blades", "blunt_weaponry", "sidearms", "longarms", "automatics", "evasion", "gunnery", "stealth"]
 COMBAT_STATS = ["strength", "agility", "perception", "endurance"]
 
 # Mechanic: mechanical_engineering, arms_tech, electrical_engineering

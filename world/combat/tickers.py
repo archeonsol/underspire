@@ -12,6 +12,8 @@ from .utils import (
     set_combat_target,
     combat_display_name,
     combat_role_name,
+    combat_role_name_attacker_party,
+    relay_combat_room_msg,
     combat_msg,
     has_reciprocal_combat,
     clear_engagement_index,
@@ -20,18 +22,33 @@ from .utils import (
 )
 from .engine import execute_combat_turn
 from .instance import ensure_instance, leave_instance
-from .range_system import on_combat_start, on_combat_end
 from .cover import clear_suppression, clear_cover_state, maybe_reset_room_cover, mark_room_combat_activity
 from world.combat.weapon_definitions import COMBAT_READY_ATTACKER_MSG
 from world.theme_colors import COMBAT_COLORS as CC
 
-COMBAT_INTERVAL = 5
+COMBAT_INTERVAL = 8
 COMBAT_STAGGER = COMBAT_INTERVAL / 2.0
-COMBAT_START_DELAY_MIN, COMBAT_START_DELAY_MAX = 5.0, 6.0
+COMBAT_START_DELAY_MIN, COMBAT_START_DELAY_MAX = 7.0, 9.0
 
 COMBAT_READY_DEFENDER_MSG = CC["miss"] + "You square up, getting ready to fight.|n"
 COMBAT_READY_ROOM_MSG = CC["miss"] + "{defender} squares up, getting ready to fight.|n"
 COMBAT_READY_ATTACKER_ROOM_MSG = CC["miss"] + "{attacker} gets ready to fight {target}.|n"
+
+
+def defender_is_vehicle(obj) -> bool:
+    """Ground, motorcycle, or aerial craft — not humanoids. Uses vehicle_type and typeclass."""
+    if not obj:
+        return False
+    vt = getattr(getattr(obj, "db", None), "vehicle_type", None)
+    if vt in ("ground", "motorcycle", "aerial"):
+        return True
+    try:
+        from typeclasses.vehicles import Vehicle
+
+        return isinstance(obj, Vehicle)
+    except ImportError:
+        return False
+
 
 # Defender movement (e.g. |wgo|n queue): stop as soon as combat is initiated, before the delayed first strike.
 STAGGER_INTERRUPT_DEFENDER_COMBAT_MSG = CC["miss"] + "You stop moving — they're coming at you now.|n"
@@ -89,7 +106,6 @@ def remove_both_combat_tickers(a, b):
         clear_suppression(b)
         leave_instance(b)
         _clear_combat_round_flags(b)
-    on_combat_end(a, b)
 
 
 def _clear_stale_pair(a, b):
@@ -162,6 +178,8 @@ def defender_first_attack(defender_id, attacker_id):
     defender = get_object_by_id(defender_id)
     attacker = get_object_by_id(attacker_id)
     if not defender or not attacker:
+        return
+    if defender_is_vehicle(defender):
         return
     if getattr(defender.db, "combat_ended", False) or getattr(attacker.db, "combat_ended", False):
         return
@@ -243,7 +261,8 @@ def _start_first_round(attacker_id, target_id):
         except Exception as e:
             if hasattr(attacker, "msg"):
                 combat_msg(attacker, f"{CC['miss']}Ticker add failed: {e}|n")
-    delay(COMBAT_STAGGER, defender_first_attack, target.id, attacker.id)
+    if not defender_is_vehicle(target):
+        delay(COMBAT_STAGGER, defender_first_attack, target.id, attacker.id)
 
 
 def start_combat_ticker(attacker, target):
@@ -277,45 +296,67 @@ def start_combat_ticker(attacker, target):
         pass
     if not getattr(target.db, "is_creature", False) and get_combat_target(target) is None:
         set_combat_target(target, attacker)
+    target_is_vehicle = defender_is_vehicle(target)
     if getattr(attacker.db, "current_hp", None) is None or (attacker.db.current_hp or 0) <= 0:
         attacker.db.current_hp = getattr(attacker, "max_hp", 100)
-    if getattr(target.db, "current_hp", None) is None or (target.db.current_hp or 0) <= 0:
-        target.db.current_hp = getattr(target, "max_hp", 100)
+    if not target_is_vehicle:
+        if getattr(target.db, "current_hp", None) is None or (target.db.current_hp or 0) <= 0:
+            target.db.current_hp = getattr(target, "max_hp", 100)
     attacker.db.combat_ended = False
     target.db.combat_ended = False
     clear_cover_state(attacker, reset_pose=True)
-    clear_cover_state(target, reset_pose=True)
+    if not target_is_vehicle:
+        clear_cover_state(target, reset_pose=True)
     ensure_instance(attacker, target)
 
     weapon_key = _get_attacker_weapon_key(attacker)
-    on_combat_start(attacker, target, weapon_key)
+    try:
+        from world.combat.vehicle_combat import get_attacker_vehicle_weapon_context, get_enclosed_vehicle_hull_for_crew
+
+        if get_attacker_vehicle_weapon_context(attacker):
+            weapon_key = "vehicle_mount"
+    except ImportError:
+        get_enclosed_vehicle_hull_for_crew = lambda _c: None
+    display_target = target
+    if not target_is_vehicle:
+        vh = get_enclosed_vehicle_hull_for_crew(target)
+        if vh:
+            display_target = vh
     _interrupt_defender_walk_on_combat_start(target)
     ready_attacker = COMBAT_READY_ATTACKER_MSG.get(weapon_key, COMBAT_READY_ATTACKER_MSG["fists"])
-    attacker_target = combat_role_name(target, attacker, role="defender")
+    attacker_target = combat_role_name(display_target, attacker, role="defender")
     combat_msg(attacker, ready_attacker.format(target=attacker_target))
-    combat_msg(target, COMBAT_READY_DEFENDER_MSG)
+    if not target_is_vehicle:
+        combat_msg(target, COMBAT_READY_DEFENDER_MSG)
     if target.location:
         loc = target.location
         viewers_def = [c for c in loc.contents_get(content_type="character") if c != target]
-        for v in viewers_def:
-            combat_msg(v, COMBAT_READY_ROOM_MSG.format(defender=combat_role_name(target, v, role="defender")))
+        if not target_is_vehicle:
+            for v in viewers_def:
+                combat_msg(v, COMBAT_READY_ROOM_MSG.format(defender=combat_role_name(target, v, role="defender")))
         viewers_atk = [c for c in loc.contents_get(content_type="character") if c != attacker]
         for v in viewers_atk:
             if v is target:
                 combat_msg(
                     v,
                     (CC["miss"] + "{attacker} gets ready to fight you.|n").format(
-                        attacker=combat_role_name(attacker, v, role="attacker")
+                        attacker=combat_role_name_attacker_party(attacker, v, role="attacker")
                     )
                 )
             else:
                 combat_msg(
                     v,
                     COMBAT_READY_ATTACKER_ROOM_MSG.format(
-                        attacker=combat_role_name(attacker, v, role="attacker"),
-                        target=combat_role_name(target, v, role="defender"),
+                        attacker=combat_role_name_attacker_party(attacker, v, role="attacker"),
+                        target=combat_role_name(display_target, v, role="defender"),
                     )
                 )
+        if not target_is_vehicle:
+            relay_combat_room_msg(loc, target, target, COMBAT_READY_ROOM_MSG)
+        relay_combat_room_msg(
+            loc, attacker, display_target, COMBAT_READY_ATTACKER_ROOM_MSG,
+            target=combat_role_name(display_target, None, role="defender"),
+        )
 
     sec = random.uniform(COMBAT_START_DELAY_MIN, COMBAT_START_DELAY_MAX)
     delay(sec, _start_first_round, attacker.id, target.id)
@@ -333,7 +374,7 @@ def schedule_staggered_first_round(attacker, target):
 def resume_offensive_schedule(attacker, target):
     """
     Start (or restart) this character's attack ticker against target without re-running combat setup
-    (range, cover reset, room messages). Use when they still have combat_target but had stopped attacking.
+    (cover reset, room messages). Use when they still have combat_target but had stopped attacking.
     Returns True if a schedule was started, False if already actively attacking.
     """
     if not attacker or not target or get_combat_target(attacker) != target:
@@ -372,5 +413,5 @@ def stop_combat_ticker(attacker, target):
     target_name = combat_role_name(target, attacker, role="defender")
     combat_msg(attacker, f"{CC['dodge']}You stop attacking at {target_name}.|n")
     if hasattr(target, "msg"):
-        attacker_name = combat_role_name(attacker, target, role="attacker")
+        attacker_name = combat_role_name_attacker_party(attacker, target, role="attacker")
         combat_msg(target, f"{CC['dodge']}{attacker_name} stops attacking you.|n")

@@ -2,7 +2,7 @@
 
 from evennia.contrib.grid.xyzgrid.xyzroom import XYZRoom
 
-from world.vehicle_movement import vehicle_leg_roll_or_abort
+from world.vehicle_movement import _after_vehicle_move_hook, vehicle_leg_roll_or_abort
 
 
 def _find_vertical_destination(vehicle_room, direction):
@@ -44,7 +44,7 @@ def fly_vertical(vehicle, pilot, direction):
     if not dest.tags.has("aerial", category="vehicle_access"):
         return False, "That space isn't rated for flight."
 
-    if not vehicle_leg_roll_or_abort(vehicle):
+    if not vehicle_leg_roll_or_abort(vehicle, dest_room=dest):
         return False, ""
 
     old_room = vehicle.location
@@ -69,5 +69,7 @@ def fly_vertical(vehicle, pilot, direction):
         vehicle.db.altitude_z = dest.xyz[2]
     except Exception:
         vehicle.db.altitude_z = None
+
+    _after_vehicle_move_hook(vehicle, pilot, dest, old_room, direction)
 
     return True, ""

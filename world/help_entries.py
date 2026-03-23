@@ -142,6 +142,75 @@ HELP_ENTRY_DICTS = [
 
         """,
     },
+    {
+        "key": "authorization",
+        "aliases": [
+            "authorizations",
+            "authorize",
+            "deauthorize",
+            "vehicle authorization",
+            "vehicle permissions",
+            "biometric authorization",
+        ],
+        "category": "Vehicles",
+        "text": """
+            Vehicle biometrics let the owner share access with people they recognize. Each grant uses
+            a |wpermission keyword|n (below). You must |wrecognize|n someone (|wrecog|n) before you can
+            authorize them.
+
+            # Permission keywords
+
+            Use these exact words in |wauthorize|n and |wdeauthorize|n:
+
+            |wunlock|n
+                Lock and unlock the vehicle (doors / immobilizer).
+
+            |wenter|n
+                Enter an enclosed vehicle, or mount a motorcycle.
+
+            |wstart|n
+                Start the engine.
+
+            |wdrive|n
+                Drive or fly the vehicle.
+
+            |wmodify|n
+                Swap parts, paint, and customize (where that work is allowed on this vehicle).
+
+            |wauthorize|n
+                Add or remove other people’s permissions (delegate). Does not transfer ownership.
+
+            |wfull|n
+                All of the above—same as full access, except only the owner can transfer the vehicle.
+
+            # authorize
+
+            |wauthorize <name> to <permission> on <vehicle>|n
+                One or more permissions, comma-separated, e.g. |wunlock, enter, start|n.
+
+            |wauthorize <name> full on <vehicle>|n
+                Grants |wfull|n to that person.
+
+            From inside a vehicle cabin you can use the vehicle’s name, |where|n, or no argument where
+            the command already targets “this” vehicle.
+
+            # deauthorize
+
+            |wdeauthorize <name> from <vehicle>|n
+                Revokes every permission you gave them.
+
+            |wdeauthorize <name> from <permission> on <vehicle>|n
+                Revokes only the listed permission(s).
+
+            # authorizations
+
+            |wauthorizations <vehicle>|n
+                Shows security status and who has which permissions. From inside the vehicle you can
+                omit the name or use |where|n.
+
+            Aliases: |wauths|n, |wvehicle access|n.
+        """,
+    },
     # -------------------------------------------------------------------------
     # Staff-only: Creature system (PvE)
     # -------------------------------------------------------------------------

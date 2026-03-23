@@ -141,7 +141,7 @@ class CmdCloseDoor(Command):
 class CmdUnlockDoor(Command):
     """Unlock a locked door (requires key in inventory). Staff bypass."""
 
-    key = "unlock"
+    key = "unlockdoor"
     locks = "cmd:all()"
     help_category = "General"
 
@@ -149,7 +149,7 @@ class CmdUnlockDoor(Command):
         from world.rpg.factions.doors import staff_bypass, has_key
 
         if not self.args:
-            self.caller.msg("Unlock which way? Usage: unlock <direction>")
+            self.caller.msg("Unlock which way? Usage: unlockdoor <direction>")
             return
         ex = find_exit_by_direction(self.caller, self.args)
         if not ex:
@@ -184,7 +184,7 @@ class CmdLockDoor(Command):
         from world.rpg.factions.doors import staff_bypass, has_key
 
         if not self.args:
-            self.caller.msg("Lock which way? Usage: lock <direction>")
+            self.caller.msg("Lock which way? Usage: lockdoor <direction>")
             return
         ex = find_exit_by_direction(self.caller, self.args)
         if not ex:

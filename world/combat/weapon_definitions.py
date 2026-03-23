@@ -34,6 +34,8 @@ COMBAT_READY_ATTACKER_MSG = {
     "sidearm": "" + CC["miss"] + "You bring your sidearm up, eyeing {target}.|n",
     "longarm": "" + CC["miss"] + "You shoulder your weapon, eyeing {target}.|n",
     "automatic": "" + CC["miss"] + "You bring the weapon to bear, eyeing {target}.|n",
+    # Vehicle crew using attack + mounted weapon (opening range bands are legacy UI only; room size rules combat).
+    "vehicle_mount": "" + CC["miss"] + "You train the mount on {target}, hands on the controls.|n",
 }
 
 

@@ -50,6 +50,20 @@ def multi_puppet_relay(character, text, session=None, **kwargs):
         logger.log_trace("multipuppet: check multi_puppets list: %s" % err)
         return False
 
+    # Don't relay for dead/flatlined/corpse characters — they can't act.
+    try:
+        from world.death import is_flatlined, is_permanently_dead
+        if is_flatlined(character) or is_permanently_dead(character):
+            return False
+    except Exception:
+        pass
+    try:
+        from typeclasses.corpse import Corpse
+        if isinstance(character, Corpse):
+            return False
+    except Exception:
+        pass
+
     if not hasattr(account, "sessions"):
         return False
     sess_list = account.sessions.get()

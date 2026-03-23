@@ -13,7 +13,7 @@ from evennia.utils import delay
 from evennia.utils.search import search_object, search_tag
 from evennia.objects.objects import DefaultExit
 
-from world.vehicle_movement import execute_vehicle_move
+from world.vehicle_movement import _after_vehicle_move_hook, execute_vehicle_move
 
 # Maps a sector name to the endpoint tag to reach when autopiloting TO that sector.
 SECTOR_TO_ENDPOINT = {
@@ -294,6 +294,7 @@ def _autopilot_step(vehicle_id):
         if old_room:
             old_room.msg_contents(f"{vname} drives {direction}.")
         next_room.msg_contents(f"{vname} arrives through the tunnel.")
+        _after_vehicle_move_hook(vehicle, None, next_room, old_room, direction)
     else:
         execute_vehicle_move(vehicle, None, next_room, direction)
 

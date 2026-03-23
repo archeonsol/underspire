@@ -3,11 +3,42 @@ Shared vehicle movement: announcements, reverse directions, execute moves for dr
 """
 from __future__ import annotations
 
+import time
+
 from evennia.objects.objects import DefaultExit
 
 from world.rp_features import msg_room_with_character_display
 
 VEHICLE_ACCESS_CAT = "vehicle_access"
+
+
+def _movement_maneuver(vehicle, destination, old_room, direction: str) -> str:
+    """Classify maneuver for drive checks and fuel/wear multipliers."""
+    if destination and hasattr(destination, "tags"):
+        try:
+            if destination.tags.has("offroad", category=VEHICLE_ACCESS_CAT):
+                return "offroad"
+        except Exception:
+            pass
+    ndb = getattr(vehicle, "ndb", None)
+    prev = getattr(ndb, "drive_prev_direction", None) if ndb else None
+    dnorm = normalize_direction(direction) or direction
+    if prev and dnorm:
+        pnorm = normalize_direction(prev) or prev
+        if pnorm != dnorm:
+            return "corner"
+    return "normal"
+
+
+def _after_vehicle_move_hook(vehicle, driver, destination, old_room, direction: str):
+    from world.vehicle_parts import _vehicle_after_room_transition
+    from world.combat.vehicle_combat import check_room_hazards
+
+    if not vehicle or not destination:
+        return
+    check_room_hazards(vehicle, destination)
+    maneuver = _movement_maneuver(vehicle, destination, old_room, direction)
+    _vehicle_after_room_transition(vehicle, driver, destination, maneuver=maneuver, rooms=1)
 
 _DIR_ALIASES = {
     "n": "north",
@@ -93,6 +124,7 @@ def execute_vehicle_move(
             cabin_message=cabin_message,
             exterior_departure_message=exterior_departure_message,
         )
+        _after_vehicle_move_hook(vehicle, driver, destination, old_room, direction)
         return
 
     if isinstance(vehicle, AerialVehicle) or vtype == "aerial":
@@ -108,6 +140,7 @@ def execute_vehicle_move(
             cabin_message=cabin_message,
             exterior_departure_message=exterior_departure_message,
         )
+        _after_vehicle_move_hook(vehicle, driver, destination, old_room, direction)
         return
 
     if isinstance(vehicle, Vehicle) or vtype in ("ground", None):
@@ -122,6 +155,7 @@ def execute_vehicle_move(
             cabin_message=cabin_message,
             exterior_departure_message=exterior_departure_message,
         )
+        _after_vehicle_move_hook(vehicle, driver, destination, old_room, direction)
         return
 
 
@@ -214,6 +248,12 @@ def _move_motorcycle(
                 pillion.msg(cabin_message)
         else:
             rider.msg(f"You ride {direction}. You arrive at {destination.key}.")
+        try:
+            from world.combat.mounted_combat import set_biker_momentum
+
+            set_biker_momentum(rider)
+        except Exception:
+            pass
 
 
 def _move_aerial(
@@ -319,7 +359,7 @@ def clear_drive_queue_state(vehicle):
     clear_drive_chain_active(vehicle)
 
 
-def _vehicle_leg_roll(vehicle):
+def _vehicle_leg_roll(vehicle, dest_room=None):
     """
     Per-room driving / piloting check for staggered moves.
     Returns (True, None) or (False, 'skill' | 'stall').
@@ -339,8 +379,25 @@ def _vehicle_leg_roll(vehicle):
         else:
             skill = getattr(vehicle.db, "driving_skill", None) or "driving"
         stats = SKILL_STATS.get(skill, ["perception", "agility"])
-        mod = getattr(vehicle, "drive_failure_modifier", lambda: 0)()
-        level, _ = roll_check(stats, skill, modifier=-int(mod))
+        maneuver = "normal"
+        if dest_room and hasattr(dest_room, "tags"):
+            try:
+                if dest_room.tags.has("offroad", category=VEHICLE_ACCESS_CAT):
+                    maneuver = "offroad"
+            except Exception:
+                pass
+        get_mod = getattr(vehicle, "get_drive_check_modifier", None)
+        if callable(get_mod):
+            mod = int(get_mod(maneuver))
+        else:
+            from world.vehicle_parts import drive_failure_modifier
+
+            mod = -int(drive_failure_modifier(vehicle))
+        ent_pen = 0
+        ent = float(getattr(vehicle.db, "entangled_until", 0) or 0)
+        if ent > time.time():
+            ent_pen = -15
+        level, _ = roll_check(stats, skill, modifier=mod + ent_pen)
         if level == "Failure":
             return False, "skill"
         if getattr(vehicle, "roll_stall_chance", lambda: False)():
@@ -412,9 +469,9 @@ def vehicle_leg_fail_outcome(vehicle, reason: str):
         delay(0.5, process_fall, vehicle.id, loc.id)
 
 
-def vehicle_leg_roll_or_abort(vehicle) -> bool:
+def vehicle_leg_roll_or_abort(vehicle, dest_room=None) -> bool:
     """For instant (no-delay) drive/fly: run leg roll; on fail apply outcome and return False."""
-    ok, kind = _vehicle_leg_roll(vehicle)
+    ok, kind = _vehicle_leg_roll(vehicle, dest_room=dest_room)
     if ok:
         return True
     vehicle_leg_fail_outcome(vehicle, kind or "skill")
@@ -435,7 +492,7 @@ def staggered_drive_complete(
         queued_segment_exterior_line,
         queued_segment_interior_line,
     )
-    from world.rpg.staggered_movement import DRIVE_DELAY
+    from world.rpg.staggered_movement import DRIVE_DELAY, get_drive_delay
 
     vres = search_object(f"#{vehicle_id}")
     dres = search_object(f"#{dest_id}")
@@ -468,7 +525,7 @@ def staggered_drive_complete(
         clear_drive_queue_state(vehicle)
         return
 
-    roll_ok, fail_kind = _vehicle_leg_roll(vehicle)
+    roll_ok, fail_kind = _vehicle_leg_roll(vehicle, dest_room=dest)
     if not roll_ok:
         vehicle_leg_fail_outcome(vehicle, fail_kind or "skill")
         return
@@ -488,8 +545,8 @@ def staggered_drive_complete(
             cabin_message = queued_segment_interior_line(vtype, prev, dir_norm)
             exterior_msg = queued_segment_exterior_line(vehicle_name, vtype, prev, dir_norm)
         else:
-            cabin_message = queued_finish_interior_line(vtype)
-            exterior_msg = queued_finish_exterior_line(vehicle_name, vtype)
+            cabin_message = queued_finish_interior_line(vtype, dir_norm)
+            exterior_msg = queued_finish_exterior_line(vehicle_name, vtype, dir_norm)
 
     execute_vehicle_move(
         vehicle,
@@ -537,7 +594,7 @@ def staggered_drive_complete(
         return
 
     delay(
-        DRIVE_DELAY,
+        get_drive_delay(vehicle),
         staggered_drive_complete,
         vehicle.id,
         next_dest.id,

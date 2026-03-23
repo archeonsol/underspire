@@ -5,6 +5,12 @@ Combat commands: CmdAttack, CmdStop, CmdFlee, CmdStance, CmdGrapple, CmdLetGo, C
 from evennia.utils import logger
 from commands.base_cmds import Command, _command_character
 from world.combat import start_combat_ticker, stop_combat_ticker, _get_combat_target, _combat_display_name
+from world.combat.utils import (
+    get_combat_external_location,
+    is_vehicle_interior_room,
+    melee_brawl_blocked_in_vehicle_cabin,
+    melee_target_blocked_enclosed_cabin,
+)
 
 
 def _combat_caller(cmd_self):
@@ -18,6 +24,27 @@ def _combat_caller(cmd_self):
         except Exception as e:
             logger.log_trace("combat_cmds._combat_caller: %s" % e)
     return caller
+
+
+def _is_valid_combat_target(target):
+    """Characters, combat creatures, or intact vehicles in the same room."""
+    try:
+        from typeclasses.characters import Character
+
+        if isinstance(target, Character):
+            return True
+    except ImportError:
+        pass
+    if bool(getattr(getattr(target, "db", None), "is_creature", False)):
+        return True
+    try:
+        from typeclasses.vehicles import Vehicle
+
+        if isinstance(target, Vehicle) and not getattr(target.db, "vehicle_destroyed", False):
+            return True
+    except ImportError:
+        pass
+    return False
 
 
 class CmdStance(Command):
@@ -56,20 +83,46 @@ class CmdStance(Command):
 
 class CmdAttack(Command):
     """
-    Start an automated combat sequence.
+    Start an automated combat sequence (same ticker for foot or vehicle-mounted weapons).
+    From inside a vehicle cabin, targets are resolved in the outside room (field of fire).
     """
     key = "attack"
     aliases = ["kill", "hit"]
     locks = "cmd:all()"
     help_category = "Combat"
     usage_typeclasses = ["typeclasses.characters.Character"]
-    usage_hint = "|wattack <them>|n (when wielding a weapon)"
+    usage_hint = "|wattack <them>|n — includes mounted vehicle weapons when crewing"
 
     def func(self):
         caller = _combat_caller(self)
-        target = caller.search(self.args)
+        raw = (self.args or "").strip()
+        if not raw:
+            caller.msg("Attack whom?")
+            return
+        try:
+            from typeclasses.vehicles import Vehicle
+        except ImportError:
+            Vehicle = ()
+
+        loc = get_combat_external_location(caller)
+        toks = raw.split()
+        target = None
+        aim_part = None
+        if len(toks) >= 2:
+            cand = caller.search(" ".join(toks[:-1]), location=loc)
+            if cand and isinstance(cand, Vehicle):
+                target = cand
+                aim_part = toks[-1]
+        if target is None:
+            target = caller.search(raw, location=loc)
+            aim_part = None
         if not target:
             return
+        if isinstance(target, Vehicle) and aim_part:
+            caller.db.combat_vehicle_aim_part = aim_part
+        else:
+            if getattr(caller.db, "combat_vehicle_aim_part", None) is not None:
+                del caller.db.combat_vehicle_aim_part
         if target == caller:
             caller.msg("You can't attack yourself.")
             return
@@ -81,6 +134,24 @@ class CmdAttack(Command):
             from typeclasses.corpse import Corpse
             if isinstance(target, Corpse):
                 caller.msg("You can't attack a corpse.")
+                return
+        except ImportError:
+            pass
+        if not _is_valid_combat_target(target):
+            caller.msg("Why are you trying to fight that?")
+            return
+        cabin_brawl = melee_brawl_blocked_in_vehicle_cabin(caller, target)
+        if cabin_brawl:
+            caller.msg(cabin_brawl)
+            return
+        blocked = melee_target_blocked_enclosed_cabin(caller, target, loc)
+        if blocked:
+            caller.msg(blocked)
+            return
+        try:
+            from world.combat.vehicle_combat import get_attacker_vehicle_weapon_context, is_crew_in_enclosed_vehicle
+            if is_crew_in_enclosed_vehicle(caller) and not get_attacker_vehicle_weapon_context(caller):
+                caller.msg("|rNo weapon available from this seat. Use the vehicle's weapons or get out to fight on foot.|n")
                 return
         except ImportError:
             pass
@@ -151,6 +222,9 @@ class CmdGrapplingAttack(Command):
 
     def func(self):
         caller = _combat_caller(self)
+        if is_vehicle_interior_room(getattr(caller, "location", None)):
+            caller.msg("You can't fight inside a vehicle cabin.")
+            return
         held = getattr(caller.db, "grappling", None)
         args = (self.args or "").strip()
         if not args:
@@ -169,6 +243,9 @@ class CmdGrapplingAttack(Command):
                 return
         except ImportError:
             pass
+        if not _is_valid_combat_target(target):
+            caller.msg("Why are you trying to fight that?")
+            return
         try:
             from world.death import is_permanently_dead, is_flatlined, is_character_logged_off
             if is_character_logged_off(target):
@@ -248,7 +325,7 @@ class CmdStop(Command):
 class CmdFlee(Command):
     """
     Try to break away from combat and run. Contested evasion roll vs your opponent.
-    Once per combat turn: using flee commits you and skips your next strike (same as advance/retreat).
+    Once per combat turn: using flee commits you and skips your next strike.
     Without a direction you flee to a random exit; with a direction you try that exit.
     Usage: flee [direction]
     """

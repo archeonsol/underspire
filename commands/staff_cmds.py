@@ -909,11 +909,20 @@ class CmdSpawnItem(Command):
                     obj.delete()
                     return
                 obj.location = loc
+                try:
+                    from world.vehicles.vehicle_security import set_owner
+
+                    set_owner(obj, caller)
+                except Exception:
+                    pass
             else:
                 obj.location = caller
             names.append(obj.get_display_name(caller))
         if any_vehicle:
-            caller.msg("|gSpawned in your current room:|n %s" % ", ".join(names))
+            caller.msg(
+                "|gSpawned in your current room:|n %s — you are registered as |wbiometric owner|n."
+                % ", ".join(names)
+            )
         else:
             caller.msg("|gSpawned into your inventory:|n %s" % ", ".join(names))
 
@@ -1007,8 +1016,8 @@ class CmdSpawnVehicle(Command):
         if not _room_allows_vehicle_tags(loc):
             caller.msg(
                 "|yThis room has no drivable-surface tag with category |wvehicle_access|n "
-                "(|wstreet|n / |wtunnel|n / |waerial|n). "
-                "Example: |w@tag here = street:vehicle_access|n|n"
+                "(|wstreet|n / |wtunnel|n / |waerial|n / |woffroad|n). "
+                "Example: |w@tag here = street:vehicle_access|n or |woffroad:vehicle_access|n|n"
             )
 
         proto = ALL_VEHICLE_PROTOTYPES.get(arg.lower()) if arg else None
@@ -1034,7 +1043,8 @@ class CmdSpawnVehicle(Command):
             vehicle = create_object("typeclasses.vehicles.Vehicle", key=name, location=loc)
             caller.msg(
                 f"|gCreated vehicle|n |w{vehicle.key}|n here. Use |wenter {vehicle.key}|n to get in, "
-                f"then |wstart|n and |wdrive <direction>|n. Prototypes: |w{', '.join(sorted(ALL_VEHICLE_PROTOTYPES.keys()))}|n."
+                f"then |wstart|n and |wdrive <direction>|n. "
+                f"Prototypes: |w{', '.join(sorted(ALL_VEHICLE_PROTOTYPES.keys()))}|n."
             )
         except Exception as e:
             caller.msg(f"|rCould not create vehicle: {e}|n")
@@ -1059,7 +1069,7 @@ class CmdDamageVehicle(Command):
             return
         try:
             from typeclasses.vehicles import Vehicle
-            from world.vehicle_parts import VEHICLE_PART_IDS, PART_DISPLAY_NAMES
+            from world.vehicle_parts import get_part_display_name, get_part_ids
         except ImportError:
             caller.msg("Vehicle parts not available.")
             return
@@ -1068,14 +1078,15 @@ class CmdDamageVehicle(Command):
             caller.msg("No such vehicle here.")
             return
         part_id = args[1].lower().replace(" ", "_")
-        if part_id not in VEHICLE_PART_IDS:
-            caller.msg(f"Unknown part. Valid: {', '.join(VEHICLE_PART_IDS)}")
+        valid = get_part_ids(vehicle)
+        if part_id not in valid:
+            caller.msg(f"Unknown part for this vehicle. Valid: {', '.join(valid)}")
             return
         amount = int(args[2]) if len(args) > 2 else 20
         amount = max(1, min(100, amount))
         old_c = vehicle.get_part_condition(part_id)
         new_c = vehicle.damage_part(part_id, amount)
-        part_name = PART_DISPLAY_NAMES.get(part_id, part_id)
+        part_name = get_part_display_name(part_id)
         caller.msg(f"Damaged {vehicle.key}'s {part_name}: {old_c}% -> {new_c}%.")
 
 

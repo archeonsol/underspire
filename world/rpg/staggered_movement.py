@@ -7,13 +7,32 @@ from evennia.utils import delay
 from evennia.utils.search import search_object
 
 # Seconds before the move actually happens (RP pacing)
-WALK_DELAY = 3.5
+WALK_DELAY = 5.5
 # Crawling is always slower than walking. Two tiers: exhaustion vs leg injury.
-CRAWL_DELAY_EXHAUSTED = 8.5   # 0 stamina — slow crawl
-CRAWL_DELAY_LEG_TRAUMA = 16.0  # Missing leg or limb unsalvageable — drag/crawl; must exceed walk + exhausted crawl
+CRAWL_DELAY_EXHAUSTED = 12.0   # 0 stamina — slow crawl
+CRAWL_DELAY_LEG_TRAUMA = 22.0  # Missing leg or limb unsalvageable — drag/crawl; must exceed walk + exhausted crawl
 # Backwards compatibility (older imports)
 CRAWL_DELAY = CRAWL_DELAY_EXHAUSTED
-DRIVE_DELAY = 2.0
+DRIVE_DELAY = 3.5
+
+
+def get_drive_delay(vehicle) -> float:
+    """Return the effective drive delay for a vehicle, reduced by engine/turbine performance mods.
+
+    Better engines/turbines raise top_speed above the base 100, which proportionally
+    shortens the delay. Heavy armor lowers top_speed, lengthening it. Clamped so that
+    even the fastest build cannot go below 1.5 s and stock vehicles always use DRIVE_DELAY.
+    """
+    try:
+        from world.vehicle_parts import calculate_vehicle_performance
+
+        perf = calculate_vehicle_performance(vehicle)
+        top_speed = perf.get("top_speed", 100) or 100
+        scaled = DRIVE_DELAY * (100.0 / top_speed)
+        return max(1.5, min(scaled, DRIVE_DELAY))
+    except Exception:
+        return DRIVE_DELAY
+
 
 # Pending staggered walk (set in Exit / sneak until move completes or is cancelled).
 NDB_STAGGER_WALK_NORM = "_stagger_walk_direction_norm"

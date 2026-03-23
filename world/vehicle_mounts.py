@@ -25,6 +25,8 @@ def force_dismount(character, motorcycle, reason=""):
         character.msg("|rYou're pulled from the bike.|n")
     elif reason == "move":
         character.msg("You swing off the bike before you walk.")
+    elif reason == "destruction":
+        pass  # caller sends destruction messages
     else:
         character.msg("You dismount.")
         if character.location:

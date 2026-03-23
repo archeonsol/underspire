@@ -394,8 +394,10 @@ def reconcile_active_drugs_after_reload(character):
     try:
         from world.alchemy.overdose import _reset_drug_db_flags
 
+        _active = dict(getattr(character.db, "active_drugs", None) or {})
         character.db.active_drugs = {}
         _reset_drug_db_flags(character)
-        character.msg("|xThe chemistry in your blood no longer lines up with how you feel. The crash came while you were under.|n")
+        if _active:
+            character.msg("|xThe chemistry in your blood no longer lines up with how you feel. The crash came while you were under.|n")
     except Exception as err:
         logger.log_trace(f"reconcile_active_drugs_after_reload: {err}")
