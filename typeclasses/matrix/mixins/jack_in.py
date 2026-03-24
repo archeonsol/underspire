@@ -363,12 +363,11 @@ class JackInMixin(NetworkedMixin):
 
         # Search for an existing avatar belonging to this matrix identity.
         # We key on matrix_id, not entry_device — the rig is just hardware.
-        avatar = None
-        for candidate in MatrixAvatar.objects.all():
-            if getattr(candidate.db, 'matrix_id', None) == char_matrix_id:
-                if not getattr(candidate.db, 'dead', False):
-                    avatar = candidate
-                    break
+        # Avatar keys always follow "{matrix_id} (Avatar)" (enforced at creation),
+        # so we can use an indexed db_key lookup instead of a full table scan.
+        avatar = MatrixAvatar.objects.filter(db_key=f"{char_matrix_id} (Avatar)").first()
+        if avatar and getattr(avatar.db, 'dead', False):
+            avatar = None
 
         needs_respawn = False
         if avatar:
