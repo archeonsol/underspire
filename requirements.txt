@@ -71,3 +71,6 @@ pyfiglet==1.0.4
 
 # Natural-language number and timestamp formatting
 humanize==4.15.0
+
+# Pathfinding for XYZgrid contrib
+scipy==1.17.1
