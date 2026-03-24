@@ -718,72 +718,27 @@ class CmdWire(Command):
 
 class CmdWireConfirm(Command):
     """
-    Confirm a pending wire transfer.
+    Universal yes-confirmation dispatcher.
 
-    This command is automatically available after using 'wire'.
-    Type 'yes' to confirm or anything else to cancel.
+    Routes 'yes' to whichever pending-input flow is currently active
+    (wire transfer, recipe wizard, serve offer, etc.).  If nothing is
+    pending, prints a neutral message.
     """
 
     key = "yes"
     locks = "cmd:all()"
     help_category = "Economy"
-    # Low priority so it doesn't override normal 'yes' usage elsewhere
     auto_help = False
 
     def func(self):
         caller = self.caller
-        pending = getattr(caller.ndb, "_pending_wire", None)
-        if not pending:
-            # No pending wire — pass through as normal text
-            caller.msg("(Nothing to confirm.)")
-            return
-
-        # Clear pending
         try:
-            del caller.ndb._pending_wire
+            from commands.pending_dispatch import dispatch_pending_input
+            if dispatch_pending_input(caller, "yes"):
+                return
         except Exception:
             pass
-
-        network_id = pending["network_id"]
-        amount = pending["amount"]
-
-        # Re-check signal
-        from world.utils import get_containing_room, room_has_network_coverage
-        room = get_containing_room(caller)
-        if not room_has_network_coverage(room, include_matrix_nodes=True):
-            caller.msg(f"{_ERR}Signal lost. Wire transfer cancelled.{_N}")
-            return
-
-        from world.rpg.bank import bank_wire
-        ok, msg, recip_name, fee = bank_wire(caller, network_id, amount)
-
-        if ok:
-            lines = [
-                _pheader("TRANSFER COMPLETE", subtitle="Funds dispatched via Matrix routing."),
-                _pkv("Sent",      f"{_OK}{format_currency(amount, color=False)}{_N}"),
-                _pkv("Fee",       format_currency(fee)),
-                _pkv("Recipient", f"{_ACCENT}{recip_name}{_N}"),
-                _pline(),
-                _psection("ACCOUNT"),
-                _pkv("Bank Bal",  format_currency(get_bank_balance(caller))),
-                _pline(),
-                _pclose(),
-            ]
-            caller.msg("\n".join(lines))
-
-            # Notify recipient if online
-            from world.rpg.bank import _resolve_wire_recipient
-            recipient = _resolve_wire_recipient(network_id)
-            if recipient and hasattr(recipient, "msg"):
-                from world.matrix_accounts import get_alias
-                sender_alias = get_alias(caller)
-                sender_display = f"@{sender_alias}" if sender_alias else caller.key
-                recipient.msg(
-                    f"\n{_ACCENT}[WIRE TRANSFER]{_N} You received {format_currency(amount)} "
-                    f"from {_LABEL}{sender_display}{_N}."
-                )
-        else:
-            caller.msg(f"{_ERR}{msg}{_N}")
+        caller.msg("(Nothing to confirm.)")
 
 
 # ---------------------------------------------------------------------------

@@ -24,13 +24,15 @@ class Seat(Object):
         self.db.capacity = 1  # chairs = 1, couches/benches = 2-4
         self.db.room_pose = "here"  # Shows as "A chair is here."
 
-        # Default room-look templates; builders can override these per-object:
+        # Default room-look templates; builders can override these per-object.
+        # Use {verb} as a placeholder for "is"/"are" so the verb replacement in
+        # get_room_appearance never corrupts a {name} that happens to contain " is ".
         #   self.db.seating_empty_msg = "The {obj} is empty."
-        #   self.db.seating_occupied_msg = "{name} is sitting on the {obj}."
+        #   self.db.seating_occupied_msg = "{name} {verb} sitting on the {obj}."
         if getattr(self.db, "seating_empty_msg", None) is None:
             self.db.seating_empty_msg = "The {obj} is empty."
         if getattr(self.db, "seating_occupied_msg", None) is None:
-            self.db.seating_occupied_msg = "{name} is sitting on the {obj}."
+            self.db.seating_occupied_msg = "{name} {verb} sitting on the {obj}."
 
         # Transition messages (shown when character sits/stands)
         # Placeholders: {name} = character name, {obj} = furniture name
@@ -96,9 +98,10 @@ class Seat(Object):
         Return the format template for an occupied seat.
         Placeholders:
           {name} – seated character's display name
+          {verb} – conjugated verb ("is" / "are"), substituted by get_room_appearance
           {obj}  – the seat's display name for the viewer
         """
-        return getattr(self.db, "seating_occupied_msg", None) or "{name} is sitting on the {obj}."
+        return getattr(self.db, "seating_occupied_msg", None) or "{name} {verb} sitting on the {obj}."
 
     def get_room_appearance(self, looker, **kwargs):
         """
@@ -165,12 +168,10 @@ class Seat(Object):
             combined = iter_to_str(names, sep=",", endsep=" and")
             verb = "are"
 
-        # Get template and replace verb
         template = self.get_occupied_template()
-        template = template.replace(" is ", f" {verb} ")
-
         return template.format(
             name=combined,
+            verb=verb,
             obj=f"{ROOM_DESC_OBJECT_NAME_COLOR}{obj_name}|n"
         )
 
@@ -195,13 +196,12 @@ class Bed(Seat):
         super().at_object_creation()
         self.db.room_pose = "against the wall"  # Override default seat pose
 
-        # Default templates for beds
-        if getattr(self.db, "seating_empty_msg", None) is None:
-            self.db.seating_empty_msg = "The {obj} is empty."
+        # seating_empty_msg is already set by Seat.at_object_creation; no need to re-check.
+        # Use {verb} placeholders so get_room_appearance can substitute "is"/"are" safely.
         if getattr(self.db, "sitting_template", None) is None:
-            self.db.sitting_template = "{name} is sitting on the {obj}."
+            self.db.sitting_template = "{name} {verb} sitting on the {obj}."
         if getattr(self.db, "lying_template", None) is None:
-            self.db.lying_template = "{name} is lying on the {obj}."
+            self.db.lying_template = "{name} {verb} lying on the {obj}."
 
         # Transition messages for beds (both sit and lie)
         # Placeholders: {name} = character name, {obj} = furniture name
@@ -260,9 +260,9 @@ class Bed(Seat):
             str: Template string with {name} and {obj} placeholders
         """
         if posture == "lying":
-            return getattr(self.db, "lying_template", None) or "{name} is lying on the {obj}."
+            return getattr(self.db, "lying_template", None) or "{name} {verb} lying on the {obj}."
         else:
-            return getattr(self.db, "sitting_template", None) or "{name} is sitting on the {obj}."
+            return getattr(self.db, "sitting_template", None) or "{name} {verb} sitting on the {obj}."
 
     def get_room_appearance(self, looker, **kwargs):
         """
@@ -345,13 +345,11 @@ class Bed(Seat):
                 combined = iter_to_str(names, sep=",", endsep=" and")
                 verb = "are"
 
-            # Get template and replace verb
             template = self.get_template_for_posture(posture)
-            template = template.replace(" is ", f" {verb} ")
-
             lines.append(template.format(
                 name=combined,
+                verb=verb,
                 obj=f"{ROOM_DESC_OBJECT_NAME_COLOR}{obj_name}|n"
             ))
 
-        return " ".join(lines)
+        return "\n".join(lines)

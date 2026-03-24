@@ -164,6 +164,8 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         from commands.medical_cmds import CmdHt, CmdPatient, CmdApply, CmdStabilize, CmdSedate, CmdWakePatient, CmdSurgery, CmdDefib
         from commands.use_cmds import CmdUse
         from commands.survival_cmds import CmdEat, CmdDrink
+        from commands.food_cmds import CmdMenu, CmdNewRecipe, CmdPrepare, CmdServe, CmdDelRecipe, CmdRate
+        from commands.bar_mgmt_cmds import CmdBarSet, CmdBarSetAdmin
         from commands.inventory_cmds import CmdWield, CmdUnwield, CmdFreehands, CmdInventory, CmdReload, CmdUnload, CmdCheckAmmo, CmdWear, CmdRemove, CmdStrip, CmdFrisk
         from commands.crafting_cmds import CmdSurvey, CmdRepairArmor, CmdTailor
         from commands.alchemy_cmds import (
@@ -179,6 +181,11 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         )
         from commands.media_cmds import CmdCamera, CmdTuneTelevision, CmdLabel
         from commands.trust_cmds import CmdTrust, CmdUntrust, CmdTrusted
+        from commands.cosmetic_cmds import (
+            CmdInk, CmdRemoveTattoo, CmdTattoos,
+            CmdApply as CmdApplyCosmetic,
+            CmdWipe, CmdColor, CmdColors,
+        )
         from commands.roleplay_cmds import CmdTease, CmdDescribeMeAs, CmdBody, CmdVoice, CmdSmellSet, CmdLanguage, CmdSdesc, CmdPending, CmdLookPlace, CmdTempPlace, CmdSleepPlace, CmdWakeMsg, CmdFlatlineMsg, CmdSetPlace, CmdPose, CmdPronoun, CmdEmote, CmdNoMatch, CmdCount, CmdRecog, CmdMemorize, CmdMemory, CmdSmell
         from commands.skintone_cmd import CmdSkintone
         from commands.roleplay_cmds import CmdSit, CmdLieOnTable, CmdGetOffTable
@@ -339,6 +346,14 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdSurgery())
         self.add(CmdEat())
         self.add(CmdDrink())
+        self.add(CmdMenu())
+        self.add(CmdNewRecipe())
+        self.add(CmdPrepare())
+        self.add(CmdServe())
+        self.add(CmdDelRecipe())
+        self.add(CmdRate())
+        self.add(CmdBarSet())
+        self.add(CmdBarSetAdmin())
         self.add(CmdDefib())
         self.add(CmdWield())
         self.add(CmdUnwield())
@@ -411,6 +426,13 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdTrust())
         self.add(CmdUntrust())
         self.add(CmdTrusted())
+        self.add(CmdInk())
+        self.add(CmdRemoveTattoo())
+        self.add(CmdTattoos())
+        self.add(CmdApplyCosmetic())
+        self.add(CmdWipe())
+        self.add(CmdColor())
+        self.add(CmdColors())
         self.add(CmdNoMatch())
         self.add(CmdPerformance())
         self.add(CmdExamine())
@@ -433,7 +455,6 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdDoorPair())
         self.add(CmdEnterPod())
         self.add(CmdSplinterMe())
-        self.add(SplinterPodCmdSet())  # CmdLeavePod here so it beats exits (priority 110)
         self.add(CombatGrappleCmdSet())  # grapple/letgo/resist above exits (priority 120)
         self.add(CmdEnterVehicle())
         self.add(CmdExitVehicle())

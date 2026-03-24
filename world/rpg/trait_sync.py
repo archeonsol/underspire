@@ -56,6 +56,9 @@ def sync_skills_to_traits(character, skills_dict):
     if handler is None:
         return
     for key, val in skills_dict.items():
+        # Backward-compat: renamed skill key
+        if key == "tailoring":
+            key = "artistry"
         trait = handler.get(key)
         if trait is not None:
             trait.base = int(val or 0)
@@ -89,6 +92,8 @@ def sync_single_skill(character, skill_key, value):
     handler = getattr(character, "trait_skills", None)
     if handler is None:
         return
+    if skill_key == "tailoring":
+        skill_key = "artistry"
     trait = handler.get(skill_key)
     if trait is not None:
         trait.base = int(value or 0)

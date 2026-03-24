@@ -89,6 +89,7 @@ def build_clone_snapshot(character):
         "known_recipes": list(getattr(character.db, "known_recipes", None) or []),
         "cyberpsychosis_score": int(getattr(character.db, "cyberpsychosis_score", 0) or 0),
     }
+    snapshot["tattoos"] = dict(getattr(character.db, "tattoos", None) or {})
     _trust = dict(getattr(character.db, "trust", None) or {})
     snapshot["trust"] = {k: list(v) if isinstance(v, (set, list)) else list(v) for k, v in _trust.items()}
     snapshot["factions"] = {}
@@ -125,6 +126,8 @@ def apply_clone_snapshot(character, snapshot):
         sync_skills_to_traits(character, _skills)
     if "body_descriptions" in snapshot:
         character.db.body_descriptions = dict(snapshot["body_descriptions"])
+    if "tattoos" in snapshot:
+        character.db.tattoos = dict(snapshot.get("tattoos") or {})
     if "race" in snapshot:
         character.db.race = snapshot.get("race") or "human"
     if "splicer_animal" in snapshot:

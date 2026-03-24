@@ -299,7 +299,7 @@ class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, F
         # XP: gained every 6h while eligible (max 4 drops/24h); cap enforced so you stop earning after XP_CAP
         self.db.xp = 0
         from world.rpg.xp import XP_CAP
-        self.db.xp_cap = int(getattr(self.db, "xp_cap", XP_CAP) or XP_CAP)
+        self.db.xp_cap = int(XP_CAP)
         # PC vs NPC: NPCs do not show as "sleeping" when unpuppeted; set True for staff-created NPCs
         self.db.is_npc = False
         # Survival: hunger/thirst (0-100, higher = better) and intoxication state
@@ -327,6 +327,8 @@ class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, F
         self.db.known_recipes = []
         self.db.cyberpsychosis_score = 0
         self.db.trust = {}
+        self.db.tattoos = {}
+        self.db.active_makeup = []
         self.db.comedown_drugs = {}
         self.db.alchemy_analysis = {}
         # Stealth (see world.rpg.stealth)
@@ -345,6 +347,15 @@ class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, F
             self.msg("|rHotwire attempt interrupted.|n")
         # Evennia: move_to aborts if `not at_pre_move(...)` — implicit None is falsy and blocks all moves.
         return super().at_pre_move(destination, **kwargs)
+
+    def at_after_move(self, source_location, **kwargs):
+        """Decrement makeup room counters on each room transition."""
+        super().at_after_move(source_location, **kwargs)
+        try:
+            from world.cosmetics.makeup import decrement_makeup_room_count
+            decrement_makeup_room_count(self)
+        except Exception:
+            pass
 
     def search(self, searchdata, **kwargs):
         """Exclude hidden characters the searcher has not spotted."""
@@ -415,6 +426,11 @@ class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, F
     def at_server_start(self):
         """Re-apply cyberware buffs after a server restart (BuffHandler is non-persistent)."""
         super().at_server_start()
+        # Backfill any body parts added since last login (e.g. new cyberware anatomy).
+        try:
+            self._sync_body_descriptions()
+        except Exception as err:
+            logger.log_trace(f"characters.at_server_start _sync_body_descriptions: {err}")
         # Clear stale procedure lock on startup and reconcile unconscious timers/cmdset.
         self.db.surgery_in_progress = False
         try:
@@ -498,6 +514,8 @@ class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, F
                 logger.log_trace(f"install_cyberware on_surgery_install: {err}")
         installed.append(cyberware_obj)
         self.db.cyberware = installed
+        self.ndb._max_stamina_cardio = None  # invalidate max_stamina cache
+        self._sync_body_descriptions()       # backfill any new anatomy added by this implant
         return True
 
     def remove_cyberware(self, obj_or_name, skip_surgery=False):
@@ -530,6 +548,7 @@ class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, F
         obj.on_uninstall(self)
         installed.remove(obj)
         self.db.cyberware = installed
+        self.ndb._max_stamina_cardio = None  # invalidate max_stamina cache
         from world.body import cleanup_adds_body_parts_on_remove
 
         cleanup_adds_body_parts_on_remove(self, obj, installed)
@@ -617,19 +636,27 @@ class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, F
             cur = CmdSet()  # empty fallback so merger does not crash
         return cur, stack
 
+    def _sync_body_descriptions(self):
+        """
+        Ensure db.body_descriptions contains an entry for every current body part.
+        Writes to DB only when new parts are actually missing. Call this from
+        at_server_start and install_cyberware rather than on every look.
+        """
+        current = dict(getattr(self.db, "body_descriptions", None) or {})
+        added = False
+        for part in _body_parts(self):
+            if part not in current:
+                current[part] = ""
+                added = True
+        if added:
+            self.db.body_descriptions = current
+
     def get_body_descriptions(self):
         """
         Return dict of body part -> description string (for appearance/look).
         Full pipeline: naked → missing → cyberware → injuries → treatment → clothing.
+        Does not write to DB; call _sync_body_descriptions() to backfill missing parts.
         """
-        current = dict(getattr(self.db, "body_descriptions", None) or {})
-        merged = False
-        for part in _body_parts(self):
-            if part not in current:
-                current[part] = ""
-                merged = True
-        if merged:
-            self.db.body_descriptions = current
         from world.appearance import get_effective_body_descriptions
         return get_effective_body_descriptions(self)
 
@@ -736,10 +763,10 @@ class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, F
             )
         if right:
             name = _name(right)
-            return "%s %s holding %s in %s hands." % (sub_cap, verb, _article(name) + name, poss)
+            return "%s %s holding %s in %s right hand." % (sub_cap, verb, _article(name) + name, poss)
         if left:
             name = _name(left)
-            return "%s %s holding %s in %s hands." % (sub_cap, verb, _article(name) + name, poss)
+            return "%s %s holding %s in %s left hand." % (sub_cap, verb, _article(name) + name, poss)
         return ""
 
     def msg(self, text=None, from_obj=None, session=None, **kwargs):
@@ -789,7 +816,13 @@ class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, F
                 start_cinematic_chargen(self)
                 return
         # CHECK: Are we jacked into the Matrix? Ask the rig to reconnect if valid.
-        rig = self.db.sitting_on
+        # Use db.matrix_rig (set by the jack-in pipeline) rather than db.sitting_on
+        # so we don't accidentally treat any seat with a validate_and_reconnect method as a rig.
+        rig = getattr(self.db, "matrix_rig", None) or (
+            self.db.sitting_on
+            if self.db.sitting_on and hasattr(self.db.sitting_on, "validate_and_reconnect")
+            else None
+        )
         if rig and hasattr(rig, 'validate_and_reconnect'):
             # Rig will validate connection and redirect to avatar if still valid
             if rig.validate_and_reconnect(self):
@@ -893,12 +926,11 @@ class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, F
         factions = self.get_factions()
         if not factions:
             return "None"
+        from world.rpg.factions.ranks import get_rank_name
+        ranks = self.db.faction_ranks or {}
         parts = []
         for fdata in factions:
-            ranks = self.db.faction_ranks or {}
             rank = ranks.get(fdata["key"], 1)
-            from world.rpg.factions.ranks import get_rank_name
-
             rank_name = get_rank_name(fdata["ranks"], rank)
             parts.append(f"{fdata['color']}{fdata['short_name']}|n ({rank_name})")
         return ", ".join(parts)
@@ -935,7 +967,7 @@ class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, F
         except Exception:
             pass
 
-        if hasattr(self.db, "temp_room_pose"):
+        if self.attributes.has("temp_room_pose"):
             try:
                 del self.db.temp_room_pose
             except Exception:

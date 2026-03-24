@@ -79,7 +79,9 @@ class CmdAutopilot(Command):
             return
 
         # Try lark grammar parser for structured argument extraction.
-        sector = args
+        # Fall back to the first word of args so multi-word input doesn't produce a
+        # nonsense sector name (e.g. "guild district" → "guild").
+        sector = args.split()[0] if args else args
         try:
             from world.command_grammars import parse_autopilot
             parsed = parse_autopilot(raw_args)
@@ -89,5 +91,5 @@ class CmdAutopilot(Command):
             pass
 
         ok, msg = tun.start_autopilot(vehicle, caller, sector)
-        if not ok and msg:
-            caller.msg(f"|r{msg}|n")
+        if msg:
+            caller.msg(f"|r{msg}|n" if not ok else msg)

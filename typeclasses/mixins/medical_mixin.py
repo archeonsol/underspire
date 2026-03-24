@@ -31,11 +31,25 @@ class MedicalMixin:
 
     @property
     def max_stamina(self):
-        """Stamina pool tied to endurance display level."""
+        """Stamina pool tied to endurance display level.
+
+        The cyberware scan is cached on ndb._max_stamina_cardio (bool) so repeated
+        calls within the same server session don't re-deserialise the cyberware list.
+        The cache is invalidated by install_cyberware / remove_cyberware via
+        ndb._max_stamina_cardio = None.
+        """
         end_display = self.get_display_stat("endurance")
         base = 20 + (end_display * 5)
-        cyber = list(getattr(self.db, "cyberware", None) or [])
-        has_cardio = any(type(cw).__name__ == "CardioPulmonaryBooster" and not bool(getattr(cw.db, "malfunctioning", False)) for cw in cyber)
+        # Use cached result if available; None means "not yet computed".
+        has_cardio = getattr(self.ndb, "_max_stamina_cardio", None)
+        if has_cardio is None:
+            cyber = list(getattr(self.db, "cyberware", None) or [])
+            has_cardio = any(
+                type(cw).__name__ == "CardioPulmonaryBooster"
+                and not bool(getattr(cw.db, "malfunctioning", False))
+                for cw in cyber
+            )
+            self.ndb._max_stamina_cardio = has_cardio
         if has_cardio:
             base += 15
         return base
@@ -85,36 +99,40 @@ class MedicalMixin:
                 )
             except Exception:
                 pass
-        self.db.current_hp -= damage
-        if self.db.current_hp < 0:
-            self.db.current_hp = 0
-        try:
-            from world.medical import add_injury
-            add_injury(self, damage, body_part=body_part, weapon_key=weapon_key or "fists", weapon_obj=weapon_obj)
-        except Exception as err:
-            logger.log_trace("medical_mixin.at_damage add_injury: %s" % err)
+            # Apply HP loss using the sanitised integer value.
+            self.db.current_hp = (self.db.current_hp or self.max_hp) - dmg
+            if self.db.current_hp < 0:
+                self.db.current_hp = 0
 
-        if self.db.current_hp <= 0 and getattr(self.db, "drug_consciousness_sustain", False):
-            self.db.current_hp = 1
-            self.msg("|rYou should be unconscious. Why aren't you?|n")
-            return
+            # Drug sustain: keep character conscious at 1 HP even when they should flatline.
+            # Check before add_injury so injury severity is recorded at the correct HP.
+            if self.db.current_hp <= 0 and getattr(self.db, "drug_consciousness_sustain", False):
+                self.db.current_hp = 1
+                self.msg("|rYou should be unconscious. Why aren't you?|n")
+                return
 
-        if self.db.current_hp <= 0:
             try:
-                from world.death import make_flatlined, is_flatlined
-                if not is_flatlined(self):
-                    make_flatlined(self, attacker)
+                from world.medical import add_injury
+                add_injury(self, dmg, body_part=body_part, weapon_key=weapon_key or "fists", weapon_obj=weapon_obj)
             except Exception as err:
-                logger.log_trace("medical_mixin.at_damage make_flatlined: %s" % err)
-                self.db.combat_ended = True
-                self.msg("|rYour legs give. The ground comes up. You are done.|n")
-                if attacker and attacker != self:
-                    attacker.msg(f"|y{self.get_display_name(attacker)} goes down and does not get up.|n")
+                logger.log_trace("medical_mixin.at_damage add_injury: %s" % err)
+
+            if self.db.current_hp <= 0:
                 try:
-                    from world.combat import remove_both_combat_tickers
-                    remove_both_combat_tickers(self, attacker)
-                except Exception as combat_err:
-                    logger.log_trace("medical_mixin.at_damage remove_both_combat_tickers: %s" % combat_err)
+                    from world.death import make_flatlined, is_flatlined
+                    if not is_flatlined(self):
+                        make_flatlined(self, attacker)
+                except Exception as err:
+                    logger.log_trace("medical_mixin.at_damage make_flatlined: %s" % err)
+                    self.db.combat_ended = True
+                    self.msg("|rYour legs give. The ground comes up. You are done.|n")
+                    if attacker and attacker != self:
+                        attacker.msg(f"|y{self.get_display_name(attacker)} goes down and does not get up.|n")
+                    try:
+                        from world.combat import remove_both_combat_tickers
+                        remove_both_combat_tickers(self, attacker)
+                    except Exception as combat_err:
+                        logger.log_trace("medical_mixin.at_damage remove_both_combat_tickers: %s" % combat_err)
 
     def get_medical_summary(self):
         """Short trauma summary (organs, fractures, bleeding) for status lines."""
@@ -127,7 +145,11 @@ class MedicalMixin:
         7 Layers: Unscathed -> Dead. Trauma (fractures, organs, bleeding) is only shown if
         include_trauma=True or via scanner/medical menu.
         """
-        percent = (self.hp / self.max_hp) * 100 if self.max_hp > 0 else 0
+        # Read current_hp directly to avoid the property's DB-write side effect in a display path.
+        current_hp = self.db.current_hp
+        if current_hp is None:
+            current_hp = self.max_hp
+        percent = (current_hp / self.max_hp) * 100 if self.max_hp > 0 else 0
 
         if percent >= 100:
             desc = "|gUnscathed.|n They stand tall, their skin and armor untouched by brutality."

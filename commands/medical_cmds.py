@@ -288,6 +288,144 @@ class CmdStabilize(Command):
                 target.msg(MC["critical"] + "%s tries to stem the bleed: %s|n" % ((caller.get_display_name(target) if hasattr(caller, "get_display_name") else caller.name), msg[:60] + ("..." if len(msg) > 60 else "")))
 
 
+def do_medical_apply(caller, args):
+    """
+    Core logic for applying a medical tool to a target.
+
+    Extracted from CmdApply so the unified apply dispatcher in
+    commands.cosmetic_cmds can call it directly without instantiating
+    a second Command object.
+
+    args: the raw argument string after the 'apply' keyword.
+    Returns True if the action was handled (even on error), False if args
+    were empty/missing ' to ' so the caller can show combined usage.
+    """
+    from world.medical.medical_treatment import get_treatment_options, BONE_ALIASES, ORGAN_ALIASES
+    from typeclasses.medical_tools import MedicalTool
+
+    args = (args or "").strip()
+    if not args or " to " not in args:
+        return False
+
+    left_str, right_str = args.split(" to ", 1)
+    item_part = left_str.strip()
+    rest = right_str.strip().split()
+    if not rest:
+        caller.msg("Apply to whom? Usage: apply [item] to <target> [body part]")
+        return True
+    target_name = rest[0]
+    bodypart = " ".join(rest[1:]).strip().lower() or None
+
+    left_hand = getattr(caller.db, "left_hand_obj", None)
+    right_hand = getattr(caller.db, "right_hand_obj", None)
+    if item_part:
+        tool = caller.search(item_part, location=caller)
+        if not tool:
+            return True
+        if not _obj_in_hands(caller, tool):
+            caller.msg("You're not holding that. Hold the correct tool and try again.")
+            return True
+    else:
+        tool = None
+        if right_hand and right_hand.location == caller and isinstance(right_hand, MedicalTool):
+            tool = right_hand
+        elif left_hand and left_hand.location == caller and isinstance(left_hand, MedicalTool):
+            tool = left_hand
+        if not tool:
+            caller.msg("You need to hold a medical tool in your hands to apply it. Wield it first.")
+            return True
+    if getattr(tool.db, "uses_remaining", 1) is not None and (tool.db.uses_remaining or 0) <= 0:
+        caller.msg("Your supplies are spent. You need a fresh pack or another tool before you can treat anyone.")
+        return True
+
+    target = _resolve_medical_target(caller, target_name, location=caller.location)
+    if not target:
+        return True
+    if not hasattr(target, "db"):
+        caller.msg("You cannot treat that.")
+        return True
+    try:
+        from world.death import is_flatlined
+        if is_flatlined(target):
+            caller.msg("They're flatlined. You need to restart their heart with a defibrillator before you can treat their injuries.")
+            return True
+    except ImportError as e:
+        logger.log_trace("medical_cmds.do_medical_apply is_flatlined: %s" % e)
+
+    if target != caller:
+        from world.rpg.trust import check_trust_or_incapacitated
+        ok, _r = check_trust_or_incapacitated(target, caller, "heal")
+        if not ok:
+            caller.msg("They don't trust you enough for that. They need to @trust you to heal.")
+            return True
+
+    tool_type = tool.medical_tool_type
+    tools_by_type = {tool_type: [tool]}
+    options = get_treatment_options(caller, target, tools_by_type)
+    if not options:
+        caller.msg("There is nothing to treat on them with what you're holding, or they don't need that treatment.")
+        return True
+
+    choice = None
+    if bodypart:
+        bodypart_key = BONE_ALIASES.get(bodypart) or ORGAN_ALIASES.get(bodypart) or bodypart.replace(" ", "_")
+        for action_id, _display, _t, target_info in options:
+            if action_id == "splint" and target_info == bodypart_key:
+                choice = (action_id, target_info)
+                break
+            if action_id == "organ" and target_info == bodypart_key:
+                choice = (action_id, target_info)
+                break
+            if (
+                action_id in ("clean", "infection")
+                and target_info == bodypart.replace(" ", "_")
+                and _t == tool_type
+            ):
+                choice = (action_id, target_info)
+                break
+            if action_id == "bleeding" and not bodypart_key:
+                choice = (action_id, target_info)
+                break
+        if not choice and options:
+            for opt in options:
+                if opt[3] == bodypart_key or (opt[3] and bodypart in str(opt[3])):
+                    choice = (opt[0], opt[3])
+                    break
+        if not choice:
+            caller.msg("No matching injury or treatment for that body part. Use the scanner to see what's needed.")
+            return True
+    elif len(options) == 1:
+        choice = (options[0][0], options[0][3])
+    else:
+        parts = []
+        for _aid, _disp, _t, info in options:
+            if info:
+                parts.append(info.replace("_", " "))
+            else:
+                parts.append("bleeding")
+        caller.msg("Specify what to treat: " + ", ".join(parts) + "  (e.g. apply splint to %s arm)" % target_name)
+        return True
+
+    action_id, target_info = choice
+    success, msg = tool.use_for_treatment(caller, target, action_id, target_info)
+    tool.consume_use()
+    if success:
+        caller.msg(MC["stable"] + msg + "|n")
+        if target != caller:
+            target.msg(MC["stable"] + "%s works on you: %s|n" % (
+                (caller.get_display_name(target) if hasattr(caller, "get_display_name") else caller.name),
+                msg[:70] + ("..." if len(msg) > 70 else ""),
+            ))
+    else:
+        caller.msg(MC["critical"] + msg + "|n")
+        if target != caller:
+            target.msg(MC["critical"] + "%s tries to help: %s|n" % (
+                (caller.get_display_name(target) if hasattr(caller, "get_display_name") else caller.name),
+                msg[:70] + ("..." if len(msg) > 70 else ""),
+            ))
+    return True
+
+
 class CmdApply(Command):
     """
     Apply a medical tool you're holding to a target (after scanning to see what's needed).
@@ -309,127 +447,9 @@ class CmdApply(Command):
     help_category = "General"
 
     def func(self):
-        from world.medical.medical_treatment import get_treatment_options, BONE_ALIASES, ORGAN_ALIASES
-        from typeclasses.medical_tools import MedicalTool
-
-        caller = self.caller
-        args = (self.args or "").strip()
-        if not args or " to " not in args:
-            caller.msg("Usage: apply [item] to <target> [body part]  (e.g. apply bandage to Bob, apply splint to Bob arm)")
-            return
-
-        left, right = args.split(" to ", 1)
-        item_part = left.strip()
-        rest = right.strip().split()
-        if not rest:
-            caller.msg("Apply to whom? Usage: apply [item] to <target> [body part]")
-            return
-        target_name = rest[0]
-        bodypart = " ".join(rest[1:]).strip().lower() or None
-
-        left = getattr(caller.db, "left_hand_obj", None)
-        right = getattr(caller.db, "right_hand_obj", None)
-        if item_part:
-            tool = caller.search(item_part, location=caller)
-            if not tool:
-                return
-            if not _obj_in_hands(caller, tool):
-                caller.msg("You're not holding that. Hold the correct tool and try again.")
-                return
-        else:
-            tool = None
-            if right and right.location == caller and isinstance(right, MedicalTool):
-                tool = right
-            elif left and left.location == caller and isinstance(left, MedicalTool):
-                tool = left
-            if not tool:
-                caller.msg("You need to hold a medical tool in your hands to apply it. Wield it first.")
-                return
-        if getattr(tool.db, "uses_remaining", 1) is not None and (tool.db.uses_remaining or 0) <= 0:
-            caller.msg("Your supplies are spent. You need a fresh pack or another tool before you can treat anyone.")
-            return
-
-        target = _resolve_medical_target(caller, target_name, location=caller.location)
-        if not target:
-            return
-        if not hasattr(target, "db"):
-            caller.msg("You cannot treat that.")
-            return
-        try:
-            from world.death import is_flatlined
-            if is_flatlined(target):
-                caller.msg("They're flatlined. You need to restart their heart with a defibrillator before you can treat their injuries.")
-                return
-        except ImportError as e:
-            logger.log_trace("medical_cmds.CmdApply is_flatlined: %s" % e)
-
-        if target != caller:
-            from world.rpg.trust import check_trust_or_incapacitated
-
-            ok, _r = check_trust_or_incapacitated(target, caller, "heal")
-            if not ok:
-                caller.msg("They don't trust you enough for that. They need to @trust you to heal.")
-                return
-
-        tool_type = tool.medical_tool_type
-        tools_by_type = {tool_type: [tool]}
-        options = get_treatment_options(caller, target, tools_by_type)
-        if not options:
-            caller.msg("There is nothing to treat on them with what you're holding, or they don't need that treatment.")
-            return
-
-        # Resolve which option to use (by body part or single option)
-        choice = None
-        if bodypart:
-            bodypart_key = BONE_ALIASES.get(bodypart) or ORGAN_ALIASES.get(bodypart) or bodypart.replace(" ", "_")
-            for action_id, _display, _t, target_info in options:
-                if action_id == "splint" and target_info == bodypart_key:
-                    choice = (action_id, target_info)
-                    break
-                if action_id == "organ" and target_info == bodypart_key:
-                    choice = (action_id, target_info)
-                    break
-                if (
-                    action_id in ("clean", "infection")
-                    and target_info == bodypart.replace(" ", "_")
-                    and _t == tool_type
-                ):
-                    choice = (action_id, target_info)
-                    break
-                if action_id == "bleeding" and not bodypart_key:
-                    choice = (action_id, target_info)
-                    break
-            if not choice and options:
-                for opt in options:
-                    if opt[3] == bodypart_key or (opt[3] and bodypart in str(opt[3])):
-                        choice = (opt[0], opt[3])
-                        break
-            if not choice:
-                caller.msg("No matching injury or treatment for that body part. Use the scanner to see what's needed.")
-                return
-        elif len(options) == 1:
-            choice = (options[0][0], options[0][3])
-        else:
-            parts = []
-            for _aid, _disp, _t, info in options:
-                if info:
-                    parts.append(info.replace("_", " "))
-                else:
-                    parts.append("bleeding")
-            caller.msg("Specify what to treat: " + ", ".join(parts) + "  (e.g. apply splint to %s arm)" % target_name)
-            return
-
-        action_id, target_info = choice
-        success, msg = tool.use_for_treatment(caller, target, action_id, target_info)
-        tool.consume_use()  # consume a use whether the roll succeeds or fails
-        if success:
-            caller.msg(MC["stable"] + msg + "|n")
-            if target != caller:
-                target.msg(MC["stable"] + "%s works on you: %s|n" % ((caller.get_display_name(target) if hasattr(caller, "get_display_name") else caller.name), msg[:70] + ("..." if len(msg) > 70 else "")))
-        else:
-            caller.msg(MC["critical"] + msg + "|n")
-            if target != caller:
-                target.msg(MC["critical"] + "%s tries to help: %s|n" % ((caller.get_display_name(target) if hasattr(caller, "get_display_name") else caller.name), msg[:70] + ("..." if len(msg) > 70 else "")))
+        handled = do_medical_apply(self.caller, self.args)
+        if not handled:
+            self.caller.msg("Usage: apply [item] to <target> [body part]  (e.g. apply bandage to Bob, apply splint to Bob arm)")
 
 
 class CmdSurgery(Command):

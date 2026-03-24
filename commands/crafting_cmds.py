@@ -134,7 +134,7 @@ class CmdTailor(Command):
       @tailor [bolt] coverage <part...>    - body parts covered (head, larm, torso, lthigh, etc.)
       @tailor [bolt] seethru               - toggle see-through (body/clothes show through this layer)
       @tailor [bolt] altstate              - switch tailoring edits between primary (A) and alternate (B) state
-      @tailor [bolt] finalize              - roll tailoring and turn bolt into wearable clothing
+      @tailor [bolt] finalize              - roll artistry and turn bolt into wearable clothing
       @tailor modify <garment> tail        - add tail accommodation (coverage + desc note)
       @tailor modify <garment> no-tail     - remove tail accommodation
 

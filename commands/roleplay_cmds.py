@@ -1334,10 +1334,12 @@ class CmdNoMatch(Command):
     def func(self):
         raw = (self.args or "").strip()
 
-        # Check for pending rentable-door input (rent code, doorcode menu, open code)
+        # Route through the universal pending-input dispatcher.
+        # All multi-step flows (rent, food wizard, cosmetic, wire, etc.) are
+        # registered in commands.pending_dispatch and checked here in one call.
         try:
-            from commands.rentable_door_cmds import handle_pending_input
-            if handle_pending_input(self.caller, raw):
+            from commands.pending_dispatch import dispatch_pending_input
+            if dispatch_pending_input(self.caller, raw):
                 return
         except Exception:
             pass

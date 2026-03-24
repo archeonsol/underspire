@@ -150,9 +150,16 @@ def _skill_level(character, skill_key):
         trait = handler.get(skill_key)
         if trait is not None:
             return _clamp(int(trait.base or 0), 0, MAX_LEVEL)
+        # Backward-compat: skill key was renamed from "tailoring" -> "artistry".
+        if skill_key == "artistry":
+            legacy_trait = handler.get("tailoring")
+            if legacy_trait is not None:
+                return _clamp(int(legacy_trait.base or 0), 0, MAX_LEVEL)
     # Legacy fallback: raw db.skills dict
     skills = getattr(character.db, "skills", None) or {}
     val = skills.get(skill_key, 0)
+    if skill_key == "artistry" and (val in (None, 0, "0")):
+        val = skills.get("tailoring", 0)
     if isinstance(val, int):
         return _clamp(val, 0, MAX_LEVEL)
     lo, hi = letter_to_level_range(str(val).upper() if val else "U", MAX_LEVEL)

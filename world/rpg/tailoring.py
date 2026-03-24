@@ -1,8 +1,8 @@
 """
 Tailoring system: bolt materials, skill-gated finalization, and clothing quality.
 
-Bolt materials (cloth, silk, satin, velvet) require increasing tailoring skill.
-On finalize, a tailoring roll determines success and the garment's quality adjective
+Bolt materials (cloth, silk, satin, velvet) require increasing artistry skill.
+On finalize, an artistry roll determines success and the garment's quality adjective
 (tacky, cheap, shoddy, makeshift, austere, basic, fashionable, trendy, fancy).
 Quality is stored on the clothing and shown when looking at a character:
 "Their outfit is fancy." (averaged over all worn items).
@@ -34,7 +34,7 @@ QUALITY_TIERS = [
     (100, "luxurious", 100),
 ]
 
-TAILORING_SKILL = "tailoring"
+TAILORING_SKILL = "artistry"
 
 
 def get_material_info(bolt):
@@ -45,7 +45,7 @@ def get_material_info(bolt):
 
 def get_quality_for_result(result):
     """
-    Map a tailoring roll result (int) to (adjective, quality_score 0-100).
+    Map an artistry roll result (int) to (adjective, quality_score 0-100).
     quality_score is used to average outfit quality when displaying "Their outfit is X."
     """
     result = max(0, min(100, int(result)))
@@ -61,7 +61,7 @@ def get_quality_for_result(result):
 
 def roll_tailoring(caller, difficulty=0):
     """
-    Perform a tailoring skill roll. Uses intelligence + charisma per SKILL_STATS.
+    Perform an artistry skill roll. Uses intelligence + charisma per SKILL_STATS.
     Returns (success: bool, result: int, adjective: str, quality_score: int).
     """
     if not hasattr(caller, "roll_check"):
@@ -79,7 +79,7 @@ def roll_tailoring(caller, difficulty=0):
 
 def finalize_bolt_to_clothing(bolt, caller):
     """
-    Check material skill gate, roll tailoring, then convert bolt to Clothing and set quality.
+    Check material skill gate, roll artistry, then convert bolt to Clothing and set quality.
     Returns (clothing_or_None, message_str).
     """
     from typeclasses.clothing import Clothing
@@ -97,7 +97,7 @@ def finalize_bolt_to_clothing(bolt, caller):
     if not success:
         return None, (
             "You work the material but the result falls apart or looks too bad to wear. "
-            "You need more practice with tailoring (or an easier material)."
+            "You need more practice with artistry (or an easier material)."
         )
 
     # Better materials add a bonus to the roll result for quality (same roll, better adjective bias)

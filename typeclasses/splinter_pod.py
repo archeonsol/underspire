@@ -36,7 +36,8 @@ POD_DESC = (
 class SplinterPodInterior(DefaultRoom):
     """
     Interior of a splinter pod. One instance per pod (tag + category = pod id).
-    Plain DefaultRoom so it never adds cmdsets; character's 'done' always works.
+    Plain DefaultRoom so it never adds cmdsets; SplinterPodCmdSet (CmdLeavePod / 'done')
+    is added to characters dynamically when they enter and removed when they leave.
     """
     def at_object_creation(self):
         self.db.desc = INTERIOR_DESC
@@ -54,6 +55,28 @@ class SplinterPodInterior(DefaultRoom):
 
     def get_extra_display_name_info(self, looker=None, **kwargs):
         return ""
+
+    def at_object_receive(self, obj, source_location, **kwargs):
+        """Add SplinterPodCmdSet to a character entering the interior."""
+        try:
+            from typeclasses.characters import Character
+            if not isinstance(obj, Character):
+                return
+            from commands.default_cmdsets import SplinterPodCmdSet
+            obj.cmdset.add(SplinterPodCmdSet, persistent=False)
+        except Exception:
+            pass
+
+    def at_object_leave(self, obj, target_location, **kwargs):
+        """Remove SplinterPodCmdSet from a character leaving the interior."""
+        try:
+            from typeclasses.characters import Character
+            if not isinstance(obj, Character):
+                return
+            from commands.default_cmdsets import SplinterPodCmdSet
+            obj.cmdset.remove(SplinterPodCmdSet)
+        except Exception:
+            pass
 
 
 class SplinterPod(Object):
