@@ -45,6 +45,8 @@ def _lookup_handset_by_matrix_id(matrix_id: str):
     try:
         from world.matrix_ids import lookup_matrix_id
     except Exception:
+        from evennia.utils import logger
+        logger.log_trace("handset_cmds: could not import lookup_matrix_id")
         return None
     obj = lookup_matrix_id(matrix_id)
     if not obj:
@@ -118,6 +120,8 @@ def _unread_notifications(handset) -> int:
             else list(getattr(handset.db, "texts", []) or [])
         )
     except Exception:
+        from evennia.utils import logger
+        logger.log_trace("handset_cmds: failed to read text messages from handset")
         msgs = []
 
     count = 0
@@ -230,6 +234,8 @@ class CmdHandset(Command):
                     snap = snap.replace(name_for_photographer, placeholder)
                 snapshot_chars[str(cid)] = {"sdesc": get_short_desc(char, looker=caller)}
         except Exception:
+            from evennia.utils import logger
+            logger.log_trace("handset_cmds: failed to build character snapshot")
             snapshot_chars = {}
 
         try:

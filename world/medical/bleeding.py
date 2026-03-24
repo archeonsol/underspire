@@ -17,7 +17,8 @@ def get_bleeding_drain_per_tick(character):
     if level == 0:
         return 0
     drain = BLEEDING_DRAIN_PER_TICK[min(level - 1, 3)]
-    has_hemo_reg = any(type(cw).__name__ == "HemostaticRegulator" and not bool(getattr(cw.db, "malfunctioning", False)) for cw in (getattr(character.db, "cyberware", None) or []))
+    from typeclasses.cyberware_catalog import HemostaticRegulator
+    has_hemo_reg = any(isinstance(cw, HemostaticRegulator) and not bool(getattr(cw.db, "malfunctioning", False)) for cw in (getattr(character.db, "cyberware", None) or []))
     if has_hemo_reg:
         drain = max(0, int(round(drain * 0.7)))
     return drain

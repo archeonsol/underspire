@@ -45,12 +45,6 @@ class MatrixExit(Exit):
             super().at_traverse(traversing_object, destination)
             return
 
-        # TODO: Security checks for future implementation
-        # if self.db.security_clearance > 0:
-        #     # Check traversing_object has required clearance
-        #     # Alert ICE if unauthorized
-        #     pass
-
         # Matrix navigation delay - fast but not instant
         # Base delay: 1.0s, reduced by decking skill
         # TODO: When decking skill exists, reduce delay based on skill level

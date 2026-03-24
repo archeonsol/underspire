@@ -85,8 +85,9 @@ class RPGCharacterMixin:
         if stat_name not in ("strength", "agility"):
             return 0
         now = time.time()
+        from typeclasses.cyberware_catalog import AdrenalPump
         for cw in (getattr(self.db, "cyberware", None) or []):
-            if type(cw).__name__ != "AdrenalPump" or bool(getattr(cw.db, "malfunctioning", False)):
+            if not isinstance(cw, AdrenalPump) or bool(getattr(cw.db, "malfunctioning", False)):
                 continue
             active_until = float(getattr(cw.db, "surge_active_until", 0.0) or 0.0)
             crash_until = float(getattr(cw.db, "surge_crash_until", 0.0) or 0.0)

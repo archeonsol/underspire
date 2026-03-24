@@ -100,11 +100,6 @@ class CmdJackOut(Command):
             caller.msg("Error: Cannot locate your physical body.")
             return
 
-        # TODO: Check for combat or other restrictions
-        # if caller.db.in_combat:
-        #     caller.msg("You cannot jack out during combat!")
-        #     return
-
         # Perform clean logout via the rig
         entry_device.disconnect(
             character,

@@ -526,7 +526,9 @@ def view_proxy_status(caller, raw_string, **kwargs):
             text += f"Proxy Router: {proxy_router.key} {online_status}\n"
             text += f"Proxy Location: {proxy_router.location.key if proxy_router.location else 'Unknown'}\n\n"
             text += "Your session origin now routes through this proxy.\n"
-        except:
+        except Exception:
+            from evennia.utils import logger
+            logger.log_trace("matrix_menus: failed to look up proxy router")
             text += "Status: |yProxy tunnel active (router not found)|n\n\n"
             text += "Warning: Proxy router no longer exists.\n\n"
 
@@ -541,7 +543,7 @@ def view_proxy_status(caller, raw_string, **kwargs):
                     from typeclasses.matrix.objects import Router
                     session_router = Router.objects.get(pk=session_router_pk)
                     text += f"Session Origin Router: {session_router.key}\n"
-                except:
+                except Exception:
                     pass
 
     options = (

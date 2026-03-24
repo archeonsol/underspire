@@ -157,7 +157,8 @@ class Account(DefaultAccount):
         try:
             for sess in (self.sessions.get() or []):
                 p = getattr(sess, "puppet", None)
-                if p and type(p).__name__ == "Spirit":
+                from typeclasses.limbo import Spirit
+                if p and isinstance(p, Spirit):
                     return True
         except Exception:
             pass

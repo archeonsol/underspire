@@ -82,8 +82,9 @@ class CmdWield(Command):
             caller.msg("What do you want to wield? Usage: wield <weapon>")
             return
         # Retractable claws lock out manual hand use while deployed.
+        from typeclasses.cyberware_catalog import RetractableClaws
         for cw in (getattr(caller.db, "cyberware", None) or []):
-            if type(cw).__name__ == "RetractableClaws" and bool(getattr(cw.db, "claws_deployed", False)) and not bool(getattr(cw.db, "malfunctioning", False)):
+            if isinstance(cw, RetractableClaws) and bool(getattr(cw.db, "claws_deployed", False)) and not bool(getattr(cw.db, "malfunctioning", False)):
                 caller.msg("Your deployed claws prevent you from holding items. Retract them first.")
                 return
 

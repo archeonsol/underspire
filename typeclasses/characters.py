@@ -553,8 +553,9 @@ class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, F
 
         cleanup_adds_body_parts_on_remove(self, obj, installed)
         # Re-check eye-dependent modules after removals.
+        from typeclasses.cyberware_catalog import TargetingReticle
         for cw in installed:
-            if type(cw).__name__ != "TargetingReticle":
+            if not isinstance(cw, TargetingReticle):
                 continue
             try:
                 if hasattr(cw, "_has_eye_dependency") and not cw._has_eye_dependency(self):

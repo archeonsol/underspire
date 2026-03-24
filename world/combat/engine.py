@@ -96,8 +96,9 @@ def _allowed_attack_indices(skill_level):
 
 
 def _has_deployed_claws(character):
+    from typeclasses.cyberware_catalog import RetractableClaws
     for cw in (getattr(character.db, "cyberware", None) or []):
-        if type(cw).__name__ == "RetractableClaws" and bool(getattr(cw.db, "claws_deployed", False)) and not bool(
+        if isinstance(cw, RetractableClaws) and bool(getattr(cw.db, "claws_deployed", False)) and not bool(
             getattr(cw.db, "malfunctioning", False)
         ):
             return True
