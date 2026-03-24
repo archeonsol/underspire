@@ -742,6 +742,12 @@ def make_permanent_death(character, attacker=None, reason="executed"):
     # We intentionally do not call on_uninstall: the chrome is still in the body.
     corpse_cyberware = list(getattr(character.db, "cyberware", None) or [])
     character.db.cyberware = []
+    # Clear runes — they do not persist through death.
+    try:
+        from world.runes.rune_system import clear_all_runes
+        clear_all_runes(character)
+    except Exception:
+        pass
     # Send each account straight to Death Lobby by puppeting their Spirit (puppet_object
     # unpuppets the current character and puppets the spirit in one go — no OOC stop).
     account_sessions = {}

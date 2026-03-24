@@ -121,6 +121,7 @@ PROTOTYPE_MODULES = [
     "world.prototypes.armor_prototypes",
     "world.prototypes.faction_prototypes",
     "world.prototypes.vehicle_prototypes",
+    "world.prototypes.rune_prototypes",
     "evennia.contrib.grid.xyzgrid.prototypes",
 ]
 

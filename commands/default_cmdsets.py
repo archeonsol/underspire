@@ -186,10 +186,12 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
             CmdApply as CmdApplyCosmetic,
             CmdWipe, CmdColor, CmdColors,
         )
+        from commands.rune_cmds import CmdCarve, CmdIgnite
         from commands.roleplay_cmds import CmdTease, CmdDescribeMeAs, CmdBody, CmdVoice, CmdSmellSet, CmdLanguage, CmdSdesc, CmdPending, CmdLookPlace, CmdTempPlace, CmdSleepPlace, CmdWakeMsg, CmdFlatlineMsg, CmdSetPlace, CmdPose, CmdPronoun, CmdEmote, CmdNoMatch, CmdCount, CmdRecog, CmdMemorize, CmdMemory, CmdSmell
         from commands.skintone_cmd import CmdSkintone
         from commands.roleplay_cmds import CmdSit, CmdLieOnTable, CmdGetOffTable
         from commands.performance_cmds import CmdPerformance
+        from commands.artistry_cmds import CmdArtistry
         from commands.death_cmds import CmdGoOOC, CmdReturnIC, CmdEnterPod, CmdLeavePod, CmdSplinterMe
         from commands.lock_cmds import CmdLock, CmdUnlock
         from commands.vehicle_cmds import (
@@ -322,7 +324,6 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdSever())
         self.add(CmdStats())
         self.add(CmdAttack())
-        self.add(CmdStop())
         self.add(CmdFlee())
         self.add(CmdExecute())
         self.add(CmdStance())
@@ -433,8 +434,11 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdWipe())
         self.add(CmdColor())
         self.add(CmdColors())
+        self.add(CmdCarve())
+        self.add(CmdIgnite())
         self.add(CmdNoMatch())
         self.add(CmdPerformance())
+        self.add(CmdArtistry())
         self.add(CmdExamine())
         self.add(CmdMemorize())
         self.add(CmdMemory())
@@ -658,7 +662,7 @@ class AccountCmdSet(default_cmds.AccountCmdSet):
         self.add(StaffCharDelete())
         from commands.sheet_cmds import CmdStats
         from commands.staff_cmds import CmdNextNote, CmdGmViewNotes
-        from commands.death_cmds import CmdGoLight, CmdGoShard, CmdReturnIC
+        from commands.death_cmds import CmdReturnIC
         from commands.multipuppet_cmds import CmdAddPuppet, CmdPuppetList, CmdPuppetSlot
         from commands.channel_cmds import CmdChannelSub, CmdChannelUnsub, CmdHelpReply, CmdHelp, CmdOocName
         from commands.media_cmds import CmdTuneTelevision, CmdTelevisionApp, CmdLabel
@@ -666,8 +670,6 @@ class AccountCmdSet(default_cmds.AccountCmdSet):
         self.add(CmdStats())
         self.add(CmdNextNote())
         self.add(CmdGmViewNotes())
-        self.add(CmdGoLight())
-        self.add(CmdGoShard())
         self.add(CmdReturnIC())
         self.add(CmdAddPuppet())
         self.add(CmdPuppetList())

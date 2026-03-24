@@ -18,6 +18,7 @@ _HANDLERS: list[tuple[str, str, str]] = [
     ("rentable_door",  "commands.rentable_door_cmds", "handle_pending_input"),
     ("food",           "commands.food_cmds",           "handle_pending_food_input"),
     ("cosmetic",       "commands.cosmetic_cmds",        "handle_pending_cosmetic_input"),
+    ("rune",           "commands.rune_cmds",            "handle_pending_rune_input"),
     ("wire",           "commands.pending_dispatch",     "_handle_pending_wire"),
 ]
 

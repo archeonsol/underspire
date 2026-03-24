@@ -24,8 +24,8 @@ SKILL_KEYS = [
     "medicine",
     "cyber_surgery",
     "alchemy",
+    "occultism",
     "artistry",
-    "performance",
     "diplomacy",
     "scavenging",
 ]
@@ -52,8 +52,8 @@ SKILL_STATS = {
     "medicine": ["intelligence", "perception"],
     "cyber_surgery": ["intelligence", "agility"],
     "alchemy": ["intelligence", "perception"],
+    "occultism": ["perception", "intelligence"],
     "artistry": ["intelligence", "charisma"],
-    "performance": ["charisma", "agility"],
     "diplomacy": ["charisma", "intelligence"],
     "scavenging": ["intelligence", "perception"],
 }
@@ -74,6 +74,40 @@ WEAPON_KEY_TO_SKILL = {
 
 # Defense roll always uses this skill
 DEFENSE_SKILL = "evasion"
+
+# Skill categories for grouped display in @xp and other menus
+SKILL_CATEGORIES = {
+    "Combat": [
+        "unarmed",
+        "short_blades",
+        "long_blades",
+        "blunt_weaponry",
+        "sidearms",
+        "longarms",
+        "automatics",
+        "gunnery",
+        "evasion",
+        "stealth",
+    ],
+    "Technical": [
+        "cyberdecking",
+        "systems_security",
+        "piloting",
+        "driving",
+        "mechanical_engineering",
+        "arms_tech",
+        "electrical_engineering",
+        "medicine",
+        "cyber_surgery",
+        "alchemy",
+    ],
+    "Utility": [
+        "occultism",
+        "artistry",
+        "diplomacy",
+        "scavenging",
+    ],
+}
 
 # Display names for UI / chargen
 SKILL_DISPLAY_NAMES = {
@@ -97,8 +131,8 @@ SKILL_DISPLAY_NAMES = {
     "medicine": "Medicine",
     "cyber_surgery": "Cyber-surgery",
     "alchemy": "Alchemy",
+    "occultism": "Occultism",
     "artistry": "Artistry",
-    "performance": "Performance",
     "diplomacy": "Diplomacy",
     "scavenging": "Scavenging",
 }

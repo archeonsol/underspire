@@ -4,6 +4,26 @@ Player XP commands: @xp to view and spend XP on stats, skills, and languages.
 
 from commands.base_cmds import Command
 
+# ─── Shared helpers ───────────────────────────────────────────────────────────
+
+_BAR_WIDTH = 60  # total width of separator bars
+
+
+def _sep(label="", color="|C"):
+    """Return a full-width separator line, optionally with a centred label."""
+    if label:
+        inner = f" {label} "
+        dashes = _BAR_WIDTH - len(inner)
+        left = dashes // 2
+        right = dashes - left
+        return f"{color}{'─' * left}{inner}{'─' * right}|n"
+    return f"{color}{'─' * _BAR_WIDTH}|n"
+
+
+def _fmt_xp_val(val):
+    """Format an XP value: integer if whole, else 2 dp."""
+    return str(int(val)) if val == int(val) else str(round(val, 2))
+
 
 class CmdXp(Command):
     """
@@ -27,7 +47,6 @@ class CmdXp(Command):
 
     def func(self):
         from world.rpg.xp import (
-            XP_CAP,
             get_xp_cost_stat,
             get_xp_cost_skill,
             xp_cost_for_stat_level,
@@ -43,85 +62,103 @@ class CmdXp(Command):
 
         caller = self.caller
         xp = float(getattr(caller.db, "xp", 0) or 0)
-        cap = int(getattr(caller.db, "xp_cap", XP_CAP) or XP_CAP)
-        language_xp_spent = float(getattr(caller.db, "xp_spent_on_languages", 0) or 0)
-        effective_cap = cap + language_xp_spent
 
         if not self.args or self.args.strip().lower() in ("show", ""):
-            # Column widths for aligned display (match chargen)
-            NAME_W, LETTER_W, ADJ_W = 24, 5, 20
-            xp_display = int(xp) if xp == int(xp) else round(xp, 2)
-            cap_display = int(effective_cap) if effective_cap == int(effective_cap) else round(effective_cap, 2)
-            output = "|cXP|n: |w{}|n (cap |w{}|n)".format(xp_display, cap_display)
-            if xp >= effective_cap:
-                output += " |x(you are at your XP cap; you will not gain more time-based XP until this cap is raised)|n"
-            output += "\n\n"
-            output += "|cXP needed for next raise:|n\n\n"
-            output += "|wStats|n:\n"
-            for sk in STAT_KEYS:
-                cost, _ = get_xp_cost_stat(caller, sk)
-                letter = get_stat_grade(_stat_level(caller, sk))
-                adj = caller.get_stat_grade_adjective(letter, sk)
-                name_pad = sk.capitalize().ljust(NAME_W)
-                letter_part = ("[" + letter + "] ").ljust(LETTER_W)
-                adj_pad = adj.ljust(ADJ_W)
-                if cost is None:
-                    output += "  {} {} {} |x(at cap)|n\n".format(name_pad, letter_part, adj_pad)
-                else:
-                    cost_str = str(int(cost)) if cost == int(cost) else str(round(cost, 2))
-                    output += "  {} {} {} next raise: |w{} XP|n\n".format(
-                        name_pad, letter_part, adj_pad, cost_str
-                    )
-            output += "\n|wSkills|n:\n"
-            for sk in SKILL_KEYS:
-                cost, _ = get_xp_cost_skill(caller, sk)
-                letter = get_skill_grade(_skill_level(caller, sk))
-                adj = caller.get_skill_grade_adjective(letter)
-                label = SKILL_DISPLAY_NAMES.get(sk, sk.replace("_", " ").title())
-                name_pad = label.ljust(NAME_W)
-                letter_part = ("[" + letter + "] ").ljust(LETTER_W)
-                adj_pad = adj.ljust(ADJ_W)
-                if cost is None:
-                    output += "  {} {} {} |x(at cap)|n\n".format(name_pad, letter_part, adj_pad)
-                else:
-                    cost_str = str(int(cost)) if cost == int(cost) else str(round(cost, 2))
-                    output += "  {} {} {} next raise: |w{} XP|n\n".format(
-                        name_pad, letter_part, adj_pad, cost_str
-                    )
-            # Languages: 0-400% per language (basic/learning/fluent/native). Costs XP to improve; exact gains are hidden.
             from world.rpg.language import (
                 LEARNABLE_LANGUAGE_KEYS,
                 get_language_percent,
                 get_language_level_name,
                 max_other_languages,
-                language_xp_percent_gain,
                 LANGUAGE_MAX_PERCENT,
             )
+            from world.skills import SKILL_CATEGORIES
 
-            output += "\n|wLanguages|n:\n"
+            NAME_W, LETTER_W, ADJ_W = 22, 5, 18
+            lines = []
+
+            # ── Header ──────────────────────────────────────────────────────
+            lines.append(_sep("EXPERIENCE", "|C"))
+            lines.append("  |cXP|n  |w{}|n".format(_fmt_xp_val(xp)))
+            lines.append("")
+
+            # ── Stats ────────────────────────────────────────────────────────
+            lines.append(_sep("STATS", "|C"))
+            for sk in STAT_KEYS:
+                cost, _ = get_xp_cost_stat(caller, sk)
+                letter = get_stat_grade(_stat_level(caller, sk))
+                adj = caller.get_stat_grade_adjective(letter, sk)
+                name_pad = sk.capitalize().ljust(NAME_W)
+                letter_part = ("|y[" + letter + "]|n ").ljust(LETTER_W + 8)
+                adj_pad = adj.ljust(ADJ_W)
+                if cost is None:
+                    lines.append("  {} {} {} |x── at cap|n".format(name_pad, letter_part, adj_pad))
+                else:
+                    lines.append(
+                        "  {} {} {} |x→|n |w{} XP|n".format(
+                            name_pad, letter_part, adj_pad, _fmt_xp_val(cost)
+                        )
+                    )
+            lines.append("")
+
+            # ── Skills (grouped) ─────────────────────────────────────────────
+            lines.append(_sep("SKILLS", "|C"))
+            for cat_name, cat_keys in SKILL_CATEGORIES.items():
+                lines.append("  |c{}|n".format(cat_name.upper()))
+                for sk in cat_keys:
+                    cost, _ = get_xp_cost_skill(caller, sk)
+                    letter = get_skill_grade(_skill_level(caller, sk))
+                    adj = caller.get_skill_grade_adjective(letter)
+                    label = SKILL_DISPLAY_NAMES.get(sk, sk.replace("_", " ").title())
+                    name_pad = label.ljust(NAME_W)
+                    letter_part = ("|y[" + letter + "]|n ").ljust(LETTER_W + 8)
+                    adj_pad = adj.ljust(ADJ_W)
+                    if cost is None:
+                        lines.append(
+                            "    {} {} {} |x── at cap|n".format(name_pad, letter_part, adj_pad)
+                        )
+                    else:
+                        lines.append(
+                            "    {} {} {} |x→|n |w{} XP|n".format(
+                                name_pad, letter_part, adj_pad, _fmt_xp_val(cost)
+                            )
+                        )
+                lines.append("")
+
+            # ── Languages ────────────────────────────────────────────────────
+            lines.append(_sep("LANGUAGES", "|C"))
             max_slots = max_other_languages(caller)
             learned = [k for k in LEARNABLE_LANGUAGE_KEYS if get_language_percent(caller, k) > 0]
             slots_used = len(learned)
-            output += "  English (native). Slots: |w{}|n/|w{}|n other languages.\n".format(slots_used, max_slots)
-            for lang_key in LEARNABLE_LANGUAGE_KEYS:
-                pct = get_language_percent(caller, lang_key)
-                level_name = get_language_level_name(pct)
-                label = lang_key.replace("_", " ").title()
-                if pct >= LANGUAGE_MAX_PERCENT:
-                    output += "  {} {} (native) |x(at cap)|n\n".format(label.ljust(NAME_W), level_name)
-                elif lang_key in learned or pct > 0:
-                    output += "  {} {} |w(you have some grasp of this language)|n\n".format(
-                        label.ljust(NAME_W), level_name
-                    )
-                else:
-                    output += "  {} |x(not learned yet)|n\n".format(
-                        label.ljust(NAME_W)
-                    )
-            output += (
-                "\nUse |w@xp advance stat <name> [N]|n, |w@xp advance skill <name> [N]|n, "
-                "or |w@xp advance language <name> [N]|n to spend XP. Confirm with |w@xp confirm|n."
+            slot_color = "|g" if slots_used < max_slots else "|y"
+            lines.append(
+                "  |wEnglish|n (native)  ·  Slots: {}{}/{}|n used".format(
+                    slot_color, slots_used, max_slots
+                )
             )
-            caller.msg(output)
+            for lang_key in LEARNABLE_LANGUAGE_KEYS:
+                pct_lang = get_language_percent(caller, lang_key)
+                level_name = get_language_level_name(pct_lang)
+                label = lang_key.replace("_", " ").title()
+                name_pad = label.ljust(NAME_W)
+                if pct_lang >= LANGUAGE_MAX_PERCENT:
+                    lines.append("  {} |w{}|n |x── at cap|n".format(name_pad, level_name))
+                elif pct_lang > 0:
+                    lines.append("  {} |w{}|n".format(name_pad, level_name))
+                else:
+                    lines.append("  {} |x(not learned)|n".format(name_pad))
+            lines.append("")
+
+            # ── Footer ───────────────────────────────────────────────────────
+            lines.append(_sep(color="|x"))
+            lines.append(
+                "  |x@xp advance stat|n |w<name> [N]|n  "
+                "|x@xp advance skill|n |w<name> [N]|n  "
+                "|x@xp advance language|n |w<name> [N]|n"
+            )
+            lines.append("  Confirm with |w@xp confirm|n · Cancel with |w@xp cancel|n")
+            lines.append(_sep(color="|x"))
+
+            caller.msg("\n".join(lines))
             return
 
         parts = self.args.strip().split()
@@ -242,6 +279,14 @@ class CmdXp(Command):
                             msg += " You reached your cap; {} XP remains.".format(rem_str)
                         caller.msg(msg)
                         del caller.db.pending_xp_advance
+                        if sub == "skill" and attr_key == "artistry":
+                            from world.rpg.artistry_specialization import (
+                                needs_artistry_specialization_choice,
+                                open_artistry_specialization_menu,
+                            )
+
+                            if needs_artistry_specialization_choice(caller):
+                                open_artistry_specialization_menu(caller)
             return
 
         if parts and parts[0].lower() == "cancel":

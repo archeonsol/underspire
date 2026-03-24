@@ -13,6 +13,7 @@ import re
 import time
 
 from world.cosmetics import COLOR_SURVIVAL_CHANCE, resolve_tattoo_quality_from_score
+from world.rpg.artistry_specialization import SPECIALIZATION_VISUAL, get_specialization_roll_bonus
 
 
 # ── RP messages broadcast during the 8-second tattooing delay ────────────
@@ -135,8 +136,9 @@ def apply_tattoo(artist, target, body_part, tattoo_text, inkwriter):
         return False, "", "Tattoo text too long. Maximum 300 characters."
 
     inkwriter_tier = int(getattr(inkwriter.db, "inkwriter_tier", 1) or 1)
+    spec_mod = get_specialization_roll_bonus(artist, SPECIALIZATION_VISUAL)
     _, final_score = artist.roll_check(
-        ["agility", "charisma"], "artistry", difficulty=10
+        ["agility", "charisma"], "artistry", difficulty=10, modifier=spec_mod
     )
 
     quality = resolve_tattoo_quality_from_score(final_score, inkwriter_tier)
@@ -186,8 +188,9 @@ def remove_tattoo(artist, target, body_part, tattoo_index, inkwriter):
     if tattoo_index < 0 or tattoo_index >= len(part_tattoos):
         return False, "Invalid tattoo number."
 
+    spec_mod = get_specialization_roll_bonus(artist, SPECIALIZATION_VISUAL)
     _, final_score = artist.roll_check(
-        ["agility", "charisma"], "artistry", difficulty=15
+        ["agility", "charisma"], "artistry", difficulty=15, modifier=spec_mod
     )
 
     selected = part_tattoos[tattoo_index]

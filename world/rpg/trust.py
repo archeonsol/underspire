@@ -52,6 +52,11 @@ TRUST_CATEGORIES = {
         "desc": "Allow this person to tattoo or brand you.",
         "systems": ["tattoo", "body_modification"],
     },
+    "runecarve": {
+        "key": "runecarve",
+        "desc": "Allow this person to carve spiritual runes onto your body.",
+        "systems": ["rune_carving"],
+    },
     "feed": {
         "key": "feed",
         "desc": "Allow this person to force-feed you food, drink, or drugs.",

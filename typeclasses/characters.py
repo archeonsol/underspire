@@ -317,6 +317,8 @@ class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, F
         # Cyberware body description overrides — managed by CyberwareBase, not user-editable
         self.db.locked_descriptions = {}   # {part: text} — replaces user naked entirely
         self.db.appended_descriptions = {}  # {part: {typeclass_path: text}} — appended after user naked
+        # Carved runes: {rune_key: {body_part, description, color_code, applied_at, settled, current_buff_value, artist_id, artist_name}}
+        self.db.runes = {}
         # Skin tone (xterm256); set once via @skintone or chargen — colors IC name + biological body text
         self.db.skin_tone = None
         self.db.skin_tone_code = None
@@ -451,6 +453,12 @@ class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, F
             reconcile_active_drugs_after_reload(self)
         except Exception as err:
             logger.log_trace(f"characters.at_server_start reconcile_active_drugs: {err}")
+        try:
+            from world.runes.rune_system import reapply_rune_buffs
+
+            reapply_rune_buffs(self)
+        except Exception as err:
+            logger.log_trace(f"characters.at_server_start reapply_rune_buffs: {err}")
 
     def install_cyberware(self, cyberware_obj, skip_surgery=False):
         """
@@ -844,6 +852,20 @@ class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, F
                     self.location.msg_contents(msg, exclude=[self])
             except Exception as err:
                 logger.log_trace("characters.at_post_puppet wake_up_message: %s" % err)
+
+        try:
+            from world.rpg.artistry_specialization import (
+                needs_artistry_specialization_choice,
+                open_artistry_specialization_menu,
+            )
+
+            if needs_artistry_specialization_choice(self) and not getattr(
+                self.ndb, "artistry_spec_menu_prompted_session", False
+            ):
+                self.ndb.artistry_spec_menu_prompted_session = True
+                open_artistry_specialization_menu(self)
+        except Exception as err:
+            logger.log_trace("characters.at_post_puppet artistry_specialization: %s" % err)
 
     def at_post_unpuppet(self, account=None, session=None, **kwargs):
         """

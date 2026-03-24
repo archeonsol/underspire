@@ -9,6 +9,7 @@ Quality is stored on the clothing and shown when looking at a character:
 """
 from world.skills import SKILL_STATS
 from world.clothing import infer_clothing_layer
+from world.rpg.artistry_specialization import SPECIALIZATION_TAILORING, get_specialization_roll_bonus
 
 # Bolt material types: key = material_type on bolt, display name, min skill, roll difficulty, quality_bonus (added to roll for adjective)
 BOLT_MATERIALS = {
@@ -70,7 +71,10 @@ def roll_tailoring(caller, difficulty=0):
     # roll_check formula: random(0, skill) + sum(stats) + modifier - difficulty.
     # Pass difficulty once via the difficulty kwarg only; do not also pass modifier=-difficulty
     # or the penalty is applied twice.
-    outcome, result = caller.roll_check(stats, TAILORING_SKILL, difficulty=difficulty)
+    spec_mod = get_specialization_roll_bonus(caller, SPECIALIZATION_TAILORING)
+    outcome, result = caller.roll_check(
+        stats, TAILORING_SKILL, difficulty=difficulty, modifier=spec_mod
+    )
     # result is the final_result from roll_check (effective_roll + strength_bonus + modifier - difficulty)
     adjective, quality_score = get_quality_for_result(result)
     success = outcome in ("Critical Success", "Full Success", "Marginal Success")
@@ -88,6 +92,7 @@ def finalize_bolt_to_clothing(bolt, caller):
     min_skill = material["min_skill"]
     difficulty = material["difficulty"]
     skill_level = getattr(caller, "get_skill_level", lambda s: 0)(TAILORING_SKILL)
+    skill_level += get_specialization_roll_bonus(caller, SPECIALIZATION_TAILORING)
 
     if skill_level < min_skill:
         return None, "You lack the skill to work with this material."
