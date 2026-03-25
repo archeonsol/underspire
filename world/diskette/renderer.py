@@ -1,17 +1,17 @@
 """
 Diskette — ASCII board renderer.
 
-Board layout (columns 1-6 left-to-right, rows A-F top-to-bottom):
+Board layout (columns 1-5 left-to-right, rows A-E top-to-bottom):
 
-     1   2   3   4   5   6
-   ┌───────────────────────┐
- A │|_|                   │
-   │   ·   ·   ·   ·   ·   │
- B │                       │
-   │   ·   ·   ·   ·   ·   │
+     1   2   3   4   5
+   ┌───────────────────┐
+ A │[_]               │
+   │   ·   ·   ·   ·   │
+ B │                   │
+   │   ·   ·   ·   ·   │
  ...
- F │                   (_)│
-   └───────────────────────┘
+ E │               ( )│
+   └───────────────────┘
 
 Symbols (3 chars each):
   [_]  — player 1, unarmed (disc in flight)
@@ -24,14 +24,14 @@ Symbols (3 chars each):
 """
 from world.diskette.physics import DisketteBoard
 
-_ROW_LABELS = "ABCDEF"
-_COL_LABELS = "123456"
+_ROW_LABELS = "ABCDE"
+_COL_LABELS = "12345"
 
-# Interior: 6 cells × 3 chars + 5 separators = 23 chars
-_BORDER_TOP    = "   ┌───────────────────────┐"
-_BORDER_BOTTOM = "   └───────────────────────┘"
-_SEPARATOR_ROW = "   │   ·   ·   ·   ·   ·   │"
-_COL_HEADER    = "     1   2   3   4   5   6"
+# Interior: 5 cells × 3 chars + 4 separators = 19 chars
+_BORDER_TOP    = "   ┌───────────────────┐"
+_BORDER_BOTTOM = "   └───────────────────┘"
+_SEPARATOR_ROW = "   │   ·   ·   ·   ·   │"
+_COL_HEADER    = "     1   2   3   4   5"
 
 
 def _build_row(cells: list[str]) -> str:
@@ -53,10 +53,10 @@ def render_board(board: DisketteBoard, scores: dict = None, round_num: int = Non
 
     lines = [_COL_HEADER, _BORDER_TOP]
 
-    for ry in range(6):
+    for ry in range(5):
         row_label = _ROW_LABELS[ry]
         cells = []
-        for cx in range(6):
+        for cx in range(5):
             tile = (cx, ry)
 
             p1_here = pos1 == tile
@@ -83,7 +83,7 @@ def render_board(board: DisketteBoard, scores: dict = None, round_num: int = Non
         lines.append(f" {row_label} │{content}│")
 
         # Separator after every row except the last
-        if ry < 5:
+        if ry < 4:
             lines.append(_SEPARATOR_ROW)
 
     lines.append(_BORDER_BOTTOM)

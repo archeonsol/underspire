@@ -1,7 +1,7 @@
 """
 Diskette — disc physics.
 
-Grid: columns A–F (x 0–5), rows 1–6 (y 0–5).
+Grid: columns A–E (x 0–4), rows 1–5 (y 0–4).
 Tile notation: "B3" → col=1, row=2.
 
 Resolution order per turn:
@@ -20,8 +20,8 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass, field
 
-COLS = "ABCDEF"   # index = x
-ROWS = "123456"   # index = y
+COLS = "ABCDE"   # index = x
+ROWS = "12345"   # index = y
 
 DIRS = {
     "N":  (0, -1),
@@ -36,7 +36,7 @@ DIRS = {
 
 # Starting positions: (col_idx, row_idx)
 START_P1 = (1, 0)   # B1
-START_P2 = (4, 5)   # E6
+START_P2 = (3, 4)   # D5
 
 
 def tile_name(col: int, row: int) -> str:
@@ -51,7 +51,7 @@ def parse_tile(name: str):
 
 
 def in_bounds(col: int, row: int) -> bool:
-    return 0 <= col <= 5 and 0 <= row <= 5
+    return 0 <= col <= 4 and 0 <= row <= 4
 
 
 def raw_step(pos: tuple, heading: tuple) -> tuple:
@@ -71,21 +71,21 @@ def apply_edge_bounce(pos: tuple, heading: tuple) -> tuple[tuple, tuple, str | N
     col, row = pos
     dx, dy = heading
 
-    out_x = not (0 <= col <= 5)
-    out_y = not (0 <= row <= 5)
+    out_x = not (0 <= col <= 4)
+    out_y = not (0 <= row <= 4)
 
     if out_x and out_y:
         wall = "corner"
-        col = max(0, min(5, col))
-        row = max(0, min(5, row))
+        col = max(0, min(4, col))
+        row = max(0, min(4, row))
         return (col, row), (-dx, -dy), wall
     if out_x:
         wall = "west wall" if col < 0 else "east wall"
-        col = max(0, min(5, col))
+        col = max(0, min(4, col))
         return (col, row), (-dx, dy), wall
     if out_y:
         wall = "north wall" if row < 0 else "south wall"
-        row = max(0, min(5, row))
+        row = max(0, min(4, row))
         return (col, row), (dx, -dy), wall
     return pos, heading, None
 
@@ -182,18 +182,34 @@ class DisketteBoard:
                 else:
                     result.narrative.append(f"{player.key} tries to move {dname} but the wall stops them.")
 
-        # Collision: both players end up on the same tile → random winner
+        # Collision: both players end up on the same tile
+        # Stationary player always wins; random only when both are moving.
         def dest(pid):
             return intended[pid][:2] if pid in intended else self.positions[pid]
 
         if dest(p1.id) == dest(p2.id):
-            winner, loser = random.choice([(p1, p2), (p2, p1)])
+            p1_moving = p1.id in intended
+            p2_moving = p2.id in intended
+            if p1_moving and not p2_moving:
+                winner, loser = p2, p1
+            elif p2_moving and not p1_moving:
+                winner, loser = p1, p2
+            else:
+                winner, loser = random.choice([(p1, p2), (p2, p1)])
             intended.pop(loser.id, None)
-            flavor = random.choice([
-                f"body-checks {loser.key} out of the way",
-                f"bullies {loser.key} back",
-                f"shoulder-checks {loser.key} aside",
-            ])
+            both_were_moving = p1_moving and p2_moving
+            if both_were_moving:
+                flavor = random.choice([
+                    f"body-checks {loser.key} out of the way",
+                    f"bullies {loser.key} back",
+                    f"shoulder-checks {loser.key} aside",
+                ])
+            else:
+                flavor = random.choice([
+                    f"holds their ground against {loser.key}",
+                    f"plants their feet and blocks {loser.key}",
+                    f"refuses to budge for {loser.key}",
+                ])
             result.narrative.append(f"{winner.key} {flavor}!")
 
         for player in self.players:
