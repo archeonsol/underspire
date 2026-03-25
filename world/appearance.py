@@ -216,6 +216,28 @@ def get_effective_body_descriptions(character):
             if part in result and not getattr(item.db, "see_thru", False):
                 result[part] = desc
 
+    # Layer 6: Tattoos — permanent marks appended after clothing
+    try:
+        from world.cosmetics.tattoos import get_tattoo_display_for_part
+        for part in list(result.keys()):
+            tattoo_text = get_tattoo_display_for_part(character, part)
+            if tattoo_text:
+                existing = result[part]
+                result[part] = (existing + " " + tattoo_text).strip() if existing else tattoo_text
+    except Exception:
+        pass
+
+    # Layer 7: Makeup — temporary surface cosmetics appended last
+    try:
+        from world.cosmetics.makeup import get_makeup_display_for_part
+        for part in list(result.keys()):
+            makeup_text = get_makeup_display_for_part(character, part)
+            if makeup_text:
+                existing = result[part]
+                result[part] = (existing + " " + makeup_text).strip() if existing else makeup_text
+    except Exception:
+        pass
+
     return result
 
 

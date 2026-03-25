@@ -236,6 +236,14 @@ def _is_bed(obj):
         return False
 
 
+def _is_station_fixture(obj):
+    """
+    True for bar/kitchenette fixtures that should render in furniture/status lines.
+    """
+    stype = getattr(getattr(obj, "db", None), "station_type", None)
+    return stype in ("bar", "kitchenette")
+
+
 class Room(MatrixIdMixin, ObjectParent, DefaultRoom):
     """
     Rooms are like any Object, except their location is None
@@ -664,6 +672,9 @@ class Room(MatrixIdMixin, ObjectParent, DefaultRoom):
             # Seats/beds - skip here, handled in furniture section
             if _is_seat(obj) or _is_bed(obj):
                 continue
+            # Station fixtures (bar/kitchenette) - skip here, handled in furniture section
+            if _is_station_fixture(obj):
+                continue
             room_pose = getattr(obj.db, "room_pose", None)
             if room_pose:
                 pose = (room_pose or "").strip().rstrip(".")
@@ -990,6 +1001,17 @@ class Room(MatrixIdMixin, ObjectParent, DefaultRoom):
 
             # Let the furniture object handle its own display
             if hasattr(obj, 'get_room_appearance'):
+                appearance = obj.get_room_appearance(looker, **kwargs)
+                if appearance:
+                    lines.append(appearance)
+
+        # Station fixtures (bars/kitchenettes): same status-line section as furniture.
+        for obj in self.contents:
+            if not _is_station_fixture(obj):
+                continue
+            if not self.filter_visible([obj], looker, **kwargs):
+                continue
+            if hasattr(obj, "get_room_appearance"):
                 appearance = obj.get_room_appearance(looker, **kwargs)
                 if appearance:
                     lines.append(appearance)

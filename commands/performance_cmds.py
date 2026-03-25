@@ -4,7 +4,7 @@ Performance commands: performance compose (EvEditor), performance play/stop.
 Compose: 'performance compose <name>' opens EvEditor; on save, buffer is split by newlines
 and stored as a list of pose lines (pose system supported). Only that character can use it.
 
-Play: 'performance play <name> with <instrument>' requires an instrument item, rolls performance
+Play: 'performance play <name> with <instrument>' requires an instrument item, rolls artistry
 (ceiling) + charisma (strength), then runs each line as a pose every ~15s, followed by crowd reactions.
 'performance stop' cancels the running performance.
 
@@ -18,22 +18,24 @@ from commands.base_cmds import Command
 from evennia.utils import delay
 from evennia.utils.eveditor import EvEditor
 
-PERFORMANCE_SKILL = "performance"
+from world.rpg.artistry_specialization import SPECIALIZATION_STAGE, get_specialization_roll_bonus
+
+ARTISTRY_SKILL = "artistry"
 PERFORMANCE_DELAY_SECONDS = 15  # minimum seconds between performance lines
 COMPOSITION_SLOTS_MIN = 5
-# Max compositions = COMPOSITION_SLOTS_MIN + 1 per 10 performance skill (skill 0–150)
+# Max compositions = COMPOSITION_SLOTS_MIN + 1 per 10 artistry skill (skill 0–150)
 COMPOSITION_SLOTS_PER_SKILL = 10
-# Max lines per composition: 25 at skill 0, up to 50 at higher Performance skill
+# Max lines per composition: 25 at skill 0, up to 50 at higher Artistry skill
 COMPOSITION_LINES_MIN = 25
 COMPOSITION_LINES_MAX = 50
 COMPOSITION_LINES_SKILL_DIVISOR = 6  # 25 + skill//6 -> 25 at 0, 50 at 150
 
 
 def _get_max_compositions(caller):
-    """Return max number of compositions this character can have (min 5, scales with Performance skill)."""
+    """Return max number of compositions this character can have (min 5, scales with Artistry skill)."""
     if not hasattr(caller, "get_skill_level"):
         return COMPOSITION_SLOTS_MIN
-    skill = caller.get_skill_level(PERFORMANCE_SKILL) or 0
+    skill = caller.get_skill_level(ARTISTRY_SKILL) or 0
     return max(COMPOSITION_SLOTS_MIN, COMPOSITION_SLOTS_MIN + int(skill) // COMPOSITION_SLOTS_PER_SKILL)
 
 
@@ -41,7 +43,7 @@ def _get_max_composition_lines(caller):
     """Return max lines allowed per composition (25 at low skill, up to 50)."""
     if not hasattr(caller, "get_skill_level"):
         return COMPOSITION_LINES_MIN
-    skill = caller.get_skill_level(PERFORMANCE_SKILL) or 0
+    skill = caller.get_skill_level(ARTISTRY_SKILL) or 0
     return min(COMPOSITION_LINES_MAX, COMPOSITION_LINES_MIN + int(skill) // COMPOSITION_LINES_SKILL_DIVISOR)
 
 
@@ -289,7 +291,7 @@ def _open_compose_editor(caller, title):
     compositions = getattr(caller.db, "compositions", None) or {}
     max_slots = _get_max_compositions(caller)
     if normalized not in compositions and len(compositions) >= max_slots:
-        caller.msg("You can only store %s composition(s) (based on your Performance skill). Use |wperformance list|n to see yours." % max_slots)
+        caller.msg("You can only store %s composition(s) (based on your Artistry skill). Use |wperformance list|n to see yours." % max_slots)
         return
 
     def loadfunc(caller):
@@ -304,7 +306,7 @@ def _open_compose_editor(caller, title):
         comps = dict(getattr(caller.db, "compositions", None) or {})
         is_new = normalized not in comps
         if is_new and len(comps) >= _get_max_compositions(caller):
-            caller.msg("You've reached your composition limit. Raise your Performance skill to store more.")
+            caller.msg("You've reached your composition limit. Raise your Artistry skill to store more.")
             return False
         raw_lines = (buffer or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
         lines = [ln.strip() for ln in raw_lines if ln.strip()]
@@ -328,7 +330,7 @@ class CmdPerformance(Command):
     Compose a set piece, play it with a guitar, or improvise live.
 
     Usage:
-      performance list                   - show your stored compositions (limit based on Performance skill)
+      performance list                   - show your stored compositions (limit based on Artistry skill)
       performance compose <name>         - write a new performance in the editor (one pose per line)
       performance edit <name>            - edit an existing stored performance
       performance delete <name>          - remove a stored composition
@@ -447,7 +449,10 @@ class CmdPerformance(Command):
             # Improvise is harder than a rehearsed performance: apply a hidden penalty to the roll
             # and do not fire a big success/failure audience echo before the first pose.
             if hasattr(caller, "roll_check"):
-                outcome, result = caller.roll_check(["charisma"], PERFORMANCE_SKILL, modifier=-10)
+                spec_mod = get_specialization_roll_bonus(caller, SPECIALIZATION_STAGE)
+                outcome, result = caller.roll_check(
+                    ["charisma"], ARTISTRY_SKILL, modifier=-10 + spec_mod
+                )
                 caller.ndb.performance_outcome = outcome
                 caller.ndb.performance_result = result
             caller.ndb.performance_improvising = True
@@ -488,13 +493,11 @@ class CmdPerformance(Command):
         if not hasattr(caller, "roll_check"):
             caller.msg("You cannot perform right now.")
             return
-        
-        if hasattr(caller, "roll_check"):
-            outcome, result = caller.roll_check(["charisma"], PERFORMANCE_SKILL)
-            
-            # Save the roll to the character so the ticker can use it
-            caller.ndb.performance_outcome = outcome
-            caller.ndb.performance_result = result
+
+        spec_mod = get_specialization_roll_bonus(caller, SPECIALIZATION_STAGE)
+        outcome, result = caller.roll_check(["charisma"], ARTISTRY_SKILL, modifier=spec_mod)
+        caller.ndb.performance_outcome = outcome
+        caller.ndb.performance_result = result
 
         caller.ndb.performance_lines = list(lines)
         caller.ndb.performance_room_id = caller.location.id if caller.location else None

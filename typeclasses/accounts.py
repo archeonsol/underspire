@@ -25,7 +25,7 @@ several more options for customizing the Guest account system.
 from evennia.accounts.accounts import DefaultAccount, DefaultGuest
 
 
-def _auto_subscribe_help_channel(account):
+def _auto_subscribe_assist_channel(account):
     """Subscribe account to Assist (xassist) only. Mandatory so staff can reach them; players only see their own messages and staff's private replies."""
     try:
         from evennia import search_channel
@@ -185,8 +185,8 @@ class Account(DefaultAccount):
             session.msg(logged_in={})
         self._send_to_connect_channel("|G{key} connected|n".format(key=self.key))
 
-        # Mandatory subscribe to Help (xhelp) so staff can reply; players only see their own messages and staff's private xhelp/Name replies
-        _auto_subscribe_help_channel(self)
+        # Mandatory subscribe to Assist (xassist) so staff can reply; players only see their own messages and staff's private replies.
+        _auto_subscribe_assist_channel(self)
 
         # Character selection logic:
         # - If exactly one character and it still needs chargen -> auto-puppet into chargen.
@@ -205,8 +205,10 @@ class Account(DefaultAccount):
                 char.db._suppress_become_message = True
                 self.puppet_object(session, char)
                 return
-            except Exception:
-                pass
+            except Exception as err:
+                from evennia.utils import logger
+                logger.log_trace("accounts.at_post_login puppet_object: %s" % err)
+                # Fall through to Soul Registry so the player is not left in limbo.
 
         from world.main_menu import start_main_menu
         start_main_menu(self)
@@ -236,7 +238,9 @@ class Account(DefaultAccount):
             if self not in senders and not self.permissions.check("Builder"):
                 return None  # abort receive for this recipient
         # OOC-Chat: show account OOC display name, not character name
-        if chan_key == "OOC-Chat" and senders:
+        if chan_key == "OOC-Chat":
+            if not senders:
+                return super().at_pre_channel_msg(message, channel, senders=senders, **kwargs)
             sender_string = ", ".join(
                 (getattr(s, "db", None) and getattr(s.db, "ooc_display_name", None)) or getattr(s, "key", str(s))
                 for s in senders

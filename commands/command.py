@@ -100,7 +100,6 @@ from commands.lock_cmds import CmdLock, CmdUnlock
 # vehicle_cmds
 from commands.vehicle_cmds import (
     _get_vehicle_from_caller,
-    CmdEnterVehicle,
     CmdExitVehicle,
     CmdMount,
     CmdDismount,
@@ -325,6 +324,7 @@ __all__ = [
     "CmdRepairArmor",
     "CmdEat",
     "CmdDrink",
+    "CmdEnterDisketteArena",
     "CmdEnterVehicle",
     "CmdExitVehicle",
     "CmdMount",

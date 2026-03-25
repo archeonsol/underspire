@@ -133,6 +133,12 @@ def do_rent(character, exit_obj) -> tuple[bool, str]:
     exit_obj.db.door_open = False
     exit_obj.db.door_locked = True
     sync_door_pair(exit_obj, False)
+    # Sync kitchenette ownership to new tenant
+    try:
+        from world.food.stations import sync_kitchenette_ownership
+        sync_kitchenette_ownership(character, exit_obj)
+    except Exception:
+        pass
     return True, "ok"
 
 
@@ -164,6 +170,12 @@ def do_vacate(exit_obj):
     exit_obj.db.door_open = False
     exit_obj.db.door_locked = True
     sync_door_pair(exit_obj, False)
+    # Clear kitchenette ownership when tenant vacates
+    try:
+        from world.food.stations import clear_kitchenette_ownership
+        clear_kitchenette_ownership(exit_obj)
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------

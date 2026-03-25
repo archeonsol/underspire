@@ -6,6 +6,7 @@ creatureset, despawn, npc, makenpc, npcset, @goto, @gotoroom, @summon,
 debugkill, emotedebug, damagevehicle, @climate, @grantscript. CmdPending imported from roleplay_cmds.
 """
 
+import time
 from datetime import datetime
 
 from commands.base_cmds import Command, ADMIN_LOCK
@@ -114,12 +115,17 @@ class CmdStaffSetStat(Command):
         if not target or not hasattr(target, "db"):
             return
         from world.rpg.chargen import STAT_KEYS
-        stat_key = None
-        for s in STAT_KEYS:
-            if s.startswith(parts[1].lower()) or parts[1].lower() == s:
-                stat_key = s
-                break
-        if not stat_key:
+        input_stat = parts[1].lower()
+        exact = [s for s in STAT_KEYS if s == input_stat]
+        prefix = [s for s in STAT_KEYS if s.startswith(input_stat)]
+        if exact:
+            stat_key = exact[0]
+        elif len(prefix) == 1:
+            stat_key = prefix[0]
+        elif len(prefix) > 1:
+            caller.msg("Ambiguous stat '{}'. Did you mean: {}?".format(input_stat, ", ".join(prefix)))
+            return
+        else:
             caller.msg("Unknown stat. Use one of: {}.".format(", ".join(STAT_KEYS)))
             return
         try:
@@ -263,7 +269,7 @@ class CmdGoto(Command):
         if not loc:
             caller.msg("That character has no location.")
             return
-        caller.move_to(loc)
+        caller.move_to(loc, quiet=True, move_type="teleport")
         caller.msg("|gYou go to {}.|n".format(target.name))
 
 
@@ -327,7 +333,7 @@ class CmdSummon(Command):
         if not dest:
             caller.msg("You have no location.")
             return
-        target.move_to(dest)
+        target.move_to(dest, quiet=True, move_type="teleport")
         caller.msg("|gYou summon {} here.|n".format(target.name))
         target.msg("|yYou have been summoned to {}.|n".format(caller.get_display_name(target) if hasattr(caller, "get_display_name") else caller.name))
 
@@ -394,7 +400,7 @@ class CmdVoid(Command):
         void_room = void_room[0] if isinstance(void_room, list) else void_room
         target.db.voided = True
         target.db.voided_reason = reason
-        target.db.voided_at = __import__("time", fromlist=["time"]).time()
+        target.db.voided_at = time.time()
         target.move_to(void_room)
         caller.msg("|g{} has been sent to the void.{}|n".format(target.name, " Reason: " + reason if reason else ""))
         target.msg("|rYou have been moved to the void.{}|n".format(" " + reason if reason else " A staff member will release you when appropriate."))
@@ -405,7 +411,7 @@ class CmdRelease(Command):
     Release a character from the void and bring them to your location. Builder+.
     Usage: @release <character>
     """
-    key = "@releasevoid"
+    key = "@release"
     aliases = ["@releasevoid"]
     locks = "cmd:perm(Builder)"
     help_category = "Staff"
@@ -544,10 +550,10 @@ class CmdAnnounce(Command):
         sent = 0
         for session in evennia.SESSION_HANDLER.get_sessions():
             puppet = getattr(session, "puppet", None)
-            if puppet and hasattr(puppet, "msg") and puppet != caller:
+            if puppet and hasattr(puppet, "msg"):
                 puppet.msg("|y[ANNOUNCE]|n %s" % msg)
                 sent += 1
-        caller.msg("|gAnnouncement sent to {} recipient(s).|n".format(sent))
+        caller.msg("|gAnnouncement sent to {} recipient(s): {}|n".format(sent, msg))
 
 
 class CmdRestore(Command):
@@ -563,6 +569,8 @@ class CmdRestore(Command):
     def func(self):
         caller = self.caller
         raw = (self.args or "").strip()
+        # Always define args so the fallback search block below can reference it safely.
+        args = raw
 
         # Quality-of-life: allow self-target shorthand so you can very quickly
         # restore your current puppet. The following all target the caller:
@@ -575,7 +583,6 @@ class CmdRestore(Command):
         if not raw or raw.lower() in ("/me", "/self"):
             target = caller
         else:
-            args = raw
             # First try the normal global search (quiet so we can run our own fallback without spurious errors).
             target = caller.search(args, global_search=True, quiet=True)
 

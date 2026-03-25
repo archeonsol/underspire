@@ -57,12 +57,21 @@ class Spirit(DefaultCharacter):
     def at_post_puppet(self, **kwargs):
         """Skip default 'You become X' and any room 'entered the game' broadcast; look only."""
         if hasattr(self, "account") and self.account:
-            self.account.db._last_puppet = self
+            # Written as last_puppet (no underscore) to match the read-side convention.
+            self.account.db.last_puppet = self
         if self.location:
             self.msg((self.at_look(self.location), {"type": "look"}), options=None)
 
     def get_cmdsets(self, caller, current, **kwargs):
-        """Never return None for current so the cmdset merger does not crash."""
+        """
+        Never return None for current so the cmdset merger does not crash.
+
+        The `current` argument passed in by Evennia is intentionally ignored here:
+        Spirit objects have a fixed, minimal cmdset and should never inherit or
+        merge with whatever the engine considers the 'current' set at call time.
+        If the internal cmdset is somehow missing, we return an empty CmdSet as a
+        safe fallback rather than letting None propagate to the merger.
+        """
         cur = self.cmdset.current
         stack = list(self.cmdset.cmdset_stack)
         if cur is None:

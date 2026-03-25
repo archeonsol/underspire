@@ -34,16 +34,25 @@ TYPECLASS_WEAPON_KEYS = {
 
 
 def get_weapon_key(obj):
-    """Return weapon_key for this object; use db.weapon_key or infer from typeclass."""
+    """Return weapon_key for this object; use db.weapon_key or infer from typeclass.
+
+    Preference order:
+      1. db.weapon_key (explicit, always authoritative)
+      2. obj.typeclass_path (the stored DB string; stable across typeclass swaps)
+      3. Live class module + name (last resort for unsaved/in-memory objects only)
+    """
     if obj is None:
         return None
     key = getattr(obj.db, "weapon_key", None)
     if key:
         return key
+    # Prefer the stored typeclass path so a swapped typeclass doesn't give a wrong result.
     typeclass_path = getattr(obj, "typeclass_path", None)
-    if not typeclass_path and hasattr(obj, "__class__"):
-        typeclass_path = f"{getattr(obj.__class__, '__module__', '')}.{getattr(obj.__class__, '__name__', '')}"
-    return TYPECLASS_WEAPON_KEYS.get(typeclass_path)
+    if typeclass_path:
+        return TYPECLASS_WEAPON_KEYS.get(typeclass_path)
+    # Last resort: reconstruct from the live class (only reliable before first save).
+    live_path = f"{getattr(obj.__class__, '__module__', '')}.{getattr(obj.__class__, '__name__', '')}"
+    return TYPECLASS_WEAPON_KEYS.get(live_path)
 
 
 def get_damage_type_for_weapon(weapon_obj):
@@ -91,7 +100,8 @@ class CombatWeapon(ComponentHolderMixin, Object):
     def ammo_current(self, value):
         if self.ammo:
             self.ammo.current = int(value)
-        self.db.ammo_current = int(value)
+        else:
+            self.db.ammo_current = int(value)
 
     @property
     def ammo_capacity(self):
@@ -103,7 +113,8 @@ class CombatWeapon(ComponentHolderMixin, Object):
     def ammo_capacity(self, value):
         if self.ammo:
             self.ammo.capacity = int(value)
-        self.db.ammo_capacity = int(value)
+        else:
+            self.db.ammo_capacity = int(value)
 
     @property
     def ammo_type(self):
@@ -115,7 +126,8 @@ class CombatWeapon(ComponentHolderMixin, Object):
     def ammo_type(self, value):
         if self.ammo:
             self.ammo.type = str(value)
-        self.db.ammo_type = str(value)
+        else:
+            self.db.ammo_type = str(value)
 
     def at_object_creation(self):
         super().at_object_creation()

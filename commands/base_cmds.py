@@ -840,3 +840,31 @@ class CmdPut(Command):
             )
         else:
             self.caller.msg("You can't put that in there.")
+
+
+class CmdEnter(Command):
+    """
+    Enter a vehicle, arena, or any other enterable object.
+
+    Usage:
+      enter <object>
+    """
+
+    key = "enter"
+    aliases = ["ride", "board"]
+    locks = "cmd:all()"
+    help_category = "General"
+
+    def func(self):
+        caller = self.caller
+        if not self.args:
+            caller.msg("Enter what? Usage: enter <object>")
+            return
+        target = caller.search(self.args.strip(), location=caller.location)
+        if not target:
+            return
+        from typeclasses.mixins.enterable import EnterableMixin
+        if not isinstance(target, EnterableMixin):
+            caller.msg("You can't enter that.")
+            return
+        target.at_enter(caller)

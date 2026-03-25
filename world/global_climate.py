@@ -147,11 +147,89 @@ def _override_key(district: str, weather: str, time_of_day: str) -> str:
     return f"{district}:{weather}:{time_of_day}"
 
 
+# First sentence of default ambient lines: one narrative opening per (district, weather).
+# Staff line_overrides still replace the full composed line when set.
+_WEATHER_OPEN_BY_DISTRICT: Dict[str, Dict[str, str]] = {
+    "slums": {
+        "rain": (
+            "Acid rain hisses against rust and tarp, etching pale trails in the grime "
+            "and leaving the gutters to run faintly luminous"
+        ),
+        "sun": (
+            "Harsh light cuts through smog in dirty blades, baking the concrete "
+            "until the air tastes of hot metal and old sweat"
+        ),
+        "fog": (
+            "Low chemical fog clings to the alley mouths, sour on the tongue "
+            "and thick enough to muffle footsteps and hope alike"
+        ),
+        "snow": (
+            "Grey snow slumps from a bruised sky, mixing with ash and oil "
+            "until the drifts look more like slag than weather"
+        ),
+    },
+    "guild": {
+        "rain": (
+            "Rain drums on corrugated roofs and hisses into runoff troughs, "
+            "steam rising where hot spill meets cold steel on the shop floors"
+        ),
+        "sun": (
+            "Sun hammers the yards and loading bays, glare ricocheting off cranes "
+            "and bare alloy until every edge looks sharp enough to cut"
+        ),
+        "fog": (
+            "A stew of exhaust, coolant mist, and heat hangs over the district, "
+            "turning stacks and gantries into looming silhouettes"
+        ),
+        "snow": (
+            "Snow comes down dirty, catching in chain-link and melt-pits, "
+            "already grey where it touches grease and grit near the freight lines"
+        ),
+    },
+    "bourgeois": {
+        "rain": (
+            "Rain runs down glass fronts and arcade canopies, funneling into grates "
+            "while shoppers move in a dry hush beneath"
+        ),
+        "sun": (
+            "Sun pools on polished walkways and display glass, warm but tempered, "
+            "the kind of light money pays to stand in"
+        ),
+        "fog": (
+            "Soft fog beads on windows and blurs the far towers to pastel, "
+            "as if the city agreed to look gentler from this height"
+        ),
+        "snow": (
+            "Snow falls light and almost pretty here, clinging to planters and railings "
+            "before crews sweep it away with efficient disinterest"
+        ),
+    },
+    "elite": {
+        "rain": (
+            "Rain traces the climate glass in thin rivers; beyond it, the lower city "
+            "vanishes into sheets of grey while up here the air stays thin and correct"
+        ),
+        "sun": (
+            "Filtered sun spills across terraces and private gardens, bright enough to warm skin "
+            "without admitting whatever burns below the barrier"
+        ),
+        "fog": (
+            "Fog fills the canyons far beneath the spires, a soft tide of grey "
+            "that never quite climbs high enough to touch the balconies"
+        ),
+        "snow": (
+            "Snow drifts past in veils, caught by fields and vents before it can smear the views; "
+            "from here it looks almost like weather belongs to someone else"
+        ),
+    },
+}
+
+
 def _compose_default_line(district: str, weather: str, time_of_day: str) -> str:
     """
     Template-based ambient line (plain text, no color codes). Staff can override per cell on the script.
     """
-    # Short district anchors
+    # Short district anchors (second sentence)
     place = {
         "slums": "the cramped streets and leaking neon",
         "guild": "foundries and loading bays",
@@ -159,12 +237,8 @@ def _compose_default_line(district: str, weather: str, time_of_day: str) -> str:
         "elite": "high balconies and filtered air",
     }.get(district, "the streets")
 
-    w_open = {
-        "rain": "Rain hammers down, turning grime into mirror-slick sheets underfoot",
-        "sun": "Light falls hard, bleaching color from concrete and chrome alike",
-        "fog": "Fog rolls between the towers, swallowing sound until the city feels half unreal",
-        "snow": "Snow spirals from a bruised sky, settling into the cracks of the sprawl",
-    }.get(weather, "The air hangs thick and uncertain")
+    dist_table = _WEATHER_OPEN_BY_DISTRICT.get(district) or _WEATHER_OPEN_BY_DISTRICT["slums"]
+    w_open = dist_table.get(weather, "The air hangs thick and uncertain")
 
     t_close = {
         "dusk": "dusk bleeds in at the edges of the sky, and the first false stars are only LEDs",

@@ -9,6 +9,7 @@ import re
 
 from evennia.contrib.base_systems.components import ComponentHolderMixin, ComponentProperty
 from typeclasses.matrix.mixins.matrix_id import MatrixIdMixin
+from typeclasses.mixins.enterable import EnterableMixin
 from typeclasses.objects import Object
 from evennia.utils.create import create_object
 from evennia.utils.search import search_tag, search_object
@@ -647,7 +648,7 @@ class VehicleInterior(Room):
         return f"{_ic_room_char_name(char, looker, **kwargs)} is sitting in {place}."
 
 
-class Vehicle(ComponentHolderMixin, MatrixIdMixin, Object):
+class Vehicle(ComponentHolderMixin, MatrixIdMixin, EnterableMixin, Object):
     """
     Base class for all vehicles. Subclassed by enclosed ground vehicles, motorcycles, and aerial vehicles.
 
@@ -1036,6 +1037,42 @@ class Vehicle(ComponentHolderMixin, MatrixIdMixin, Object):
     def roll_stall_chance(self):
         return roll_stall_chance(self)
 
+    def at_enter(self, caller):
+        """Handle a character entering this vehicle (called by CmdEnter)."""
+        if getattr(caller.db, "in_vehicle", None) or getattr(caller.db, "mounted_on", None):
+            caller.msg("You are already inside or on a vehicle. Exit or dismount first.")
+            return
+        interior = self.interior
+        if not interior:
+            caller.msg("That is not a vehicle you can enter.")
+            return
+        try:
+            from world.vehicles.vehicle_security import check_vehicle_permission
+            if getattr(self.db, "security_locked", False) and not check_vehicle_permission(
+                self, caller, "unlock"
+            ):
+                caller.msg(f"{getattr(self.db, 'vehicle_name', None) or self.key} is locked.")
+                return
+        except ImportError:
+            pass
+        if not caller.move_to(interior, quiet=True, move_type="teleport"):
+            caller.msg("You couldn't get into the vehicle. (Try standing up if you are seated.)")
+            return
+        caller.db.in_vehicle = self
+        if not getattr(self.db, "driver", None):
+            self.db.driver = caller
+        vlabel = getattr(self.db, "vehicle_name", None) or self.key
+        caller.msg(f"You enter {vlabel}.")
+        exterior = getattr(self, "location", None)
+        try:
+            from world.rp_features import msg_room_with_character_display as _mrwcd
+        except ImportError:
+            _mrwcd = None
+        if exterior and _mrwcd:
+            _mrwcd(exterior, caller, lambda _v, display: f"{display} enters the {vlabel}.")
+        elif exterior:
+            exterior.msg_contents(f"{caller.key} enters the {vlabel}.", exclude=caller)
+
     def get_exit(self, direction):
         """Find an exit from the vehicle's current room in the given direction (e.g. 'east', 'e')."""
         room = self.location
@@ -1096,6 +1133,35 @@ class Motorcycle(Vehicle):
     @property
     def interior(self):
         return None
+
+    def at_enter(self, caller):
+        """Mount this motorcycle (called by CmdEnter or CmdMount)."""
+        if getattr(caller.db, "mounted_on", None):
+            caller.msg("You're already on a bike. Dismount first.")
+            return
+        if getattr(caller.db, "in_vehicle", None):
+            caller.msg("You're inside a vehicle. Exit first.")
+            return
+        if getattr(self.db, "rider", None):
+            caller.msg("Someone is already on that bike.")
+            return
+        if getattr(self.db, "locked", False):
+            caller.msg("It's locked.")
+            return
+        self.db.rider = caller
+        self.db.driver = caller
+        caller.db.mounted_on = self
+        tlab = vehicle_label(self)
+        caller.msg(f"You swing onto {tlab}. Use |wstart|n, then |wdrive <direction>|n.")
+        loc = caller.location
+        try:
+            from world.rp_features import msg_room_with_character_display as _mrwcd
+        except ImportError:
+            _mrwcd = None
+        if loc and _mrwcd:
+            _mrwcd(loc, caller, lambda _v, display: f"{display} mounts {tlab}.", exclude=[caller])
+        elif loc:
+            loc.msg_contents(f"{caller.key} mounts {tlab}.", exclude=caller)
 
 
 class AerialVehicle(Vehicle):

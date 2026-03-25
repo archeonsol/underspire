@@ -1,6 +1,6 @@
 """
 Bolt of cloth (or silk, satin, velvet): customizable draft that tailors turn into clothing.
-Material type gates required tailoring skill; finalize rolls tailoring for success and quality.
+Material type gates required artistry skill; finalize rolls artistry for success and quality.
 """
 from typeclasses.items import Item
 
@@ -8,7 +8,7 @@ from typeclasses.items import Item
 class BoltOfCloth(Item):
     """
     A bolt of material (cloth, silk, satin, velvet). Customize with the tailor command,
-    then finalize to produce a Clothing item. db.material_type sets required tailoring skill.
+    then finalize to produce a Clothing item. db.material_type sets required artistry skill.
     """
     def at_object_creation(self):
         super().at_object_creation()

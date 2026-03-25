@@ -114,79 +114,6 @@ def _broadcast_cabin_and_exterior(vehicle, caller, line):
         ext.msg_contents(line)
 
 
-class CmdEnterVehicle(Command):
-    """
-    Enter an enclosed vehicle. You are moved to its interior. Start the engine to drive.
-    """
-
-    key = "enter"
-    aliases = ["ride", "board"]
-    locks = "cmd:all()"
-    help_category = "Vehicles"
-    usage_typeclasses = ["typeclasses.vehicles.Vehicle"]
-    usage_hint = "|wenter|n / |wride|n (to get in)"
-
-    def func(self):
-        caller = self.caller
-        if not self.args:
-            caller.msg("Enter what? Usage: enter <vehicle>")
-            return
-        if _get_vehicle_from_caller(caller):
-            caller.msg("You are already inside or on a vehicle. Exit or dismount first.")
-            return
-        vehicle = caller.search(self.args.strip(), location=caller.location)
-        if not vehicle:
-            return
-        try:
-            from typeclasses.vehicles import Motorcycle, Vehicle
-        except ImportError:
-            caller.msg("Vehicle system unavailable.")
-            return
-        if isinstance(vehicle, Motorcycle) or getattr(vehicle.db, "vehicle_type", None) == "motorcycle":
-            caller.msg("That's an open bike. Use |wmount <bike>|n.")
-            return
-        if not getattr(vehicle.db, "has_interior", True):
-            caller.msg("That is not a vehicle you can enter.")
-            return
-        if not (hasattr(vehicle, "interior") and vehicle.interior):
-            caller.msg("That is not a vehicle you can enter.")
-            return
-        try:
-            from world.vehicles.vehicle_security import check_vehicle_permission
-
-            # Physical entry matches door state: anyone can get into an *unlocked* vehicle (like an
-            # open car). When *locked*, you need permission to open it (same as lock/unlock commands).
-            if getattr(vehicle.db, "security_locked", False) and not check_vehicle_permission(
-                vehicle, caller, "unlock"
-            ):
-                caller.msg(f"{getattr(vehicle.db, 'vehicle_name', None) or vehicle.key} is locked.")
-                return
-        except ImportError:
-            pass
-        interior = vehicle.interior
-        if not interior:
-            caller.msg("That is not a vehicle you can enter.")
-            return
-        # Normal move_type "move" is blocked by FurnitureMixin when sitting/lying; entering a
-        # cabin is not walking through an exit — use teleport so hooks still clear seat state.
-        if not caller.move_to(interior, quiet=True, move_type="teleport"):
-            caller.msg("You couldn't get into the vehicle. (Try standing up if you are seated.)")
-            return
-        caller.db.in_vehicle = vehicle
-        if not getattr(vehicle.db, "driver", None):
-            vehicle.db.driver = caller
-        vlabel = vehicle_label(vehicle)
-        caller.msg(f"You enter {vlabel}.")
-        exterior = getattr(vehicle, "location", None)
-        if exterior and msg_room_with_character_display:
-            msg_room_with_character_display(
-                exterior,
-                caller,
-                lambda _v, display: f"{display} enters the {vlabel}.",
-            )
-        elif exterior:
-            exterior.msg_contents(f"{caller.key} enters the {vlabel}.", exclude=caller)
-
 
 class CmdExitVehicle(Command):
     """
@@ -248,12 +175,6 @@ class CmdMount(Command):
         if not self.args:
             caller.msg("Mount what? Usage: mount <bike>")
             return
-        if getattr(caller.db, "mounted_on", None):
-            caller.msg("You're already on a bike. Dismount first.")
-            return
-        if _get_vehicle_from_caller(caller) and not getattr(caller.db, "mounted_on", None):
-            caller.msg("You're inside a vehicle. Exit first.")
-            return
         target = caller.search(self.args.strip(), location=caller.location)
         if not target:
             return
@@ -265,27 +186,7 @@ class CmdMount(Command):
         if not isinstance(target, Motorcycle) and getattr(target.db, "vehicle_type", None) != "motorcycle":
             caller.msg("That's not a motorcycle.")
             return
-        if getattr(target.db, "rider", None):
-            caller.msg("Someone is already on that bike.")
-            return
-        if getattr(target.db, "locked", False):
-            caller.msg("It's locked.")
-            return
-        target.db.rider = caller
-        target.db.driver = caller
-        caller.db.mounted_on = target
-        tlab = vehicle_label(target)
-        caller.msg(f"You swing onto {tlab}. Use |wstart|n, then |wdrive <direction>|n.")
-        loc = caller.location
-        if loc and msg_room_with_character_display:
-            msg_room_with_character_display(
-                loc,
-                caller,
-                lambda _v, display: f"{display} mounts {tlab}.",
-                exclude=[caller],
-            )
-        elif loc:
-            loc.msg_contents(f"{caller.key} mounts {tlab}.", exclude=caller)
+        target.at_enter(caller)
 
 
 class CmdDismount(Command):

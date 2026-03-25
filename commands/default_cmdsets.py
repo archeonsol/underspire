@@ -164,6 +164,8 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         from commands.medical_cmds import CmdHt, CmdPatient, CmdApply, CmdStabilize, CmdSedate, CmdWakePatient, CmdSurgery, CmdDefib
         from commands.use_cmds import CmdUse
         from commands.survival_cmds import CmdEat, CmdDrink
+        from commands.food_cmds import CmdMenu, CmdNewRecipe, CmdPrepare, CmdServe, CmdDelRecipe, CmdRate
+        from commands.bar_mgmt_cmds import CmdBarSet, CmdBarSetAdmin
         from commands.inventory_cmds import CmdWield, CmdUnwield, CmdFreehands, CmdInventory, CmdReload, CmdUnload, CmdCheckAmmo, CmdWear, CmdRemove, CmdStrip, CmdFrisk
         from commands.crafting_cmds import CmdSurvey, CmdRepairArmor, CmdTailor
         from commands.alchemy_cmds import (
@@ -179,14 +181,21 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         )
         from commands.media_cmds import CmdCamera, CmdTuneTelevision, CmdLabel
         from commands.trust_cmds import CmdTrust, CmdUntrust, CmdTrusted
+        from commands.cosmetic_cmds import (
+            CmdInk, CmdRemoveTattoo, CmdTattoos,
+            CmdApply as CmdApplyCosmetic,
+            CmdWipe, CmdColor, CmdColors,
+        )
+        from commands.rune_cmds import CmdCarve, CmdIgnite
         from commands.roleplay_cmds import CmdTease, CmdDescribeMeAs, CmdBody, CmdVoice, CmdSmellSet, CmdLanguage, CmdSdesc, CmdPending, CmdLookPlace, CmdTempPlace, CmdSleepPlace, CmdWakeMsg, CmdFlatlineMsg, CmdSetPlace, CmdPose, CmdPronoun, CmdEmote, CmdNoMatch, CmdCount, CmdRecog, CmdMemorize, CmdMemory, CmdSmell
         from commands.skintone_cmd import CmdSkintone
         from commands.roleplay_cmds import CmdSit, CmdLieOnTable, CmdGetOffTable
         from commands.performance_cmds import CmdPerformance
+        from commands.artistry_cmds import CmdArtistry
         from commands.death_cmds import CmdGoOOC, CmdReturnIC, CmdEnterPod, CmdLeavePod, CmdSplinterMe
         from commands.lock_cmds import CmdLock, CmdUnlock
+        from commands.base_cmds import CmdEnter
         from commands.vehicle_cmds import (
-            CmdEnterVehicle,
             CmdExitVehicle,
             CmdMount,
             CmdDismount,
@@ -315,7 +324,6 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdSever())
         self.add(CmdStats())
         self.add(CmdAttack())
-        self.add(CmdStop())
         self.add(CmdFlee())
         self.add(CmdExecute())
         self.add(CmdStance())
@@ -339,6 +347,14 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdSurgery())
         self.add(CmdEat())
         self.add(CmdDrink())
+        self.add(CmdMenu())
+        self.add(CmdNewRecipe())
+        self.add(CmdPrepare())
+        self.add(CmdServe())
+        self.add(CmdDelRecipe())
+        self.add(CmdRate())
+        self.add(CmdBarSet())
+        self.add(CmdBarSetAdmin())
         self.add(CmdDefib())
         self.add(CmdWield())
         self.add(CmdUnwield())
@@ -411,8 +427,18 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdTrust())
         self.add(CmdUntrust())
         self.add(CmdTrusted())
+        self.add(CmdInk())
+        self.add(CmdRemoveTattoo())
+        self.add(CmdTattoos())
+        self.add(CmdApplyCosmetic())
+        self.add(CmdWipe())
+        self.add(CmdColor())
+        self.add(CmdColors())
+        self.add(CmdCarve())
+        self.add(CmdIgnite())
         self.add(CmdNoMatch())
         self.add(CmdPerformance())
+        self.add(CmdArtistry())
         self.add(CmdExamine())
         self.add(CmdMemorize())
         self.add(CmdMemory())
@@ -433,9 +459,8 @@ class CharacterCmdSet(default_cmds.CharacterCmdSet):
         self.add(CmdDoorPair())
         self.add(CmdEnterPod())
         self.add(CmdSplinterMe())
-        self.add(SplinterPodCmdSet())  # CmdLeavePod here so it beats exits (priority 110)
         self.add(CombatGrappleCmdSet())  # grapple/letgo/resist above exits (priority 120)
-        self.add(CmdEnterVehicle())
+        self.add(CmdEnter())
         self.add(CmdExitVehicle())
         self.add(CmdMount())
         self.add(CmdDismount())
@@ -637,7 +662,7 @@ class AccountCmdSet(default_cmds.AccountCmdSet):
         self.add(StaffCharDelete())
         from commands.sheet_cmds import CmdStats
         from commands.staff_cmds import CmdNextNote, CmdGmViewNotes
-        from commands.death_cmds import CmdGoLight, CmdGoShard, CmdReturnIC
+        from commands.death_cmds import CmdReturnIC
         from commands.multipuppet_cmds import CmdAddPuppet, CmdPuppetList, CmdPuppetSlot
         from commands.channel_cmds import CmdChannelSub, CmdChannelUnsub, CmdHelpReply, CmdHelp, CmdOocName
         from commands.media_cmds import CmdTuneTelevision, CmdTelevisionApp, CmdLabel
@@ -645,8 +670,6 @@ class AccountCmdSet(default_cmds.AccountCmdSet):
         self.add(CmdStats())
         self.add(CmdNextNote())
         self.add(CmdGmViewNotes())
-        self.add(CmdGoLight())
-        self.add(CmdGoShard())
         self.add(CmdReturnIC())
         self.add(CmdAddPuppet())
         self.add(CmdPuppetList())

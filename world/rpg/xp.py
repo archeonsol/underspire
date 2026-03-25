@@ -144,13 +144,13 @@ def _skill_level(character, skill_key):
     from world.skills import SKILL_KEYS
     if skill_key not in SKILL_KEYS:
         return 0
-    # Traits path (post-migration): trait_skills handler stores base 0-150
+    # Traits path: trait_skills handler stores base 0-150
     handler = getattr(character, "trait_skills", None)
     if handler is not None:
         trait = handler.get(skill_key)
         if trait is not None:
             return _clamp(int(trait.base or 0), 0, MAX_LEVEL)
-    # Legacy fallback: raw db.skills dict
+    # Fallback: raw db.skills dict
     skills = getattr(character.db, "skills", None) or {}
     val = skills.get(skill_key, 0)
     if isinstance(val, int):

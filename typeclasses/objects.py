@@ -29,21 +29,20 @@ class ObjectParent:
         """
         # Only validate on existing objects to avoid issues during creation
         if self.pk and hasattr(self, 'key'):
-            self._fix_reserved_key_prefix(auto_save=False)
+            self._fix_reserved_key_prefix(_called_from_save=True)
 
         # Call parent save
         super().save(*args, **kwargs)
 
-    def _fix_reserved_key_prefix(self, auto_save=True):
+    def _fix_reserved_key_prefix(self, _called_from_save=False):
         """
         Check if key starts with reserved prefixes (^ or #) and fix automatically.
         Notifies any connected sessions about the change.
 
-        Called from save() override to validate all key changes.
-
-        Args:
-            auto_save (bool): Should always be False when called from save().
-                             Only set True if calling manually outside save flow.
+        Called from save() override to validate all key changes. When called from
+        save(), _called_from_save must be True so we skip the redundant extra save().
+        Pass _called_from_save=False (default) only when calling manually outside the
+        save flow (e.g. from a migration or admin command).
 
         Returns:
             bool: True if key was changed, False otherwise
@@ -65,7 +64,7 @@ class ObjectParent:
             reason = "dbrefs"
 
         if changed:
-            if auto_save:
+            if not _called_from_save:
                 self.save(update_fields=['db_key'])
 
             msg = f"|yObject automatically renamed from '{old_key}' to '{self.key}' to avoid collision with {reason}.|n"
@@ -92,9 +91,9 @@ class ObjectParent:
             result = lookup_matrix_id(searchdata)
             if result:
                 return result
-            # Matrix ID not found - return None and let caller handle the error
-            # (consistent with normal search behavior when nothing is found)
-            return None
+            # Matrix ID not found — return [] to match Evennia's quiet-search contract
+            # so callers that do `for obj in result` don't crash with TypeError.
+            return []
 
         # Not a Matrix ID, use default search behavior
         return super().search(searchdata, **kwargs)

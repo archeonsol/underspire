@@ -7,19 +7,10 @@ import time
 from evennia.utils import delay
 from evennia.utils import logger
 
-try:
-    from boltons.mathutils import clamp as _clamp
-except ImportError:
-    def _clamp(val, lower=None, upper=None):
-        if lower is not None:
-            val = max(lower, val)
-        if upper is not None:
-            val = min(upper, val)
-        return val
-
 from world.alchemy import DRUGS
 from world.alchemy.crafting import potency_multiplier, tolerance_multiplier
 from world.buffs import build_drug_buff_class
+from world.rpg.survival import _clamp, _has_cyberware, flush_bac
 
 
 def has_pain_suppression(character):
@@ -28,11 +19,7 @@ def has_pain_suppression(character):
         return False
     if bool(getattr(character.db, "drug_pain_suppression", False)):
         return True
-    cyber = list(getattr(character.db, "cyberware", None) or [])
-    return any(
-        type(cw).__name__ == "PainEditor" and not bool(getattr(cw.db, "malfunctioning", False))
-        for cw in cyber
-    )
+    return _has_cyberware(character, "pain_editor")
 
 
 def _scale_stat_value(base_value, potency_mult):
@@ -42,16 +29,6 @@ def _scale_stat_value(base_value, potency_mult):
 def _modify_psychosis(character, delta):
     cur = int(getattr(character.db, "cyberpsychosis_score", 0) or 0)
     character.db.cyberpsychosis_score = _clamp(cur + int(delta), 0, 200)
-
-
-def _flush_alcohol(character):
-    try:
-        from world.rpg.survival import update_intoxication
-
-        bac = float(getattr(character.db, "blood_alcohol", 0.0) or 0.0)
-        update_intoxication(character, -(bac / 2.0))
-    except Exception as err:
-        logger.log_trace(f"_flush_alcohol: {err}")
 
 
 def _apply_color_shift_text(text):
@@ -64,7 +41,7 @@ def _apply_color_shift_text(text):
             continue
         if random.random() < 0.15:
             color = random.choice(colors)
-            result.append("%s%s|n" % (color, word))
+            result.append(f"{color}{word}|n")
         else:
             result.append(word)
     return " ".join(result)
@@ -92,7 +69,8 @@ def _apply_special(character, key, potency_mult, turning_on):
     elif key == "infection_resistance":
         character.db.drug_infection_resistance = 0.05 if turning_on else 0.0
     elif key == "flush_alcohol" and turning_on:
-        _flush_alcohol(character)
+        # Flush 50% of current BAC; does nothing on comedown (one-shot on-apply only).
+        flush_bac(character, fraction=0.5)
     elif key == "hunger_increase":
         character.db.drug_hunger_multiplier = 2.0 if turning_on else 1.0
     elif key == "visual_color_shift":
@@ -104,27 +82,81 @@ def _apply_special(character, key, potency_mult, turning_on):
     elif key == "void_sight":
         character.db.drug_void_sight = bool(turning_on)
     elif key == "chrome_psychosis_reduction":
+        # Psychosis changes are permanent mutations — we snapshot the delta on the
+        # active_drug entry and restore it on comedown to avoid additive stacking
+        # when the same drug is taken multiple times.  The actual write happens in
+        # _apply_specials_for_drug / _clear_specials_for_drug via the snapshot.
         if turning_on:
             _modify_psychosis(character, -15)
-        else:
-            _modify_psychosis(character, 15)
+        # Reversal is handled by _clear_specials_for_drug using the snapshot.
     elif key == "cyberpsychosis_spike":
         if turning_on:
             _modify_psychosis(character, 30)
-        else:
-            _modify_psychosis(character, -30)
+        # Reversal is handled by _clear_specials_for_drug using the snapshot.
     elif key == "tolerance_buildup_fast":
         pass  # handled in addiction roll for greenmote
 
 
-def _clear_specials_for_drug(character, drug):
-    for sp in drug.get("effects", {}).get("special", []) or []:
-        _apply_special(character, sp, 1.0, False)
+def _clear_specials_for_drug(character, drug, drug_key=None):
+    """
+    Reverse special effects when a drug wears off.
+
+    For psychosis-mutating specials we restore from the snapshot stored at
+    application time rather than applying a fixed inverse delta, preventing
+    additive drift when the drug is taken multiple times.
+    """
+    specials = drug.get("effects", {}).get("special", []) or []
+    psychosis_keys = {"chrome_psychosis_reduction", "cyberpsychosis_spike"}
+
+    # Load snapshot if available
+    snapshot = {}
+    if drug_key:
+        active = getattr(character.db, "active_drugs", None) or {}
+        entry = active.get(drug_key) or {}
+        snapshot = entry.get("psychosis_snapshot") or {}
+
+    for sp in specials:
+        if sp in psychosis_keys and snapshot:
+            # Restore to the value recorded before the drug was applied.
+            saved = snapshot.get(sp)
+            if saved is not None:
+                character.db.cyberpsychosis_score = _clamp(int(saved), 0, 200)
+            # If no snapshot (old data), fall back to inverse delta.
+            else:
+                if sp == "chrome_psychosis_reduction":
+                    _modify_psychosis(character, 15)
+                elif sp == "cyberpsychosis_spike":
+                    _modify_psychosis(character, -30)
+        else:
+            _apply_special(character, sp, 1.0, False)
 
 
-def _apply_specials_for_drug(character, drug, potency_mult):
-    for sp in drug.get("effects", {}).get("special", []) or []:
+def _apply_specials_for_drug(character, drug, potency_mult, drug_key=None):
+    """
+    Apply special effects and snapshot psychosis score before any mutation,
+    so comedown can restore it exactly.
+    """
+    specials = drug.get("effects", {}).get("special", []) or []
+    psychosis_keys = {"chrome_psychosis_reduction", "cyberpsychosis_spike"}
+
+    # Build snapshot of current psychosis score for any psychosis-mutating specials.
+    psychosis_snapshot = {}
+    if any(sp in psychosis_keys for sp in specials) and drug_key:
+        cur_score = int(getattr(character.db, "cyberpsychosis_score", 0) or 0)
+        for sp in specials:
+            if sp in psychosis_keys:
+                psychosis_snapshot[sp] = cur_score
+
+    for sp in specials:
         _apply_special(character, sp, potency_mult, True)
+
+    # Store snapshot on the active_drug entry so comedown can read it.
+    if psychosis_snapshot and drug_key:
+        active = dict(getattr(character.db, "active_drugs", None) or {})
+        entry = dict(active.get(drug_key) or {})
+        entry["psychosis_snapshot"] = psychosis_snapshot
+        active[drug_key] = entry
+        character.db.active_drugs = active
 
 
 def _schedule_active_echoes(character, drug_key, duration_seconds):
@@ -136,7 +168,7 @@ def _schedule_active_echoes(character, drug_key, duration_seconds):
         try:
             from evennia.utils.search import search_object
 
-            res = search_object("#%s" % char_id)
+            res = search_object(f"#{char_id}")
             if not res:
                 return
             ch = res[0]
@@ -157,23 +189,36 @@ def _schedule_active_echoes(character, drug_key, duration_seconds):
         delay(first, _tick, character.id, drug_key, duration_seconds - first)
 
 
+def _active_drugs_provide_special(character, special_key):
+    """True if any currently active drug (other than the one being cleared) provides this special."""
+    active = getattr(character.db, "active_drugs", None) or {}
+    for dk, entry in active.items():
+        drug = DRUGS.get(dk)
+        if not drug:
+            continue
+        specials = drug.get("effects", {}).get("special", []) or []
+        if special_key in specials:
+            return True
+    return False
+
+
 def _begin_comedown(character_id, drug_key):
     try:
         from evennia.utils.search import search_object
 
-        res = search_object("#%s" % character_id)
+        res = search_object(f"#{character_id}")
         if not res:
             return
         character = res[0]
         drug = DRUGS.get(drug_key)
         if not drug:
             return
-        _clear_specials_for_drug(character, drug)
+        _clear_specials_for_drug(character, drug, drug_key=drug_key)
         cd = drug.get("comedown", {}) or {}
         dur = int(cd.get("duration_seconds", 0) or 0)
         debuffs = cd.get("stat_debuffs") or {}
         name = drug.get("name", drug_key)
-        cls = build_drug_buff_class(drug_key, "comedown", "%s comedown" % name, max(1, dur), {}, debuffs)
+        cls = build_drug_buff_class(drug_key, "comedown", f"{name} comedown", max(1, dur), {}, debuffs)
         character.buffs.add(cls, duration=max(1, dur))
         echoes = cd.get("echo_comedown") or []
         if echoes:
@@ -182,15 +227,16 @@ def _begin_comedown(character_id, drug_key):
         cdm = dict(getattr(character.db, "comedown_drugs", None) or {})
         cdm[drug_key] = time.time() + max(1, dur)
         character.db.comedown_drugs = cdm
-        # Consciousness sustain: after comedown, if HP should be 0, flatline
-        character.db.drug_consciousness_sustain = False
-        if (character.db.current_hp or 0) <= 0:
-            try:
-                from world.death import make_flatlined
+        # Only clear consciousness_sustain if no other active drug still provides it.
+        if not _active_drugs_provide_special(character, "consciousness_sustain"):
+            character.db.drug_consciousness_sustain = False
+            if (character.db.current_hp or 0) <= 0:
+                try:
+                    from world.death import make_flatlined
 
-                make_flatlined(character, attacker=None)
-            except Exception:
-                pass
+                    make_flatlined(character, attacker=None)
+                except Exception:
+                    pass
         delay(max(1, dur), _end_comedown_track, character.id, drug_key)
     except Exception as err:
         logger.log_trace(f"_begin_comedown: {err}")
@@ -200,7 +246,7 @@ def _end_comedown_track(character_id, drug_key):
     try:
         from evennia.utils.search import search_object
 
-        res = search_object("#%s" % character_id)
+        res = search_object(f"#{character_id}")
         if not res:
             return
         ch = res[0]
@@ -224,12 +270,8 @@ def _announce_drug_administration(character, drug, administrator=None):
 
     if administrator and administrator != character:
         if form in ("tablet", "capsule"):
-            character.msg(
-                "%s gives you a dose; you swallow it.|n" % administrator.get_display_name(character)
-            )
-            administrator.msg(
-                "You give %s a dose; they swallow it.|n" % character.get_display_name(administrator)
-            )
+            character.msg(f"{administrator.get_display_name(character)} gives you a dose; you swallow it.")
+            administrator.msg(f"You give {character.get_display_name(administrator)} a dose; they swallow it.")
             if loc:
                 loc.msg_contents(
                     "{admin} gives {targ} something to swallow.",
@@ -237,8 +279,8 @@ def _announce_drug_administration(character, drug, administrator=None):
                     mapping={"admin": administrator, "targ": character},
                 )
         elif form in ("injectable", "liquid"):
-            character.msg("%s injects you.|n" % administrator.get_display_name(character))
-            administrator.msg("You inject %s.|n" % character.get_display_name(administrator))
+            character.msg(f"{administrator.get_display_name(character)} injects you.")
+            administrator.msg(f"You inject {character.get_display_name(administrator)}.")
             if loc:
                 loc.msg_contents(
                     "{admin} injects {targ}.",
@@ -246,12 +288,8 @@ def _announce_drug_administration(character, drug, administrator=None):
                     mapping={"admin": administrator, "targ": character},
                 )
         else:
-            character.msg(
-                "%s administers a dose. Your blood answers.|n" % administrator.get_display_name(character)
-            )
-            administrator.msg(
-                "You administer a dose to %s.|n" % character.get_display_name(administrator)
-            )
+            character.msg(f"{administrator.get_display_name(character)} administers a dose. Your blood answers.")
+            administrator.msg(f"You administer a dose to {character.get_display_name(administrator)}.")
             if loc:
                 loc.msg_contents(
                     "{admin} administers something to {targ}.",
@@ -261,7 +299,7 @@ def _announce_drug_administration(character, drug, administrator=None):
         return
 
     if form in ("tablet", "capsule"):
-        character.msg("You swallow a dose.|n")
+        character.msg("You swallow a dose.")
         if loc:
             loc.msg_contents(
                 "{name} swallows something.",
@@ -269,7 +307,7 @@ def _announce_drug_administration(character, drug, administrator=None):
                 mapping={"name": character},
             )
     elif form in ("injectable", "liquid"):
-        character.msg("You inject the dose.|n")
+        character.msg("You inject the dose.")
         if loc:
             loc.msg_contents(
                 "{name} injects something — a vial or syringe, quick and practiced.",
@@ -277,7 +315,7 @@ def _announce_drug_administration(character, drug, administrator=None):
                 mapping={"name": character},
             )
     else:
-        character.msg("You take a dose.|n")
+        character.msg("You take a dose.")
         if loc:
             loc.msg_contents(
                 "{name} takes a dose.",
@@ -323,9 +361,7 @@ def apply_drug(character, drug_key, quality=50, suspicious=False, administrator=
 
     # Chasing the high: comedown active for this drug
     cdm = getattr(character.db, "comedown_drugs", None) or {}
-    in_comedown = False
-    if drug_key in cdm and float(cdm.get(drug_key, 0) or 0) > time.time():
-        in_comedown = True
+    in_comedown = drug_key in cdm and float(cdm.get(drug_key, 0) or 0) > time.time()
 
     lowered = 1 if in_comedown else 0
     od = check_overdose(character, drug_key, lowered_threshold=lowered, suspicious_product=suspicious)
@@ -334,8 +370,10 @@ def apply_drug(character, drug_key, quality=50, suspicious=False, administrator=
         return True, ""
     elif od == "severe":
         trigger_severe_overdose(character, drug_key)
-        # Severe OD still applies drug per spec — re-apply after? Spec says "still applies with harsh penalties"
-        # For simplicity, severe OD incapacitates and clears; skip positive buff
+        # Spec deviation: severe OD skips the positive buff and addiction roll.
+        # The overdose handler applies its own harsh penalties; adding the buff on
+        # top would be confusing and the addiction skip is intentional — a character
+        # who ODed didn't "enjoy" the dose.
         return True, ""
 
     add = drug.get("addiction", {}) or {}
@@ -359,8 +397,8 @@ def apply_drug(character, drug_key, quality=50, suspicious=False, administrator=
     cls = build_drug_buff_class(drug_key, "", name, dur, scaled_buffs, scaled_debuffs)
     character.buffs.add(cls, duration=dur)
 
-    _apply_specials_for_drug(character, drug, potency_mult)
-
+    # Write active_drugs entry before applying specials so the psychosis snapshot
+    # can be stored on the same entry in _apply_specials_for_drug.
     active = dict(getattr(character.db, "active_drugs", None) or {})
     prev = active.get(drug_key, {})
     active[drug_key] = {
@@ -370,6 +408,8 @@ def apply_drug(character, drug_key, quality=50, suspicious=False, administrator=
         "quality": qual,
     }
     character.db.active_drugs = active
+
+    _apply_specials_for_drug(character, drug, potency_mult, drug_key=drug_key)
 
     onset = eff.get("echo_onset") or []
     if onset:
@@ -393,13 +433,36 @@ def apply_drug(character, drug_key, quality=50, suspicious=False, administrator=
 
 
 def clear_drug_tracking_on_buff_expire(character, drug_key):
-    """Optional: when main buff expires early — tracking for active_drugs."""
-    pass
+    """
+    Called when a drug's main buff is removed early (e.g. by a medic, cleanse effect,
+    or admin command).  Clears the active_drugs entry and reverses special flags so
+    the character isn't left in a half-applied state.  The comedown delay() callback
+    will still fire at the original scheduled time; _begin_comedown guards against a
+    missing DRUGS entry but will still apply comedown debuffs — acceptable behaviour
+    since the drug was in the body.
+    """
+    try:
+        active = dict(getattr(character.db, "active_drugs", None) or {})
+        if drug_key not in active:
+            return
+        drug = DRUGS.get(drug_key)
+        if drug:
+            _clear_specials_for_drug(character, drug, drug_key=drug_key)
+        del active[drug_key]
+        character.db.active_drugs = active
+    except Exception as err:
+        logger.log_trace(f"clear_drug_tracking_on_buff_expire: {err}")
 
 
 def reconcile_active_drugs_after_reload(character):
     """
     BuffHandler is non-persistent; clear drug tracking and flags so nothing is half-applied.
+
+    Note: delay() callbacks (comedown timers) are also non-persistent across reloads by
+    default, so scheduled _begin_comedown calls will not fire after a reload.  If you ever
+    switch to a persistent task runner, those callbacks would survive the reload and fire
+    against an already-reconciled character — guard against that by checking active_drugs
+    is empty at the start of _begin_comedown if needed.
     """
     try:
         from world.alchemy.overdose import _reset_drug_db_flags

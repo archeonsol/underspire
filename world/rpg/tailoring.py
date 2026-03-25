@@ -1,14 +1,15 @@
 """
 Tailoring system: bolt materials, skill-gated finalization, and clothing quality.
 
-Bolt materials (cloth, silk, satin, velvet) require increasing tailoring skill.
-On finalize, a tailoring roll determines success and the garment's quality adjective
+Bolt materials (cloth, silk, satin, velvet) require increasing artistry skill.
+On finalize, an artistry roll determines success and the garment's quality adjective
 (tacky, cheap, shoddy, makeshift, austere, basic, fashionable, trendy, fancy).
 Quality is stored on the clothing and shown when looking at a character:
 "Their outfit is fancy." (averaged over all worn items).
 """
 from world.skills import SKILL_STATS
 from world.clothing import infer_clothing_layer
+from world.rpg.artistry_specialization import SPECIALIZATION_TAILORING, get_specialization_roll_bonus
 
 # Bolt material types: key = material_type on bolt, display name, min skill, roll difficulty, quality_bonus (added to roll for adjective)
 BOLT_MATERIALS = {
@@ -34,7 +35,7 @@ QUALITY_TIERS = [
     (100, "luxurious", 100),
 ]
 
-TAILORING_SKILL = "tailoring"
+TAILORING_SKILL = "artistry"
 
 
 def get_material_info(bolt):
@@ -45,7 +46,7 @@ def get_material_info(bolt):
 
 def get_quality_for_result(result):
     """
-    Map a tailoring roll result (int) to (adjective, quality_score 0-100).
+    Map an artistry roll result (int) to (adjective, quality_score 0-100).
     quality_score is used to average outfit quality when displaying "Their outfit is X."
     """
     result = max(0, min(100, int(result)))
@@ -61,7 +62,7 @@ def get_quality_for_result(result):
 
 def roll_tailoring(caller, difficulty=0):
     """
-    Perform a tailoring skill roll. Uses intelligence + charisma per SKILL_STATS.
+    Perform an artistry skill roll. Uses intelligence + charisma per SKILL_STATS.
     Returns (success: bool, result: int, adjective: str, quality_score: int).
     """
     if not hasattr(caller, "roll_check"):
@@ -70,7 +71,10 @@ def roll_tailoring(caller, difficulty=0):
     # roll_check formula: random(0, skill) + sum(stats) + modifier - difficulty.
     # Pass difficulty once via the difficulty kwarg only; do not also pass modifier=-difficulty
     # or the penalty is applied twice.
-    outcome, result = caller.roll_check(stats, TAILORING_SKILL, difficulty=difficulty)
+    spec_mod = get_specialization_roll_bonus(caller, SPECIALIZATION_TAILORING)
+    outcome, result = caller.roll_check(
+        stats, TAILORING_SKILL, difficulty=difficulty, modifier=spec_mod
+    )
     # result is the final_result from roll_check (effective_roll + strength_bonus + modifier - difficulty)
     adjective, quality_score = get_quality_for_result(result)
     success = outcome in ("Critical Success", "Full Success", "Marginal Success")
@@ -79,7 +83,7 @@ def roll_tailoring(caller, difficulty=0):
 
 def finalize_bolt_to_clothing(bolt, caller):
     """
-    Check material skill gate, roll tailoring, then convert bolt to Clothing and set quality.
+    Check material skill gate, roll artistry, then convert bolt to Clothing and set quality.
     Returns (clothing_or_None, message_str).
     """
     from typeclasses.clothing import Clothing
@@ -88,6 +92,7 @@ def finalize_bolt_to_clothing(bolt, caller):
     min_skill = material["min_skill"]
     difficulty = material["difficulty"]
     skill_level = getattr(caller, "get_skill_level", lambda s: 0)(TAILORING_SKILL)
+    skill_level += get_specialization_roll_bonus(caller, SPECIALIZATION_TAILORING)
 
     if skill_level < min_skill:
         return None, "You lack the skill to work with this material."
@@ -97,7 +102,7 @@ def finalize_bolt_to_clothing(bolt, caller):
     if not success:
         return None, (
             "You work the material but the result falls apart or looks too bad to wear. "
-            "You need more practice with tailoring (or an easier material)."
+            "You need more practice with artistry (or an easier material)."
         )
 
     # Better materials add a bonus to the roll result for quality (same roll, better adjective bias)

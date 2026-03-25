@@ -43,9 +43,9 @@ class CmdSkintone(Command):
             return
         err = set_character_skin_tone(caller, key)
         if err:
-            caller.msg("That tone is not available. Use @skintone to see the options.")
+            caller.msg(err)
             return
-        meta = SKIN_TONES.get(key, {})
+        meta = SKIN_TONES[key]  # key is guaranteed valid after resolve_skin_tone_key
         preview = meta.get("preview", key)
         caller.msg(
             f"You chose {preview} as your skin tone. This will be reflected in how others see you."

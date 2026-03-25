@@ -79,8 +79,13 @@ class Program(MatrixItem):
             caller.msg(f"|r{self.key} is corrupted and unusable.|n")
             return False
 
-        # If a handler method is defined, call it
+        # If a handler method is defined, call it.
+        # Validate against the class definition first — prevents DB-injected names
+        # from reaching arbitrary instance methods or Evennia internals.
         if self.db.execute_handler:
+            if not hasattr(type(self), self.db.execute_handler):
+                caller.msg(f"|rProgram handler is invalid.|n")
+                return False
             handler = getattr(self, self.db.execute_handler, None)
             if handler and callable(handler):
                 result = handler(caller, device, *args)

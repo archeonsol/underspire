@@ -273,7 +273,7 @@ class VoiceModulatorBuff(_CyberBuff):
     name = "Voice Modulator"
     flavor = "Precision vocal shaping."
     stat_mods = {"charisma": 6}
-    skill_mods = {"performance": 4}
+    skill_mods = {"artistry": 4}
     vulnerabilities = {"arc": 0.05}
 
 

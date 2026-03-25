@@ -78,7 +78,8 @@ HELP_ENTRY_DICTS = [
         "category": "Roleplay",
         "text": """
             Compose set pieces, play them with a guitar, or improvise live. The crowd reacts—good or bad—and anyone can try.
-            You can store a limited number of compositions (minimum 5); the limit goes up with your Performance skill.
+            You can store a limited number of compositions (minimum 5); the limit goes up with your |wArtistry|n skill.
+            At Artistry grade E, pick a permanent specialization with |wartistry specialize|n; choosing |wstage|n grants a bonus to these rolls.
 
             # performance list
 

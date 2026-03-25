@@ -1,7 +1,7 @@
 """
-Helpers for keeping the Evennia TraitHandler mirrors in sync with legacy db dicts.
+Helpers for keeping the Evennia TraitHandler mirrors in sync with db dicts.
 
-These are called at every write site (chargen, cloning, npc_templates, staff commands,
+Called at every write site (chargen, cloning, npc_templates, staff commands,
 player XP confirm) so that trait_stats / trait_skills always reflect the current values.
 
 Usage:
@@ -93,5 +93,4 @@ def sync_single_skill(character, skill_key, value):
     if trait is not None:
         trait.base = int(value or 0)
     else:
-        from world.levels import MAX_LEVEL
         handler.add(skill_key, skill_key.replace("_", " ").title(), trait_type="static", base=int(value or 0))

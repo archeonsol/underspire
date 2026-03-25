@@ -34,8 +34,9 @@ class Creature(Character):
         self.db.is_npc = True
         self.db.needs_chargen = False
 
-        # Raw combat math (no 0-300 stat curves)
-        self.db.max_hp = 100
+        # Raw combat math (no 0-300 stat curves).
+        # Use creature_max_hp to avoid shadowing the max_hp property with a same-named attribute.
+        self.db.creature_max_hp = 100
         self.db.current_hp = 100
         self.db.armor_rating = 10
         self.db.base_attack = 50
@@ -55,7 +56,7 @@ class Creature(Character):
     @property
     def max_hp(self):
         if getattr(self.db, "is_creature", False):
-            return int(self.db.max_hp or 100)
+            return int(self.db.creature_max_hp or 100)
         return super().max_hp
 
     @property
@@ -100,7 +101,13 @@ class Creature(Character):
         if not getattr(self.db, "is_creature", False):
             super().at_damage(attacker, damage, body_part=body_part, weapon_key=weapon_key, weapon_obj=weapon_obj)
             return
-        self.db.current_hp = (self.db.current_hp or self.max_hp) - damage
+        try:
+            dmg = int(damage or 0)
+        except Exception:
+            dmg = 0
+        self.db.current_hp = (self.db.current_hp or self.max_hp) - dmg
+        if dmg <= 0:
+            return
         if self.db.current_hp < 0:
             self.db.current_hp = 0
         if self.db.current_hp <= 0:
@@ -128,8 +135,8 @@ class GutterHulk(Creature):
 
     def at_object_creation(self):
         super().at_object_creation()
-        self.db.key = "Gutter Hulk"
-        self.db.max_hp = 500
+        self.key = "Gutter Hulk"
+        self.db.creature_max_hp = 500
         self.db.current_hp = 500
         self.db.armor_rating = 20
         self.db.base_attack = 65
@@ -170,8 +177,8 @@ class SporeRunner(Creature):
 
     def at_object_creation(self):
         super().at_object_creation()
-        self.db.key = "Spore Runner"
-        self.db.max_hp = 120
+        self.key = "Spore Runner"
+        self.db.creature_max_hp = 120
         self.db.current_hp = 120
         self.db.armor_rating = 5
         self.db.base_attack = 55
@@ -210,8 +217,8 @@ class RustStalker(Creature):
 
     def at_object_creation(self):
         super().at_object_creation()
-        self.db.key = "Rust Stalker"
-        self.db.max_hp = 280
+        self.key = "Rust Stalker"
+        self.db.creature_max_hp = 280
         self.db.current_hp = 280
         self.db.armor_rating = 25
         self.db.base_attack = 70

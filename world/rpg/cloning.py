@@ -88,7 +88,9 @@ def build_clone_snapshot(character):
         "addictions": dict(getattr(character.db, "addictions", None) or {}),
         "known_recipes": list(getattr(character.db, "known_recipes", None) or []),
         "cyberpsychosis_score": int(getattr(character.db, "cyberpsychosis_score", 0) or 0),
+        "artistry_specialization": getattr(character.db, "artistry_specialization", None),
     }
+    snapshot["tattoos"] = dict(getattr(character.db, "tattoos", None) or {})
     _trust = dict(getattr(character.db, "trust", None) or {})
     snapshot["trust"] = {k: list(v) if isinstance(v, (set, list)) else list(v) for k, v in _trust.items()}
     snapshot["factions"] = {}
@@ -119,12 +121,15 @@ def apply_clone_snapshot(character, snapshot):
         from world.rpg.trait_sync import sync_stats_to_traits
         sync_stats_to_traits(character, _stats)
     if "skills" in snapshot:
+        from world.rpg.trait_sync import sync_skills_to_traits
+
         _skills = dict(snapshot["skills"])
         character.db.skills = _skills
-        from world.rpg.trait_sync import sync_skills_to_traits
         sync_skills_to_traits(character, _skills)
     if "body_descriptions" in snapshot:
         character.db.body_descriptions = dict(snapshot["body_descriptions"])
+    if "tattoos" in snapshot:
+        character.db.tattoos = dict(snapshot.get("tattoos") or {})
     if "race" in snapshot:
         character.db.race = snapshot.get("race") or "human"
     if "splicer_animal" in snapshot:
@@ -153,6 +158,8 @@ def apply_clone_snapshot(character, snapshot):
         character.db.weight_category = snapshot.get("weight_category")
     if "age_years" in snapshot:
         character.db.age_years = snapshot.get("age_years")
+    if "artistry_specialization" in snapshot:
+        character.db.artistry_specialization = snapshot.get("artistry_specialization")
 
     faction_data = snapshot.get("factions") or {}
     if faction_data:
@@ -202,6 +209,13 @@ def apply_clone_snapshot(character, snapshot):
     character.db.cyberware = []
     character.db.locked_descriptions = {}
     character.db.appended_descriptions = {}
+    # Runes do not survive cloning — the new body is spiritually unmarked.
+    try:
+        from world.runes.rune_system import clear_all_runes
+        clear_all_runes(character)
+    except Exception:
+        pass
+    character.db.runes = {}
     # Fresh body: full HP/stamina, intact limbs and organs, no wounds
     if hasattr(character, "max_hp"):
         character.db.current_hp = character.max_hp

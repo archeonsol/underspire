@@ -151,6 +151,13 @@ def register_all_jobs():
     except Exception as exc:
         logger.warning(f"[scheduler] Could not register wilderness jobs: {exc}")
 
+    # --- Food/bar maintenance (weekly bar register log clear) ---
+    try:
+        from world.food.jobs import register_food_jobs
+        _safe_register(register_food_jobs, sched)
+    except Exception as exc:
+        logger.warning(f"[scheduler] Could not register food jobs: {exc}")
+
     # --- Infection tick: all characters (online + offline), every 30 min ---
     sched.add_job(
         _infection_tick_job,

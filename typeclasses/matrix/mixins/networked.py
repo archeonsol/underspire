@@ -35,6 +35,10 @@ class NetworkedMixin(MatrixIdMixin):
         self.db.has_storage = False
         self.db.has_controls = False
         self.db.acl = {}  # Access Control List - dict of {char_pk: level} with permission
+        # NOTE: ACL entries are never GC'd when characters are deleted. Django PKs are
+        # never reused, so orphaned entries cannot grant access to future characters.
+        # They are harmless but accumulate slowly. Clean them in a staff command or
+        # character deletion hook if desired.
         self.db.storage = []  # File storage (list of dicts with filename, filetype, contents)
         self.db.device_commands = {}  # Registered commands: {command_name: handler_function_name}
         self.db.interface_desc = None  # Custom description for device interface room
@@ -301,6 +305,11 @@ class NetworkedMixin(MatrixIdMixin):
                 return False
 
         handler_name = cmd_data['handler']
+        # Validate against the class definition — prevents DB-injected handler names
+        # from reaching arbitrary instance methods or Evennia internals.
+        if not hasattr(type(self), handler_name):
+            caller.msg(f"|rCommand handler '{handler_name}' is not valid.|n")
+            return False
         handler = getattr(self, handler_name, None)
 
         if not handler or not callable(handler):

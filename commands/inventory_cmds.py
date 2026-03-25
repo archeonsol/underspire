@@ -631,6 +631,18 @@ class CmdRemove(Command):
         if not self.args:
             caller.msg("Remove what?")
             return
+
+        # Dispatch "remove tattoo ..." to the tattoo removal flow.
+        stripped = self.args.strip()
+        if stripped.lower().startswith("tattoo"):
+            from commands.cosmetic_cmds import CmdRemoveTattoo
+            sub = CmdRemoveTattoo()
+            sub.caller = caller
+            sub.session = self.session
+            sub.args = stripped[len("tattoo"):].strip()
+            sub.func()
+            return
+
         target = caller.search(self.args, location=caller)
         if not target:
             return
