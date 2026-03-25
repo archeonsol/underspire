@@ -17,6 +17,7 @@ Resolution order per turn:
  10. Final auto-catch (own disc on tile after physics)
 """
 from __future__ import annotations
+import random
 from dataclasses import dataclass, field
 
 COLS = "ABCDEF"   # index = x
@@ -58,10 +59,10 @@ def raw_step(pos: tuple, heading: tuple) -> tuple:
     return (pos[0] + heading[0], pos[1] + heading[1])
 
 
-def apply_edge_bounce(pos: tuple, heading: tuple) -> tuple[tuple, tuple]:
+def apply_edge_bounce(pos: tuple, heading: tuple) -> tuple[tuple, tuple, str | None]:
     """
     Given a raw (possibly out-of-bounds) position, return the clamped
-    in-bounds position and reflected heading.
+    in-bounds position, reflected heading, and wall label (or None if in bounds).
 
     Corner (out of bounds on both axes) → reverse completely.
     Single-axis wall → flip that component.
@@ -74,17 +75,19 @@ def apply_edge_bounce(pos: tuple, heading: tuple) -> tuple[tuple, tuple]:
     out_y = not (0 <= row <= 5)
 
     if out_x and out_y:
-        # Corner: full reversal, clamp to corner tile
+        wall = "corner"
         col = max(0, min(5, col))
         row = max(0, min(5, row))
-        return (col, row), (-dx, -dy)
+        return (col, row), (-dx, -dy), wall
     if out_x:
+        wall = "west wall" if col < 0 else "east wall"
         col = max(0, min(5, col))
-        return (col, row), (-dx, dy)
+        return (col, row), (-dx, dy), wall
     if out_y:
+        wall = "north wall" if row < 0 else "south wall"
         row = max(0, min(5, row))
-        return (col, row), (dx, -dy)
-    return pos, heading
+        return (col, row), (dx, -dy), wall
+    return pos, heading, None
 
 
 def resolve_disc_disc(h1: tuple, h2: tuple) -> tuple[tuple, tuple]:
@@ -163,6 +166,7 @@ class DisketteBoard:
                 disc.pos = raw_step(disc.pos, disc.heading)
 
         # ── 2. Player move actions ────────────────────────────────────────────
+        intended: dict = {}  # pid -> (nx, ny, dname)
         for player in self.players:
             act = action_for(player.id)
             if act["type"] == "move" and act["dir"]:
@@ -174,10 +178,29 @@ class DisketteBoard:
                 cx, cy = self.positions[player.id]
                 nx, ny = cx + dx, cy + dy
                 if in_bounds(nx, ny):
-                    self.positions[player.id] = (nx, ny)
-                    result.narrative.append(f"{player.key} moves {dname}.")
+                    intended[player.id] = (nx, ny, dname)
                 else:
                     result.narrative.append(f"{player.key} tries to move {dname} but the wall stops them.")
+
+        # Collision: both players end up on the same tile → random winner
+        def dest(pid):
+            return intended[pid][:2] if pid in intended else self.positions[pid]
+
+        if dest(p1.id) == dest(p2.id):
+            winner, loser = random.choice([(p1, p2), (p2, p1)])
+            intended.pop(loser.id, None)
+            flavor = random.choice([
+                f"body-checks {loser.key} out of the way",
+                f"bullies {loser.key} back",
+                f"shoulder-checks {loser.key} aside",
+            ])
+            result.narrative.append(f"{winner.key} {flavor}!")
+
+        for player in self.players:
+            if player.id in intended:
+                nx, ny, dname = intended[player.id]
+                self.positions[player.id] = (nx, ny)
+                result.narrative.append(f"{player.key} moves {dname}.")
 
         # ── 3. Auto-catch (first pass) ────────────────────────────────────────
         for player in self.players:
@@ -230,9 +253,10 @@ class DisketteBoard:
                 result.narrative.append(f"{player.key} fumbles the reflect — bad direction.")
                 # Treat as failure; hit resolved in step 6
                 continue
-            # Redirect
+            # Redirect and immediately advance
             new_heading = DIRS[dname]
             enemy_disc.heading = new_heading
+            enemy_disc.pos = raw_step(enemy_disc.pos, new_heading)
             result.reflects.append(player.id)
             result.narrative.append(
                 f"{player.key} reflects the enemy disc {dname}!"
@@ -268,10 +292,11 @@ class DisketteBoard:
             if not disc.in_flight:
                 continue
             if not in_bounds(*disc.pos):
-                new_pos, new_heading = apply_edge_bounce(disc.pos, disc.heading)
+                new_pos, new_heading, wall = apply_edge_bounce(disc.pos, disc.heading)
                 result.edge_bounces.append(player.id)
                 disc.pos = new_pos
                 disc.heading = new_heading
+                result.narrative.append(f"{player.key}'s disc bounces off the {wall}.")
 
         # ── 9. Final kill check ───────────────────────────────────────────────
         for player in self.players:
