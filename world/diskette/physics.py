@@ -204,7 +204,7 @@ class DisketteBoard:
             self.armed[player.id] = False
             disc = self.discs[player.id]
             disc.in_flight = True
-            disc.pos = self.positions[player.id]
+            disc.pos = raw_step(self.positions[player.id], (dx, dy))
             disc.heading = (dx, dy)
             newly_thrown.add(player.id)
             result.narrative.append(f"{player.key} throws their disc {dname}.")
