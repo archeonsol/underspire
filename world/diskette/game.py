@@ -210,7 +210,7 @@ class DisketteGame:
 
     def _cancel_timers(self):
         for t in (self._timer, self._warn_timer):
-            if t and not t.called and not t.cancelled:
+            if t and not t.called:
                 try:
                     t.cancel()
                 except Exception:

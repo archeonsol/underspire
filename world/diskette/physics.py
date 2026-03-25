@@ -149,6 +149,7 @@ class DisketteBoard:
         Returns TurnResult with narrative list.
         """
         result = TurnResult()
+        newly_thrown: set = set()
 
         def action_for(pid):
             return actions.get(pid) or {"type": "pass", "dir": None}
@@ -205,6 +206,7 @@ class DisketteBoard:
             disc.in_flight = True
             disc.pos = self.positions[player.id]
             disc.heading = (dx, dy)
+            newly_thrown.add(player.id)
             result.narrative.append(f"{player.key} throws their disc {dname}.")
 
         # ── 5. Reflect actions ────────────────────────────────────────────────
@@ -290,6 +292,8 @@ class DisketteBoard:
         for player in self.players:
             if player.id in result.catches:
                 continue  # already caught this turn
+            if player.id in newly_thrown:
+                continue  # just threw — disc hasn't moved yet, don't catch it back
             disc = self.discs[player.id]
             if disc.in_flight and disc.pos == self.positions[player.id]:
                 disc.in_flight = False

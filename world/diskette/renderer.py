@@ -1,79 +1,91 @@
 """
 Diskette — ASCII board renderer.
 
-Board layout (columns A-F, rows 1-6):
+Board layout (columns 1-6 left-to-right, rows A-F top-to-bottom):
 
-      A   B   C   D   E   F
-   1 [ ] [1] [ ] [ ] [ ] [ ]
-   2 [ ] [ ] [ ] [ ] [ ] [ ]
-   3 [ ] [ ] [ ] [ ] [ ] [ ]
-   4 [ ] [ ] [ ] [ ] [ ] [ ]
-   5 [ ] [ ] [ ] [ ] [ ] [ ]
-   6 [ ] [ ] [ ] [ ] [2] [ ]
+     1   2   3   4   5   6
+   ┌───────────────────────┐
+ A │|_|                   │
+   │   ·   ·   ·   ·   ·   │
+ B │                       │
+   │   ·   ·   ·   ·   ·   │
+ ...
+ F │                   (_)│
+   └───────────────────────┘
 
-Symbols:
-  1 / 2   — player slot
-  *       — disc (in flight)
-  @       — player on own disc tile (holding or same-tile pre-catch)
-  !       — player on enemy disc tile (about to be hit)
-  (space) — empty
+Symbols (3 chars each):
+  |_|  — player 1 (P1)
+  |x|  — player 1 with own disc on same tile
+  (_)  — player 2 (P2)
+  (o)  — player 2 with own disc on same tile
+   x   — P1 disc in flight (no player)
+   o   — P2 disc in flight (no player)
+       — empty (3 spaces)
 """
-from world.diskette.physics import COLS, ROWS, DisketteBoard
+from world.diskette.physics import DisketteBoard
+
+_ROW_LABELS = "ABCDEF"
+_COL_LABELS = "123456"
+
+# Interior: 6 cells × 3 chars + 5 separators = 23 chars
+_BORDER_TOP    = "   ┌───────────────────────┐"
+_BORDER_BOTTOM = "   └───────────────────────┘"
+_SEPARATOR_ROW = "   │   ·   ·   ·   ·   ·   │"
+_COL_HEADER    = "     1   2   3   4   5   6"
+
+
+def _build_row(cells: list[str]) -> str:
+    """
+    Join 6 three-char cell strings into a 23-char interior string.
+    Cells are separated by a single space (invisible in content rows).
+    """
+    return " ".join(cells)
 
 
 def render_board(board: DisketteBoard) -> str:
     p1, p2 = board.players
 
-    # Build lookup: (col, row) → symbol
-    # Layering priority: hit > player+disc > disc > player
-    grid = {}
+    d1 = board.discs[p1.id]
+    d2 = board.discs[p2.id]
 
-    # Discs first (background layer)
-    for owner in (p1, p2):
-        disc = board.discs[owner.id]
-        if disc.in_flight:
-            pos = disc.pos
-            grid[pos] = grid.get(pos, "") + "disc"
+    pos1 = board.positions[p1.id]
+    pos2 = board.positions[p2.id]
 
-    # Players on top
-    for slot, player in enumerate((p1, p2), start=1):
-        pos = board.positions[player.id]
-        existing = grid.get(pos, "")
+    lines = [_COL_HEADER, _BORDER_TOP]
 
-        # Determine what disc is at this tile, if any
-        own_disc = board.discs[player.id]
-        other = p2 if slot == 1 else p1
-        enemy_disc = board.discs[other.id]
-
-        own_here = own_disc.in_flight and own_disc.pos == pos
-        enemy_here = enemy_disc.in_flight and enemy_disc.pos == pos
-
-        if enemy_here:
-            grid[pos] = "!"   # player + enemy disc = hit indicator
-        elif own_here:
-            grid[pos] = "@"   # player + own disc
-        else:
-            grid[pos] = str(slot)
-
-    # Discs with no player on them
-    for owner in (p1, p2):
-        disc = board.discs[owner.id]
-        if disc.in_flight:
-            pos = disc.pos
-            if pos not in grid or grid[pos] == "disc":
-                grid[pos] = "*"
-
-    # Render
-    col_header = "      " + "   ".join(COLS)
-    rows_rendered = []
-    for ry, row_label in enumerate(ROWS):
+    for ry in range(6):
+        row_label = _ROW_LABELS[ry]
         cells = []
         for cx in range(6):
-            sym = grid.get((cx, ry), " ")
-            cells.append(f"[{sym}]")
-        rows_rendered.append(f"   {row_label} " + " ".join(cells))
+            tile = (cx, ry)
 
-    return col_header + "\n" + "\n".join(rows_rendered)
+            p1_here = pos1 == tile
+            p2_here = pos2 == tile
+            d1_here = d1.in_flight and d1.pos == tile
+            d2_here = d2.in_flight and d2.pos == tile
+
+            if p1_here:
+                sym = "|x|" if d1_here else "|_|"
+            elif p2_here:
+                sym = "(o)" if d2_here else "(_)"
+            elif d1_here:
+                sym = " x "
+            elif d2_here:
+                sym = " o "
+            else:
+                sym = "   "
+
+            cells.append(sym)
+
+        content = _build_row(cells)
+        lines.append(f" {row_label} │{content}│")
+
+        # Separator after every row except the last
+        if ry < 5:
+            lines.append(_SEPARATOR_ROW)
+
+    lines.append(_BORDER_BOTTOM)
+    return "\n".join(lines)
 
 
 def render_scores(game) -> str:
