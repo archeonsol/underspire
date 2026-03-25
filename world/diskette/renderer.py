@@ -68,6 +68,8 @@ def render_board(board: DisketteBoard, scores: dict = None, round_num: int = Non
                 sym = "[x]" if board.armed[p1.id] else "[_]"
             elif p2_here:
                 sym = "(o)" if board.armed[p2.id] else "( )"
+            elif d1_here and d2_here:
+                sym = " @ "
             elif d1_here:
                 sym = " x "
             elif d2_here:
