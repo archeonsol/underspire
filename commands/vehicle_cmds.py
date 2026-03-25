@@ -175,12 +175,6 @@ class CmdMount(Command):
         if not self.args:
             caller.msg("Mount what? Usage: mount <bike>")
             return
-        if getattr(caller.db, "mounted_on", None):
-            caller.msg("You're already on a bike. Dismount first.")
-            return
-        if _get_vehicle_from_caller(caller) and not getattr(caller.db, "mounted_on", None):
-            caller.msg("You're inside a vehicle. Exit first.")
-            return
         target = caller.search(self.args.strip(), location=caller.location)
         if not target:
             return
@@ -192,27 +186,7 @@ class CmdMount(Command):
         if not isinstance(target, Motorcycle) and getattr(target.db, "vehicle_type", None) != "motorcycle":
             caller.msg("That's not a motorcycle.")
             return
-        if getattr(target.db, "rider", None):
-            caller.msg("Someone is already on that bike.")
-            return
-        if getattr(target.db, "locked", False):
-            caller.msg("It's locked.")
-            return
-        target.db.rider = caller
-        target.db.driver = caller
-        caller.db.mounted_on = target
-        tlab = vehicle_label(target)
-        caller.msg(f"You swing onto {tlab}. Use |wstart|n, then |wdrive <direction>|n.")
-        loc = caller.location
-        if loc and msg_room_with_character_display:
-            msg_room_with_character_display(
-                loc,
-                caller,
-                lambda _v, display: f"{display} mounts {tlab}.",
-                exclude=[caller],
-            )
-        elif loc:
-            loc.msg_contents(f"{caller.key} mounts {tlab}.", exclude=caller)
+        target.at_enter(caller)
 
 
 class CmdDismount(Command):

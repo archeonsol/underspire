@@ -1042,9 +1042,6 @@ class Vehicle(ComponentHolderMixin, MatrixIdMixin, EnterableMixin, Object):
         if getattr(caller.db, "in_vehicle", None) or getattr(caller.db, "mounted_on", None):
             caller.msg("You are already inside or on a vehicle. Exit or dismount first.")
             return
-        if not getattr(self.db, "has_interior", True):
-            caller.msg("That is not a vehicle you can enter.")
-            return
         interior = self.interior
         if not interior:
             caller.msg("That is not a vehicle you can enter.")
@@ -1138,7 +1135,33 @@ class Motorcycle(Vehicle):
         return None
 
     def at_enter(self, caller):
-        caller.msg("That's an open bike. Use |wmount <bike>|n.")
+        """Mount this motorcycle (called by CmdEnter or CmdMount)."""
+        if getattr(caller.db, "mounted_on", None):
+            caller.msg("You're already on a bike. Dismount first.")
+            return
+        if getattr(caller.db, "in_vehicle", None):
+            caller.msg("You're inside a vehicle. Exit first.")
+            return
+        if getattr(self.db, "rider", None):
+            caller.msg("Someone is already on that bike.")
+            return
+        if getattr(self.db, "locked", False):
+            caller.msg("It's locked.")
+            return
+        self.db.rider = caller
+        self.db.driver = caller
+        caller.db.mounted_on = self
+        tlab = vehicle_label(self)
+        caller.msg(f"You swing onto {tlab}. Use |wstart|n, then |wdrive <direction>|n.")
+        loc = caller.location
+        try:
+            from world.rp_features import msg_room_with_character_display as _mrwcd
+        except ImportError:
+            _mrwcd = None
+        if loc and _mrwcd:
+            _mrwcd(loc, caller, lambda _v, display: f"{display} mounts {tlab}.", exclude=[caller])
+        elif loc:
+            loc.msg_contents(f"{caller.key} mounts {tlab}.", exclude=caller)
 
 
 class AerialVehicle(Vehicle):
