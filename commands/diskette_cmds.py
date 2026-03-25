@@ -1,8 +1,8 @@
 """
-Diskette — arena entry command (global) and in-game commands (room CmdSet).
+Diskette — in-game commands (room CmdSet).
 """
 from evennia import CmdSet
-from commands.command import Command
+from commands.base_cmds import Command
 from world.diskette.physics import DIRS
 
 
@@ -213,63 +213,3 @@ class DisketteArenaCmdSet(CmdSet):
         self.add(CmdDisketteLeave())
 
 
-# ── Global enter command ──────────────────────────────────────────────────────
-
-class CmdEnterDisketteArena(Command):
-    """
-    Enter a Diskette arena to play disc combat.
-    Usage: enter <arena name>
-    Max two players. Type 'start game' once both are inside.
-    """
-    key = "enter"
-    locks = "cmd:all()"
-    help_category = "Diskette"
-    usage_typeclasses = ["typeclasses.diskette.arena.DisketteArena"]
-    usage_hint = "|wenter|n <arena> (to enter the disc arena)"
-
-    def func(self):
-        caller = self.caller
-        if not self.args:
-            caller.msg("Enter what? Usage: enter <arena name>")
-            return
-
-        # Block if already in an arena
-        if getattr(caller.db, "in_diskette_arena", None):
-            caller.msg("You are already in a Diskette arena. Type |wleave|n to exit.")
-            return
-
-        arena = caller.search(self.args.strip(), location=caller.location)
-        if not arena:
-            return
-
-        try:
-            from typeclasses.diskette.arena import DisketteArena
-        except ImportError:
-            caller.msg("Diskette system unavailable.")
-            return
-
-        if not isinstance(arena, DisketteArena):
-            caller.msg("That is not a Diskette arena.")
-            return
-
-        interior = arena.interior
-        if not interior:
-            caller.msg("That arena has no interior. Contact staff.")
-            return
-
-        # Check capacity
-        players_inside = [obj for obj in interior.contents if obj.has_account]
-        if len(players_inside) >= 2:
-            caller.msg("The arena is full. Watch from here.")
-            return
-
-        if not caller.move_to(interior, quiet=True, move_type="teleport"):
-            caller.msg("You couldn't enter the arena.")
-            return
-
-        caller.db.in_diskette_arena = arena
-        caller.msg(f"You step into {arena.key}.")
-        if arena.location:
-            arena.location.msg_contents(
-                f"{caller.key} enters the Diskette Arena.", exclude=caller
-            )

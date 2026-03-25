@@ -7,13 +7,14 @@ DisketteArenaInterior — the Room players move into when they enter
 from evennia.utils.create import create_object
 from evennia.utils.search import search_tag
 
+from typeclasses.mixins.enterable import EnterableMixin
 from typeclasses.objects import Object
 from typeclasses.rooms import Room
 
 DISKETTE_INTERIOR_TAG = "diskette_interior"
 
 
-class DisketteArena(Object):
+class DisketteArena(EnterableMixin, Object):
     """
     The arena object. Place this in a MatrixNode stadium room.
     Players enter with: enter diskette arena
@@ -81,6 +82,29 @@ class DisketteArena(Object):
             lines.append(f"Players inside: {names}")
 
         return "\n".join(lines)
+
+    def at_enter(self, caller):
+        """Handle a character entering the arena (called by CmdEnter)."""
+        if getattr(caller.db, "in_diskette_arena", None):
+            caller.msg("You are already in a Diskette arena. Type |wleave|n to exit.")
+            return
+        interior = self.interior
+        if not interior:
+            caller.msg("That arena has no interior. Contact staff.")
+            return
+        players_inside = [obj for obj in interior.contents if obj.has_account]
+        if len(players_inside) >= 2:
+            caller.msg("The arena is full. Watch from here.")
+            return
+        if not caller.move_to(interior, quiet=True, move_type="teleport"):
+            caller.msg("You couldn't enter the arena.")
+            return
+        caller.db.in_diskette_arena = self
+        caller.msg(f"You step into {self.key}.")
+        if self.location:
+            self.location.msg_contents(
+                f"{caller.key} enters the Diskette Arena.", exclude=caller
+            )
 
 
 class DisketteArenaInterior(Room):

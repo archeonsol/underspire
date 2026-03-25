@@ -100,7 +100,6 @@ from commands.lock_cmds import CmdLock, CmdUnlock
 # vehicle_cmds
 from commands.vehicle_cmds import (
     _get_vehicle_from_caller,
-    CmdEnterVehicle,
     CmdExitVehicle,
     CmdMount,
     CmdDismount,
@@ -119,9 +118,6 @@ from commands.vehicle_cmds import (
     CmdRepairPart,
 )
 from commands.tunnel_cmds import CmdAutopilot
-
-# diskette_cmds
-from commands.diskette_cmds import CmdEnterDisketteArena
 
 # roleplay_cmds
 from commands.roleplay_cmds import (
