@@ -35,6 +35,13 @@ def end_game(game: "DisketteGame"):
         _BY_PLAYER.pop(p.id, None)
 
 
+def start_practice(interior, player, bot) -> "DisketteGame":
+    """Create a practice game against the AI bot and register it."""
+    game = DisketteGame(interior, [player, bot], bot=bot)
+    _BY_PLAYER[player.id] = game
+    return game
+
+
 class DisketteGame:
     """
     Tracks all state for a Diskette match between two players.
@@ -45,9 +52,10 @@ class DisketteGame:
         match_over  — match finished
     """
 
-    def __init__(self, interior, players: list):
+    def __init__(self, interior, players: list, bot=None):
         self.interior = interior        # DisketteArenaInterior room
-        self.players = list(players)    # [p1, p2]
+        self.players = list(players)    # [p1, p2] — p2 may be a DisketteBot
+        self.bot = bot                  # DisketteBot instance or None
         self.scores = {p.id: 0 for p in players}
         self.round_num = 0
         self.turn_num = 0
@@ -166,6 +174,8 @@ class DisketteGame:
 
         # Eject loser from arena after a moment
         def _eject():
+            if loser is self.bot:
+                return  # bot has no location or db
             if loser and loser.location == self.interior:
                 stadium = getattr(self.interior.db, "arena", None)
                 stadium = getattr(stadium, "location", None)
@@ -186,6 +196,17 @@ class DisketteGame:
     def _start_timer(self):
         self._timer = delay(15, self.resolve_turn)
         self._warn_timer = delay(10, self._warn_5s)
+        if self.bot:
+            self._submit_bot_action()
+
+    def _submit_bot_action(self):
+        """Immediately generate and lock in the bot's action for this turn."""
+        if self.state != "active" or self.bot.id in self.pending_actions:
+            return
+        from world.diskette.ai import choose_action
+        human = self._other(self.bot)
+        action = choose_action(self.board, self.bot.id, human.id)
+        self.pending_actions[self.bot.id] = action
 
     def _cancel_timers(self):
         for t in (self._timer, self._warn_timer):

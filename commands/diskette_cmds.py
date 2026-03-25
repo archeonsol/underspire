@@ -134,6 +134,39 @@ class CmdDisketteStart(Command):
         game.start_round()
 
 
+class CmdDiskettePractice(Command):
+    """
+    Start a practice match against the AI. Must be alone in the arena.
+    Usage: practice
+    The AI plays randomly — good for learning the mechanics.
+    """
+    key = "practice"
+    locks = "cmd:all()"
+    help_category = "Diskette"
+
+    def func(self):
+        interior = self.caller.location
+        players = [obj for obj in interior.contents if obj.has_account]
+
+        if len(players) != 1:
+            self.caller.msg(
+                "Practice mode is for solo players only. "
+                "Use |wstart game|n when two players are present."
+            )
+            return
+
+        game = _get_game(self.caller)
+        if game and game.state == "active":
+            self.caller.msg("A match is already in progress.")
+            return
+
+        from world.diskette.game import start_practice
+        from world.diskette.ai import DisketteBot
+        bot = DisketteBot()
+        game = start_practice(interior, self.caller, bot)
+        game.start_round()
+
+
 class CmdDisketteLeave(Command):
     """
     Leave the Diskette arena.
@@ -176,6 +209,7 @@ class DisketteArenaCmdSet(CmdSet):
         self.add(CmdDisketteReflect())
         self.add(CmdDiskettePass())
         self.add(CmdDisketteStart())
+        self.add(CmdDiskettePractice())
         self.add(CmdDisketteLeave())
 
 
