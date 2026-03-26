@@ -30,6 +30,14 @@ def at_server_start():
     This is called every time the server starts up, regardless of
     how it was shut down.
     """
+    # Auto-apply any pending Django migrations (idempotent — no-op if up to date).
+    try:
+        from django.core.management import call_command
+        call_command("migrate", interactive=False, verbosity=0)
+    except Exception as _migrate_exc:
+        import logging as _logging
+        _logging.getLogger("evennia").warning(f"[at_server_start] migrate failed: {_migrate_exc}")
+
     from evennia import create_channel, search_channel
     from world.rpg.language import ensure_lore_languages
     from world.combat.tickers import cleanup_orphaned_combat_tickers
