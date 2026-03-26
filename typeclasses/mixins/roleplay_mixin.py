@@ -274,7 +274,7 @@ class RoleplayMixin:
             from world.rp_features import get_display_name_for_viewer
             from world.skin_tones import format_ic_character_name
 
-            plain = get_display_name_for_viewer(self, viewer)
+            plain = self.get_display_name(viewer)
             obj_name = format_ic_character_name(self, viewer, plain)
             if voice_phrase and voice_perception_check(viewer, self):
                 line = '%s says in a %s, "*speaking in a %s* %s"' % (obj_name, voice_phrase, voice_phrase, speech)
@@ -288,7 +288,7 @@ class RoleplayMixin:
         try:
             from world.rp_features import get_display_name_for_viewer
             from world.skin_tones import format_ic_character_name
-            plain_neutral = get_display_name_for_viewer(self, None)
+            plain_neutral = self.get_display_name(None)
             obj_neutral = format_ic_character_name(self, None, plain_neutral)
             if voice_phrase:
                 relay_line = '%s says in a %s, "*speaking in a %s* %s"' % (obj_neutral, voice_phrase, voice_phrase, message)
