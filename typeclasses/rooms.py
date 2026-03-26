@@ -628,10 +628,14 @@ class Room(MatrixIdMixin, ObjectParent, DefaultRoom):
         characters = self.filter_visible(
             self.contents_get(content_type="character"), looker, **kwargs
         )
-        # Be defensive: only treat true Characters (avoid edge cases where non-characters slip in)
+        # Be defensive: only treat true Characters/Avatars (avoid edge cases where non-characters slip in)
         try:
             from evennia.utils.utils import inherits_from
-            characters = [c for c in characters if inherits_from(c, "typeclasses.characters.Character")]
+            characters = [
+                c for c in characters
+                if inherits_from(c, "typeclasses.characters.Character")
+                or inherits_from(c, "typeclasses.matrix.avatars.MatrixAvatar")
+            ]
         except Exception:
             pass
         # Corpses are objects, not character poses; show them in "You see" line only

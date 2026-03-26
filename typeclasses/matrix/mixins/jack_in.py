@@ -361,11 +361,11 @@ class JackInMixin(NetworkedMixin):
             logger.log_err(f"Cannot create avatar for {character}: no Matrix ID.")
             return None
 
-        # Search for an existing avatar belonging to this matrix identity.
-        # We key on matrix_id, not entry_device — the rig is just hardware.
-        # Avatar keys always follow "{matrix_id} (Avatar)" (enforced at creation),
+        # Search for an existing avatar belonging to this character.
+        # We key on character.key, not matrix_id — the key is stable and character-scoped.
+        # Avatar keys always follow "{character.key} (Avatar)" (enforced at creation),
         # so we can use an indexed db_key lookup instead of a full table scan.
-        avatar = MatrixAvatar.objects.filter(db_key=f"{char_matrix_id} (Avatar)").first()
+        avatar = MatrixAvatar.objects.filter(db_key=f"{character.key} (Avatar)").first()
         if avatar and getattr(avatar.db, 'dead', False):
             avatar = None
 
@@ -383,22 +383,16 @@ class JackInMixin(NetworkedMixin):
                 avatar.location = target_node
 
         if not avatar:
-            matrix_id = char_matrix_id
-            if not matrix_id:
-                from evennia.utils import logger
-                logger.log_err(f"Cannot create avatar for {character}: no Matrix ID.")
-                return None
-
             avatar = create_object(
                 MatrixAvatar,
-                key=f"{matrix_id} (Avatar)",
+                key=f"{character.key} (Avatar)",
                 location=target_node
             )
 
             if not avatar:
                 return None
 
-            avatar.db.matrix_id = matrix_id
+            avatar.db.matrix_id = char_matrix_id
             avatar.db.desc = (
                 "A formless blob of data with limitless potential, "
                 "waiting to be shaped into something interesting."
@@ -407,6 +401,9 @@ class JackInMixin(NetworkedMixin):
             if needs_respawn:
                 character.msg("|yYour previous avatar was lost. Respawning...|n")
 
+        # Sync targeting aliases whenever we get or create an avatar, so matrix_id
+        # and alias are always searchable even if the avatar predates this system.
+        avatar._sync_matrix_aliases()
         return avatar
 
     def _apply_disconnect_consequences(self, character, severity):

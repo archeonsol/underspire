@@ -71,14 +71,35 @@ class MatrixAvatar(RoleplayMixin, FurnitureMixin, DefaultCharacter):
         alias = rig.get_active_alias()
         if alias is not None:
             self.db.matrix_alias = alias
+        self._sync_matrix_aliases()
+
+    def _sync_matrix_aliases(self):
+        """
+        Rebuild Evennia search aliases from matrix_id and matrix_alias so players can
+        target this avatar by handle (jazzy, ^N7AIK4, N7AIK4, etc.) without the @ prefix.
+        """
+        self.aliases.clear()
+        mid = self.db.matrix_id or ""
+        alias = self.db.matrix_alias or ""
+        if mid:
+            self.aliases.add(mid)
+            stripped = mid.lstrip("^")
+            if stripped and stripped != mid:
+                self.aliases.add(stripped)
+        if alias:
+            self.aliases.add(alias)
 
     def get_display_name(self, looker, **kwargs):
         """
-        Display name for this avatar. Shows alias if set, raw matrix ID if not,
-        falling back to key.
-
-        The @ prefix signals to observers that this is a Matrix identity.
+        Display name for this avatar. Checks recog first (so manually set recogs still
+        work), then shows @alias or @matrixid. Identity in the Matrix is public — no
+        introduction needed.
         """
+        if looker and looker != self:
+            if hasattr(looker, "recog") and callable(getattr(looker.recog, "get", None)):
+                recog = looker.recog.get(self)
+                if recog:
+                    return recog
         if self.db.matrix_alias:
             return f"|431@{self.db.matrix_alias}|n"
         if self.db.matrix_id:

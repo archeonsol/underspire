@@ -866,6 +866,11 @@ class CmdRecog(Command):
             caller.msg("Multiple people match. Be specific: |w1-%s as %s|n or |w2-%s as %s|n etc." % (sdesc_part, name_part, sdesc_part, name_part))
             return
         target = matches[0]
+        # Matrix avatars have public identities — no recog needed or allowed.
+        from typeclasses.matrix.avatars import MatrixAvatar
+        if isinstance(target, MatrixAvatar):
+            caller.msg("In the Matrix, identities are public. You already know who that is.")
+            return
         # Decide whether this is a normal or helmet-only recog based on target's current appearance.
         if character_has_mask_or_helmet(target):
             # Helmet/mask on: set a temporary overlay that only applies while their face is hidden.
