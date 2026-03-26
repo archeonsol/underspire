@@ -6,7 +6,10 @@ toward the cap (tracked in xp_spent_on_languages) so characters can earn that XP
 Skills: stored = display (0-150). Levels 0-80 = level*0.5; 81+ from world.constants.SKILL_XP_CURVE_LATE.
 Stats: stored 0-300, display = stored//2 (via character.get_display_stat). Cost: 2.0 to 180, then exponential.
 """
+import logging
 import time
+
+logger = logging.getLogger("evennia")
 
 from world.constants import SKILL_XP_CURVE_LATE
 from world.levels import MAX_LEVEL, MAX_STAT_LEVEL, letter_to_level_range
@@ -269,6 +272,10 @@ def _daily_xp_catchup():
     """
     try:
         from evennia import SESSION_HANDLER
+    except Exception as exc:
+        logger.warning("[xp_daily_catchup] import unavailable, skipping: %s", exc)
+        return
+    try:
         for session in SESSION_HANDLER.get_sessions():
             try:
                 char = session.get_puppet()
@@ -277,10 +284,10 @@ def _daily_xp_catchup():
                 granted, _ = grant_pending_xp(char)
                 if granted:
                     char.msg(f"|g[XP] Daily catch-up: +{granted} XP.|n")
-            except Exception:
-                continue
-    except Exception:
-        pass
+            except Exception as exc:
+                logger.warning("[xp_daily_catchup] skipped session %r: %s", session, exc)
+    except Exception as exc:
+        logger.error("[xp_daily_catchup] failed: %s", exc, exc_info=True)
 
 
 def register_xp_jobs(sched):

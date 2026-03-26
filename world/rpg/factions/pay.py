@@ -7,9 +7,12 @@ All wallet mutations go through economy helpers so the transaction log stays
 consistent across faction pay, shop purchases, and manual transfers.
 """
 
+import logging
 import time
 
 from world.rpg.factions.membership import _log_faction_event, get_member_rank
+
+logger = logging.getLogger("evennia")
 
 PAY_COOLDOWN_SECONDS = 7 * 24 * 60 * 60  # 7 days
 
@@ -104,6 +107,10 @@ def _weekly_faction_pay_announcement():
     try:
         from evennia import SESSION_HANDLER
         from world.rpg.factions import get_character_factions
+    except Exception as exc:
+        logger.warning("[faction_pay_announcement] import unavailable, skipping: %s", exc)
+        return
+    try:
         for session in SESSION_HANDLER.get_sessions():
             try:
                 char = session.get_puppet()
@@ -112,10 +119,10 @@ def _weekly_faction_pay_announcement():
                 factions = get_character_factions(char)
                 if factions:
                     char.msg("|g[FACTION] Weekly pay is now available at your faction terminal.|n")
-            except Exception:
-                continue
-    except Exception:
-        pass
+            except Exception as exc:
+                logger.warning("[faction_pay_announcement] skipped session %r: %s", session, exc)
+    except Exception as exc:
+        logger.error("[faction_pay_announcement] failed: %s", exc, exc_info=True)
 
 
 def _weekly_faction_economy_log_flush():
@@ -127,6 +134,10 @@ def _weekly_faction_economy_log_flush():
     cutoff = _time.time() - (30 * 24 * 3600)
     try:
         from typeclasses.characters import Character
+    except Exception as exc:
+        logger.warning("[faction_economy_log_flush] import unavailable, skipping: %s", exc)
+        return
+    try:
         for char in Character.objects.all():
             try:
                 log = getattr(char.db, "faction_log", None)
@@ -137,10 +148,10 @@ def _weekly_faction_economy_log_flush():
                 ]
                 if len(trimmed) != len(log):
                     char.db.faction_log = trimmed
-            except Exception:
-                continue
-    except Exception:
-        pass
+            except Exception as exc:
+                logger.warning("[faction_economy_log_flush] skipped %r: %s", char, exc)
+    except Exception as exc:
+        logger.error("[faction_economy_log_flush] failed: %s", exc, exc_info=True)
 
 
 def register_pay_jobs(sched):

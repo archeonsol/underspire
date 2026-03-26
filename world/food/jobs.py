@@ -29,7 +29,8 @@ def _weekly_bar_register_log_clear():
             if getattr(bar.db, "register_log", None):
                 bar.db.register_log = []
                 cleared += 1
-        except Exception:
+        except Exception as exc:
+            logger.warning("[bar_register_log_clear] skipped %r: %s", bar, exc)
             continue
 
     try:

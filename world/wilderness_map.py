@@ -23,9 +23,13 @@ From your city gate room, create an exit with typeclass
 typeclasses.wilderness_exit.OutsideToWildernessExit.
 """
 
+import logging
+
 from evennia import create_object
 from evennia.contrib.grid import wilderness
 from evennia.utils.search import search_object
+
+logger = logging.getLogger("evennia")
 
 # ---------------------------------------------------------------------------
 # OpenSimplex noise for organic biome generation
@@ -371,8 +375,8 @@ def _refresh_wilderness_scavenge_density():
     try:
         from world.wilderness_graph import invalidate_wilderness_graph
         invalidate_wilderness_graph()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.error("[wilderness_density_refresh] failed: %s", exc, exc_info=True)
 
 
 def register_wilderness_jobs(sched):

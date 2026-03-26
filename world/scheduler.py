@@ -25,6 +25,7 @@ Public API:
 
 import logging
 
+from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_MISSED
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.jobstores.memory import MemoryJobStore
 
@@ -94,7 +95,21 @@ def get_scheduler() -> BackgroundScheduler:
             },
             timezone="UTC",
         )
+        _scheduler.add_listener(_on_job_error, EVENT_JOB_ERROR)
+        _scheduler.add_listener(_on_job_missed, EVENT_JOB_MISSED)
     return _scheduler
+
+
+def _on_job_error(event):
+    logger.error(
+        "[scheduler] Job '%s' raised an exception: %s",
+        event.job_id, event.exception,
+        exc_info=event.traceback,
+    )
+
+
+def _on_job_missed(event):
+    logger.warning("[scheduler] Job '%s' missed its scheduled run", event.job_id)
 
 
 def start_scheduler():
@@ -205,7 +220,8 @@ def _infection_tick_job():
     try:
         from typeclasses.characters import Character
         from world.medical.infection import apply_infection_tick
-    except Exception:
+    except Exception as exc:
+        logger.warning("[infection_tick] import unavailable, skipping: %s", exc)
         return
     for batch in _chunked(Character.objects.iterator(), 100):
         for char in batch:
@@ -219,8 +235,8 @@ def _infection_tick_job():
                 ):
                     continue
                 apply_infection_tick(char)
-            except Exception:
-                continue
+            except Exception as exc:
+                logger.warning("[infection_tick] skipped %r: %s", char, exc)
 
 
 def _addiction_tick_job():
@@ -233,7 +249,8 @@ def _addiction_tick_job():
     try:
         from typeclasses.characters import Character
         from world.alchemy.addiction import _tick_character_addiction
-    except Exception:
+    except Exception as exc:
+        logger.warning("[addiction_tick] import unavailable, skipping: %s", exc)
         return
     for batch in _chunked(Character.objects.iterator(), 100):
         for char in batch:
@@ -241,8 +258,8 @@ def _addiction_tick_job():
                 if not getattr(char.db, "addictions", None):
                     continue
                 _tick_character_addiction(char)
-            except Exception:
-                continue
+            except Exception as exc:
+                logger.warning("[addiction_tick] skipped %r: %s", char, exc)
 
 
 def _wilderness_respawn_job():
@@ -252,12 +269,13 @@ def _wilderness_respawn_job():
     """
     try:
         from typeclasses.characters import Character
-    except Exception:
+    except Exception as exc:
+        logger.warning("[wilderness_respawn] import unavailable, skipping: %s", exc)
         return
     for batch in _chunked(Character.objects.iterator(), 100):
         for char in batch:
             try:
                 if getattr(char.db, "scavenge_location_cooldowns", None):
                     char.db.scavenge_location_cooldowns = {}
-            except Exception:
-                continue
+            except Exception as exc:
+                logger.warning("[wilderness_respawn] skipped %r: %s", char, exc)
