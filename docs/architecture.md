@@ -17,7 +17,7 @@ Cyberpunk MUD built on [Evennia](https://www.evennia.com/) (Python game engine, 
 - `object.db.key = value` — persisted to DB; survives server reloads
 - `object.ndb.key = value` — in-memory only; cleared on reload
 
-Server lifecycle hooks live in `server/conf/at_server_startstop.py`. On startup it creates all persistent scripts and OOC channels.
+Server lifecycle hooks live in `server/conf/at_server_startstop.py`. On startup it calls `Script.ensure()` for each global ticking script, creates OOC channels, and initializes subsystems (scheduler, help index, profiling baselines). Global state that doesn't need timer behavior lives in `ServerConfig` (climate), Django models (`world/models.py`), or module-level variables (profiling) — not in scripts.
 
 ---
 

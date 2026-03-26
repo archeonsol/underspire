@@ -47,6 +47,40 @@ Grouping related state into a single dict attribute halves or thirds the write c
 
 ## 2. Scripts and Tickers
 
+### Choosing the right storage primitive
+
+Scripts are for **timed behavior**. Do not use them as a database. When you need persistent global state, choose the right tool for the shape of the data:
+
+| What you need | Use |
+|---|---|
+| Ephemeral global state (reset on reload) | Module-level variables in the relevant `world/` module |
+| Small number of named config values | `ServerConfig.objects.conf(key, value)` / `conf(key, default=X)` |
+| Growing or queryable collection of records | Django model in `world/models.py` |
+| Global timed/periodic behavior | Script with `ensure()` (see below) |
+
+**Anti-pattern — Script as data store:**
+
+```python
+# Bad: script with interval=0 and persistent=True used as a DB row
+class StaffPendingScript(Script):
+    def at_script_creation(self):
+        self.interval = 0
+        self.persistent = True
+        self.db.pending = []   # pickled list stored in AttributeDB
+
+# Also bad: ephemeral state in a script's ndb
+class ProfilingScript(Script):
+    pass  # all data lives on self.ndb — survives nothing, gains nothing
+```
+
+A zero-interval Script has the overhead of the typeclass system, attribute serialization, and a persistent DB row — but provides no timer, no lifecycle beyond a plain object, and no queryability. The data ends up in `AttributeDB` as a pickled blob that SQL cannot filter on.
+
+**Correct replacements:**
+- `StaffPendingScript` → `PendingJob` Django model (`world/models.py`)
+- `PCNoteStorage` → `PCNote` Django model (`world/models.py`)
+- `GlobalClimateScript` → `ServerConfig` keys (`CLIMATE_*`)
+- `ProfilingScript` → module-level dicts in `world/profiling.py`
+
 ### Global scripts, not per-object
 
 A single global script that fans out to all affected objects in `at_repeat()` is almost always right. Creating one script per character (e.g. a `StaminaRegenScript` per character) creates N script rows, N ticker registrations, and fires N callbacks per tick.
@@ -57,19 +91,34 @@ This codebase does it correctly: `StaminaRegenScript`, `BleedingTickScript`, `Ma
 
 Always set this on ticking global scripts. Without it, the first tick fires immediately on every server restart, before everything is fully initialized.
 
-### Idempotent startup
+### Idempotent startup — the `ensure()` pattern
 
-Always guard `create_script` with an existence check. Never call it unconditionally — you will accumulate duplicate persistent scripts across reloads.
+Each global script class owns its own registration via a classmethod. `at_server_start` calls `Script.ensure()` for each — a no-op if the script already exists, a creation if it doesn't.
 
 ```python
-# at_server_startstop.py — correct pattern
-if not ScriptDB.objects.filter(db_key="stamina_regen").first():
-    create_script("typeclasses.scripts.StaminaRegenScript", ...)
+class StaminaRegenScript(Script):
+    @classmethod
+    def ensure(cls):
+        from evennia.scripts.models import ScriptDB
+        if not ScriptDB.objects.filter(db_key="stamina_regen").exists():
+            from evennia import create_script
+            create_script(cls)  # pass the class, not a string — canonical path derived automatically
+
+    def at_script_creation(self):
+        self.key = "stamina_regen"
+        self.interval = STAMINA_REGEN_INTERVAL
+        self.repeats = 0
+        self.persistent = True
 ```
 
-### Zero-interval storage scripts
+`at_server_start` then becomes a clean loop:
 
-Scripts used as pure data stores should have `interval=0`, `repeats=0`, `autodelete=False`. They never tick, they just act as a keyed DB row you can attach attributes to. `PCNoteStorage` and `StaffPendingScript` follow this pattern correctly.
+```python
+for script_cls in (StaminaRegenScript, BleedingTickScript, ...):
+    script_cls.ensure()
+```
+
+This keeps registration logic co-located with the class definition and eliminates the boilerplate `ScriptDB.filter / create_script` blocks that used to live in `at_server_startstop.py`. Always pass the class object (not a string path) so the stored `db_typeclass_path` is canonical.
 
 ### TickerHandler vs Script
 
@@ -133,23 +182,11 @@ nodes_by_pk = {n.pk: n for n in MatrixNode.objects.filter(pk__in=needed_pks)}
 
 `jack_in.py` and `matrix_accounts.py` scan `MatrixAvatar.objects.all()` to find one avatar by `db.matrix_id` — O(N) per lookup. If avatar counts grow, an index dict on a global script's `ndb` (keyed by `matrix_id`, rebuilt in `at_start()`) reduces this to O(1).
 
-### Cache `search_script()` results
+### Avoid `search_script()` in hot paths
 
-`search_script("key")` is a database query. Don't call it in per-command paths or `at_repeat()` loops. Cache the result at the module level after the first fetch:
+`search_script("key")` is a database query. Don't call it in per-command paths or `at_repeat()` loops. If you genuinely need to look up a script at runtime, cache the result at the module level after the first fetch and clear it in `at_server_start()` after reload.
 
-```python
-_ACCOUNTS_SCRIPT = None
-
-def get_accounts_script():
-    global _ACCOUNTS_SCRIPT
-    if _ACCOUNTS_SCRIPT is None:
-        from evennia import search_script
-        results = search_script("matrix_accounts_registry")
-        _ACCOUNTS_SCRIPT = results[0] if results else None
-    return _ACCOUNTS_SCRIPT
-```
-
-Clear the cache in `at_server_start()` or after the script is recreated.
+That said, the need for `search_script()` caching is often a sign the data should not be in a script at all — see the storage primitive guide above.
 
 ### `select_related` for FK traversal
 
@@ -175,9 +212,9 @@ Loading an Evennia object from the DB is not free: it queries `ObjectDB`, import
 
 ## 5. Caching Strategies
 
-**Global script `ndb`** — the cheapest shared in-process cache. Store lookup dicts (avatar registry by matrix_id, active character registry) on a global script's `ndb`. Rebuild in `at_start()`. Zero-cost reads, survives until the next reload.
+**Module-level variables** — the cheapest shared in-process cache for both static data and ephemeral global state. Skill lists, prototype dicts, compiled regexes, and lookup tables all belong here. Ephemeral server metrics (profiling counters, command rates) also live here — there's no reason to route them through the Script system. State is reset on reload, which is usually the correct behavior for ephemeral data.
 
-**Module-level globals** — for static/constant data: skill lists, prototype dicts, compiled regexes, lookup tables. `world/` already uses this pattern throughout. Don't put mutable game state here.
+**Global script `ndb`** — useful when you need reload-volatile data attached to a specific script's lifecycle (e.g. an avatar registry index that should be rebuilt in `at_start()`). Prefer module-level variables when the data isn't tied to a script's lifecycle.
 
 **Per-object `ndb`** — per-object transient state. Used correctly throughout this codebase for performance state, combat flags, matrix connection tracking. Correct default for "only matters while this object is active."
 
