@@ -368,12 +368,7 @@ class CmdXp(Command):
                 return 0, 0.0, cur
             return levels_gained, total_spent, new_val
 
-        def format_insufficient_xp(get_cost_fn, cur, xp_available):
-            """
-            Inform the player that they don't have enough XP to perform the requested
-            advance, without revealing the exact XP cost or how close they are.
-            """
-
+        def format_insufficient_xp():
             caller.msg("You lack the XP required to raise that much right now.")
 
         if sub == "stat":
@@ -396,7 +391,7 @@ class CmdXp(Command):
                 cur, stat_cap, bulk_n, xp, get_stat_cost
             )
             if levels_gained == 0:
-                format_insufficient_xp(get_stat_cost, cur, xp)
+                format_insufficient_xp()
                 return
             spent_str = (
                 str(int(total_spent))
@@ -451,7 +446,7 @@ class CmdXp(Command):
                 cur, skill_cap, bulk_n, xp, get_skill_cost
             )
             if levels_gained == 0:
-                format_insufficient_xp(get_skill_cost, cur, xp)
+                format_insufficient_xp()
                 return
             label = SKILL_DISPLAY_NAMES.get(skill_key, skill_key.replace("_", " ").title())
             spent_str = (

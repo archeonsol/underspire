@@ -24,17 +24,6 @@ except ImportError:
             val = min(upper, val)
         return val
 
-try:
-    from boltons.cacheutils import LRU as _LRU
-    _stat_level_cache = _LRU(max_size=256)
-    _skill_level_cache = _LRU(max_size=256)
-    _LRU_AVAILABLE = True
-except ImportError:
-    _stat_level_cache = None
-    _skill_level_cache = None
-    _LRU_AVAILABLE = False
-
-
 # Time-based drip: 2 XP per 6-hour window, max 4 drops per 24h = 8 XP/day
 DROP_XP = 2
 DROP_INTERVAL_SECS = 6 * 3600
@@ -243,22 +232,16 @@ def grant_pending_xp(character):
     # Only grant for the most recent completed window if we haven't already
     if last_completed_window in already_got:
         return 0, 0
-    to_grant_windows = [last_completed_window]
-    drops_used = 1
-    if drops_used <= 0:
+    # Grant exactly one drop, capped at the gap to effective_cap (handles fractional XP near cap).
+    total_grant = min(DROP_XP, effective_cap - xp)
+    if total_grant <= 0:
         return 0, 0
 
-    total_grant = min(drops_used * DROP_XP, effective_cap - xp)
-    drops_used = int(total_grant // DROP_XP) if DROP_XP else 0
-    if drops_used <= 0:
-        return 0, 0
-
-    drop_window_ids.extend(to_grant_windows[:drops_used])
-    drop_window_ids = [w for w in drop_window_ids if w >= current_window - 4]
-    drop_window_ids = sorted(set(drop_window_ids))[-DROPS_PER_24H:]
+    drop_window_ids.append(last_completed_window)
+    drop_window_ids = sorted(set(w for w in drop_window_ids if w >= current_window - 4))[-DROPS_PER_24H:]
     character.db.xp_drop_window_ids = drop_window_ids
     character.db.xp = xp + total_grant
-    return total_grant, drops_used
+    return total_grant, 1
 
 
 # ---------------------------------------------------------------------------
