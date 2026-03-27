@@ -11,6 +11,7 @@ from world.multipuppet import multi_puppet_relay
 from world.theme_colors import ROOM_COLORS
 from typeclasses.mixins import FurnitureMixin, MedicalMixin, RPGCharacterMixin, RoleplayMixin
 from typeclasses.matrix.mixins.matrix_id import MatrixIdMixin
+from typeclasses.objects import ObjectParent
 
 
 def _body_parts(character):
@@ -158,7 +159,7 @@ def _puppet_become_and_look_no_room_broadcast(character):
         character.account.db._last_puppet = character
 
 
-class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, FurnitureMixin, DefaultCharacter):
+class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, FurnitureMixin, ObjectParent, DefaultCharacter):
     """
     The 'Colony' Core Engine.
     Uses a Qualitative Grade system (U through A, 21 letters) where:
@@ -220,7 +221,7 @@ class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, F
         # Use a dedicated dbkey so buffs live on character.db.buffs.
         return _SafeBuffHandler(self, dbkey="buffs", autopause=True)
 
-    @property
+    @lazy_property
     def death_fsm(self):
         """
         Return the DeathStateMachine for this character (created on first access).
@@ -635,15 +636,6 @@ class Character(MatrixIdMixin, RoleplayMixin, MedicalMixin, RPGCharacterMixin, F
         current = storage[0] if isinstance(storage, (list, tuple)) and storage else None
         if current != want_path:
             self.cmdset_storage = [want_path] if isinstance(storage, (list, tuple)) else [want_path]
-
-    def get_cmdsets(self, caller, current, **kwargs):
-        """Return cmdsets for merger. Never return None for current so the merger never hits 'NoneType' no_objs."""
-        cur = self.cmdset.current
-        stack = list(self.cmdset.cmdset_stack)
-        if cur is None:
-            from evennia.commands.cmdset import CmdSet
-            cur = CmdSet()  # empty fallback so merger does not crash
-        return cur, stack
 
     def _sync_body_descriptions(self):
         """

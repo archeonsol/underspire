@@ -58,9 +58,9 @@ class MatrixNode(Room):
         ephemeral_tag = " |y[Ephemeral]|n" if self.db.ephemeral else ""
         return f"{self.matrix_name_color}{name}{extra}{ephemeral_tag}|n"
 
-    def at_object_receive(self, moved_obj, source_location, **kwargs):
+    def at_pre_object_receive(self, moved_obj, source_location, **kwargs):
         """
-        Called when an object enters this node.
+        Called before an object enters this node. Returning False blocks the move.
 
         Prevents dropping items in ephemeral device nodes.
 
@@ -71,9 +71,9 @@ class MatrixNode(Room):
         """
         # Prevent dropping items in ephemeral nodes
         if self.db.ephemeral:
-            # Allow avatars to enter
+            # Allow characters/avatars to enter
             if moved_obj.has_account:
-                return super().at_object_receive(moved_obj, source_location, **kwargs)
+                return super().at_pre_object_receive(moved_obj, source_location, **kwargs)
 
             # Prevent items from being dropped
             if source_location and source_location.has_account:
@@ -84,10 +84,4 @@ class MatrixNode(Room):
                 )
                 return False
 
-        return super().at_object_receive(moved_obj, source_location, **kwargs)
-
-        # TODO: Security checks for future implementation
-        # if self.db.security_level > 0:
-        #     # Check if moved_obj has clearance
-        #     # Alert ICE if unauthorized
-        #     pass
+        return super().at_pre_object_receive(moved_obj, source_location, **kwargs)

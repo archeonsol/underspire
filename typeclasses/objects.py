@@ -320,11 +320,7 @@ class Object(ObjectParent, DefaultObject):
         If the object had a room-place (@sp) set (db.room_pose), clear it so the
         set-place only applies while it's in a room, not while carried.
         """
-        try:
-            super().at_get(getter, **kwargs)
-        except Exception:
-            # Be defensive if a parent in the MRO doesn't implement at_get.
-            pass
+        super().at_get(getter, **kwargs)
         room_pose = getattr(self.db, "room_pose", None)
         if room_pose:
             try:
